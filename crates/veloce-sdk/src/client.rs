@@ -200,6 +200,8 @@ impl VeloceClient {
     // ── Core send / receive ───────────────────────────────────────────────────
 
     /// Send a request and wait for a correlated reply (5-second timeout).
+    pub async fn raw_request(&self, body: Body) -> Result<Body> { self.request(body).await }
+
     async fn request(&self, body: Body) -> Result<Body> {
         let env    = Envelope::new(body);
         let cid    = env.correlation_id;
