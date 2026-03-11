@@ -1,1 +1,0 @@
-{"rustc":8323788817864214825,"features":"","declared_features":"","target":0,"profile":0,"path":0,"deps":[[11471780985825300795,"build_script_build",false,9625024673971459185]],"local":[{"RerunIfChanged":{"output":"release\\build\\veloce-core-82c16aabd27a3bc5\\output","paths":["build.rs","windows.manifest"]}}],"rustflags":[],"config":0,"compile_kind":0}

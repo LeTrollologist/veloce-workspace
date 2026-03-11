@@ -1,1 +1,0 @@
-C:\Users\Owner\veloce-workspace\target\release\libveloce_ipc.rlib: C:\Users\Owner\veloce-workspace\crates\veloce-ipc\src\codec.rs C:\Users\Owner\veloce-workspace\crates\veloce-ipc\src\error.rs C:\Users\Owner\veloce-workspace\crates\veloce-ipc\src\lib.rs C:\Users\Owner\veloce-workspace\crates\veloce-ipc\src\message.rs

@@ -1,8 +1,0 @@
-cargo:rerun-if-changed=build.rs
-cargo:rerun-if-changed=windows.manifest
-cargo:rustc-link-arg=/MANIFEST:EMBED
-cargo:rustc-link-arg=/MANIFESTINPUT:windows.manifest
-cargo:rustc-link-lib=advapi32
-cargo:rustc-link-lib=kernel32
-cargo:rustc-link-lib=userenv
-cargo:rustc-link-lib=ntdll

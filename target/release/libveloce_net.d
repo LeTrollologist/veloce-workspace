@@ -1,1 +1,0 @@
-C:\Users\Owner\veloce-workspace\target\release\libveloce_net.rlib: C:\Users\Owner\veloce-workspace\crates\veloce-net\src\dns.rs C:\Users\Owner\veloce-workspace\crates\veloce-net\src\error.rs C:\Users\Owner\veloce-workspace\crates\veloce-net\src\lib.rs C:\Users\Owner\veloce-workspace\crates\veloce-net\src\registry.rs C:\Users\Owner\veloce-workspace\crates\veloce-net\src\socks5.rs
