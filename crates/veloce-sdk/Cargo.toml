@@ -1,0 +1,21 @@
+[package]
+name        = "veloce-sdk"
+version.workspace   = true
+edition.workspace   = true
+authors.workspace   = true
+license.workspace   = true
+description = "VeloceNetwork SDK — async Rust client and C FFI layer for sideloaded applications"
+
+[lib]
+name       = "veloce_sdk"
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+tokio              = { workspace = true }
+anyhow             = { workspace = true }
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true }
+bytes              = { workspace = true }
+parking_lot        = { workspace = true }
+uuid               = { workspace = true }
+veloce-ipc         = { path = "../veloce-ipc" }
