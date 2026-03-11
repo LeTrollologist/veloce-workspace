@@ -1,0 +1,25 @@
+[package]
+name    = "veloce-dashboard"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name       = "veloce_dashboard_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri      = { version = "2", features = [] }
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio      = { version = "1", features = ["full"] }
+anyhow     = "1"
+uuid       = { version = "1", features = ["v4", "serde"] }
+
+veloce-sdk = { path = "../../../crates/veloce-sdk" }
+veloce-ipc = { path = "../../../crates/veloce-ipc" }
+
+[package.metadata.tauri-build]
+windows_app_manifest = false
