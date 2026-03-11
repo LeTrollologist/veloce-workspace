@@ -64,7 +64,7 @@ pub async fn run_core() -> anyhow::Result<()> {
     // 2. Start VeloceNet (DNS + routing)
     let net_state = state.clone();
     tokio::spawn(async move {
-        if let Err(e) = veloce_net::start(net_state.net_registry()).await {
+        if let Err(e) = veloce_net::start(net_state.net_registry().clone()).await {
             tracing::error!("VeloceNet error: {e}");
         }
     });

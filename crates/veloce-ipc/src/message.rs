@@ -67,7 +67,7 @@ pub enum MessageType {
 
 impl TryFrom<u8> for MessageType {
     type Error = u8;
-    fn try_from(v: u8) -> Result<Self, Self::Error> {
+    fn try_from(v: u8) -> Result<Self, u8> {
         use MessageType::*;
         Ok(match v {
             0x00 => Ping,            0x01 => Pong,

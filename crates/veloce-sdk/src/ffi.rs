@@ -142,10 +142,10 @@ pub extern "C" fn veloce_spawn_node(
                 let o = &mut *out;
                 let id_bytes = node_id_str.as_bytes_with_nul();
                 let id_len   = id_bytes.len().min(37);
-                o.node_id[..id_len].copy_from_slice(&*(id_bytes[..id_len].as_ptr() as *const [c_char]));
+                o.node_id[..id_len].copy_from_slice(std::slice::from_raw_parts(id_bytes.as_ptr() as *const c_char, id_len));
                 let pipe_bytes = pipe_str.as_bytes_with_nul();
                 let pipe_len = pipe_bytes.len().min(261);
-                o.node_pipe[..pipe_len].copy_from_slice(&*(pipe_bytes[..pipe_len].as_ptr() as *const [c_char]));
+                o.node_pipe[..pipe_len].copy_from_slice(std::slice::from_raw_parts(pipe_bytes.as_ptr() as *const c_char, pipe_len));
                 o.pid = spawned.pid;
             }
             0
