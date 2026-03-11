@@ -154,7 +154,7 @@ pub async fn spawn_node(
     unsafe {
         CreateProcessW(
             PCWSTR::null(),
-            Some(windows::core::PWSTR(cmdline_w.as_ptr() as *mut u16)),
+            windows::core::PWSTR(cmdline_w.as_ptr() as *mut u16),
             None,
             None,
             BOOL(0),
@@ -223,7 +223,7 @@ async fn check_nodes(state: &Arc<CoreState>) {
 
         // SAFETY: proc_handle_raw is a snapshot of a valid HANDLE owned by
         // the NodeHandle still in the NodeTable.  We only read status here.
-        let raw_handle = HANDLE(info.proc_handle_raw as *mut _);
+        let raw_handle = HANDLE(info.proc_handle_raw);
         let still_running = unsafe {
             WaitForSingleObject(raw_handle, 0) == WAIT_TIMEOUT
         };
