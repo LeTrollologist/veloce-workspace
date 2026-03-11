@@ -19,7 +19,7 @@ use crate::registry::NetRegistry;
 // ── SERVER ────────────────────────────────────────────────────────────────────
 
 pub async fn serve(registry: Arc<NetRegistry>, port: u16) -> Result<()> {
-    let sock = UdpSocket::bind(format!("0.0.0.0:{port}")).await?;
+    let sock = Arc::new(UdpSocket::bind(format!("0.0.0.0:{port}")).await?);
     tracing::info!("DNS server listening on 0.0.0.0:{port}");
 
     let mut buf = vec![0u8; 512];
@@ -28,7 +28,7 @@ pub async fn serve(registry: Arc<NetRegistry>, port: u16) -> Result<()> {
         let (n, from) = sock.recv_from(&mut buf).await?;
         let packet    = buf[..n].to_vec();
         let registry  = registry.clone();
-        let sock_ref  = Arc::new(sock.try_clone().expect("udp clone"));
+        let sock_ref  = sock.clone();
 
         tokio::spawn(async move {
             if let Err(e) = handle_query(packet, from, registry, sock_ref).await {
