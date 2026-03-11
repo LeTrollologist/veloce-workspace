@@ -23,15 +23,20 @@ fn embed_manifest() {
     //
     // The `winres` crate handles the RC compilation and linking automatically.
     // If winres is unavailable, fall back to a raw link directive.
-    let manifest_path = std::path::Path::new("windows.manifest");
+    // CARGO_MANIFEST_DIR is the crate root — always use an absolute path so the
+    // linker can find the file regardless of where Cargo invokes link.exe from.
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+    let manifest_path = std::path::Path::new(&manifest_dir).join("windows.manifest");
     if manifest_path.exists() {
-        // Tell the linker to embed the manifest
+        // Embed compatibility + longPathAware sections from our manifest file.
+        println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
         println!(
-            "cargo:rustc-link-arg=/MANIFEST:EMBED"
+            "cargo:rustc-link-arg=/MANIFESTINPUT:{}",
+            manifest_path.display()
         );
-        println!(
-            "cargo:rustc-link-arg=/MANIFESTINPUT:windows.manifest"
-        );
+        // Set UAC level separately to avoid merge conflict with the linker's
+        // auto-generated default manifest fragment.
+        println!("cargo:rustc-link-arg=/MANIFESTUAC:level='requireAdministrator' uiAccess='false'");
     }
 
     // Link Windows service / security libraries not auto-linked by the crates

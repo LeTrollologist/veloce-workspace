@@ -1,0 +1,9 @@
+cargo:rerun-if-changed=build.rs
+cargo:rerun-if-changed=windows.manifest
+cargo:rustc-link-arg=/MANIFEST:EMBED
+cargo:rustc-link-arg=/MANIFESTINPUT:C:\Users\Owner\veloce-workspace\crates\veloce-core\windows.manifest
+cargo:rustc-link-arg=/MANIFESTUAC:level='requireAdministrator' uiAccess='false'
+cargo:rustc-link-lib=advapi32
+cargo:rustc-link-lib=kernel32
+cargo:rustc-link-lib=userenv
+cargo:rustc-link-lib=ntdll

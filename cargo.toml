@@ -32,13 +32,12 @@ tracing     = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 # Utils
-uuid        = { version = "1", features = ["v4"] }
+uuid        = { version = "1", features = ["v4", "serde"] }
 chrono      = { version = "0.4", features = ["serde"] }
 memmap2     = "0.9"
 parking_lot = "0.12"
 
-# Windows-specific (only compiled on Windows)
-[target.'cfg(windows)'.workspace.dependencies]
+# Windows-specific (declared here for version pinning; crates opt-in via their own Cargo.toml)
 windows-service = "0.6"
 windows         = { version = "0.54", features = [
     "Win32_Foundation",
@@ -53,6 +52,13 @@ windows         = { version = "0.54", features = [
 
 [profile.release]
 opt-level     = 3
+lto           = "thin"   # "fat" LTO OOMs on low-RAM machines; thin is still fast
+codegen-units = 4        # parallelise codegen to reduce peak memory
+strip         = true
+
+# Use this profile for a fully-optimised production build on a beefy machine:
+# cargo build --profile release-fat
+[profile.release-fat]
+inherits      = "release"
 lto           = true
 codegen-units = 1
-strip         = true
