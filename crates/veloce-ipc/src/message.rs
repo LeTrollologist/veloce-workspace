@@ -40,6 +40,12 @@ pub enum MessageType {
     SubscribeNodeEvents   = 0x27,
     /// Client → Core: cancel an event subscription.
     UnsubscribeNodeEvents = 0x28,
+    /// Client → Core: subscribe to stdout/stderr log chunks for a node.
+    SubscribeNodeLogs     = 0x29,
+    /// Client → Core: cancel a log subscription.
+    UnsubscribeNodeLogs   = 0x2A,
+    /// Core → Client: push a chunk of captured stdout or stderr.
+    NodeLogChunk          = 0x2B,
 
     // ── Registry queries ──────────────────────────────────────
     /// Client → Core: read a key from the mmap registry.
@@ -81,6 +87,9 @@ impl TryFrom<u8> for MessageType {
             0x26 => NodeEvent,
             0x27 => SubscribeNodeEvents,
             0x28 => UnsubscribeNodeEvents,
+            0x29 => SubscribeNodeLogs,
+            0x2A => UnsubscribeNodeLogs,
+            0x2B => NodeLogChunk,
             0x30 => RegistryGet,     0x31 => RegistryValue,   0x32 => RegistrySet,
             0x33 => RegistryAck,
             0x40 => NetRegisterHost, 0x41 => NetHostRegistered,
@@ -158,6 +167,12 @@ pub enum Body {
     SubscribeNodeEvents { node_id: Uuid },
     /// Cancel event subscription (client → Core).
     UnsubscribeNodeEvents { node_id: Uuid },
+    /// Subscribe to stdout/stderr log chunks for a node (client → Core).
+    SubscribeNodeLogs { node_id: Uuid },
+    /// Cancel log subscription (client → Core).
+    UnsubscribeNodeLogs { node_id: Uuid },
+    /// Push a chunk of captured stdout or stderr (Core → Client).
+    NodeLogChunk(NodeLogChunkMsg),
 
     // Registry
     RegistryGet { key: String },
@@ -193,8 +208,11 @@ impl Body {
             QueryNodes             => MessageType::QueryNodes,
             NodeList(_)            => MessageType::NodeList,
             NodeEvent(_)               => MessageType::NodeEvent,
-            SubscribeNodeEvents { .. } => MessageType::SubscribeNodeEvents,
-            UnsubscribeNodeEvents{..}  => MessageType::UnsubscribeNodeEvents,
+            SubscribeNodeEvents { .. }  => MessageType::SubscribeNodeEvents,
+            UnsubscribeNodeEvents { .. } => MessageType::UnsubscribeNodeEvents,
+            SubscribeNodeLogs { .. }    => MessageType::SubscribeNodeLogs,
+            UnsubscribeNodeLogs { .. }  => MessageType::UnsubscribeNodeLogs,
+            NodeLogChunk(_)             => MessageType::NodeLogChunk,
             RegistryGet { .. }     => MessageType::RegistryGet,
             RegistryValue(_)       => MessageType::RegistryValue,
             RegistrySet { .. }     => MessageType::RegistrySet,
@@ -260,6 +278,19 @@ pub struct SpawnNodeMsg {
     pub limits: Option<NodeLimits>,
     /// If true, the node is automatically killed when the client disconnects.
     pub auto_kill: bool,
+    /// Optional restart-on-crash policy.
+    pub restart_policy: Option<RestartPolicy>,
+}
+
+/// Automatic restart policy for nodes that exit unexpectedly.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RestartPolicy {
+    /// Maximum number of restart attempts before giving up.
+    pub max_restarts: u32,
+    /// Initial back-off delay in seconds. Doubles each attempt.
+    pub base_delay_secs: u64,
+    /// Maximum back-off delay in seconds.
+    pub max_delay_secs: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -331,6 +362,20 @@ pub enum NodeEvent {
     MemThresholdExceeded { current_mb: u64, limit_mb: u64 },
     CpuThrottled { current_pct: u32 },
     LifetimeExpired,
+    /// Node crashed and Core is scheduling a restart.
+    Restarting { attempt: u32, delay_secs: u64 },
+}
+
+/// Which output stream a log chunk came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LogStream { Stdout, Stderr }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeLogChunkMsg {
+    pub node_id: Uuid,
+    pub stream:  LogStream,
+    /// Raw bytes captured from the process — typically UTF-8 text.
+    pub data:    Vec<u8>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
