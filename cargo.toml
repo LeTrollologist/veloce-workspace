@@ -5,6 +5,7 @@ members = [
     "crates/veloce-core",
     "crates/veloce-net",
     "crates/veloce-sdk",
+    "apps/dashboard/src-tauri",
 ]
 
 [workspace.package]
