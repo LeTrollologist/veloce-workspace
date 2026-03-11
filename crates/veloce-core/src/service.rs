@@ -228,6 +228,6 @@ fn set_recovery_actions(service: &windows_service::service::Service) -> Result<(
         ]),
     };
 
-    service.update_failure_actions(&actions).context("set recovery actions")?;
+    service.update_failure_actions(actions).context("set recovery actions")?;
     Ok(())
 }
