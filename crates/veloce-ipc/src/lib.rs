@@ -49,3 +49,28 @@ pub const PIPE_NAME: &str = r"\\.\pipe\VeloceCore";
 
 /// Named pipe used for VeloceNet control messages.
 pub const PIPE_NET: &str = r"\\.\pipe\VeloceNet";
+
+// ── SESSION KEY ────────────────────────────────────────────────────────────────
+
+/// Returns the path where VeloceCore writes the per-session PSK.
+///
+/// * Windows: `%LOCALAPPDATA%\VeloceCore\session.key`
+/// * Other:   `$TMPDIR/veloce-session.key`
+///
+/// The file contains 64 lowercase hex chars (32 raw bytes).  It is
+/// recreated each time VeloceCore starts, invalidating all prior sessions.
+pub fn psk_path() -> std::path::PathBuf {
+    #[cfg(windows)]
+    {
+        let base = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| {
+            std::env::var("USERPROFILE")
+                .map(|p| format!("{p}\\AppData\\Local"))
+                .unwrap_or_else(|_| "C:\\Users\\Default\\AppData\\Local".into())
+        });
+        std::path::PathBuf::from(base).join("VeloceCore").join("session.key")
+    }
+    #[cfg(not(windows))]
+    {
+        std::env::temp_dir().join("veloce-session.key")
+    }
+}

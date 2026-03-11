@@ -15,21 +15,22 @@ use anyhow::{bail, Context, Result};
 use bytes::BytesMut;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::sync::broadcast;
+use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use veloce_ipc::{
     Codec,
     message::{
         Body, Capability, Envelope, ErrorCode, ErrorMsg, Flags,
-        HandshakeAckMsg, NodeInfo, NodeKilledMsg, NodeListMsg, NodeSpawnedMsg,
-        NodeStatus as IpcNodeStatus,
+        HandshakeAckMsg, NodeEventMsg, NodeInfo, NodeKilledMsg, NodeListMsg,
+        NodeSpawnedMsg, NodeStatus as IpcNodeStatus,
     },
     PIPE_NAME,
 };
 
 use crate::{
     job,
+    pipe_security,
     state::{CoreState, NodeSummary},
 };
 
@@ -37,6 +38,11 @@ use crate::{
 
 pub async fn run(state: Arc<CoreState>) -> Result<()> {
     use tokio::net::windows::named_pipe::ServerOptions;
+
+    // Compute server's own user SID once; used to gate every incoming connection.
+    let server_sid = pipe_security::server_user_sid()
+        .context("resolve server user SID")?;
+    tracing::debug!("pipe ACL: accepting connections from SID {server_sid}");
 
     tracing::info!("IPC server listening on {PIPE_NAME}");
 
@@ -51,6 +57,13 @@ pub async fn run(state: Arc<CoreState>) -> Result<()> {
 
         // Wait for a client to connect
         pipe.connect().await.context("pipe connect")?;
+
+        // ── ACL gate: reject any process not running as the server's user ──
+        if let Err(e) = pipe_security::assert_client_is_owner(&pipe, &server_sid) {
+            tracing::warn!("pipe ACL rejected connection: {e:#}");
+            // Dropping `pipe` here disconnects the client immediately.
+            continue;
+        }
 
         let client_state = state.clone();
         tokio::spawn(async move {
@@ -68,6 +81,9 @@ pub async fn run(state: Arc<CoreState>) -> Result<()> {
 
 // ── CLIENT SESSION ────────────────────────────────────────────────────────────
 
+/// Capacity of the push-event channel per client session.
+const PUSH_CHAN_CAP: usize = 64;
+
 struct ClientSession<R, W> {
     reader:       R,
     writer:       W,
@@ -76,6 +92,11 @@ struct ClientSession<R, W> {
     app_name:     String,
     capabilities: Vec<Capability>,
     read_buf:     BytesMut,
+    /// Sender half — cloned into event-forwarder tasks so they can push
+    /// encoded frames to the writer without holding the writer lock.
+    push_tx:      mpsc::Sender<Vec<u8>>,
+    /// Receiver half — drained by the select! loop in `run()`.
+    push_rx:      mpsc::Receiver<Vec<u8>>,
 }
 
 impl<R, W> ClientSession<R, W>
@@ -84,6 +105,7 @@ where
     W: AsyncWriteExt + Unpin + Send,
 {
     fn new(reader: R, writer: W, state: Arc<CoreState>) -> Self {
+        let (push_tx, push_rx) = mpsc::channel(PUSH_CHAN_CAP);
         Self {
             reader,
             writer,
@@ -92,36 +114,46 @@ where
             app_name:     String::new(),
             capabilities: vec![],
             read_buf:     BytesMut::with_capacity(16 * 1024),
+            push_tx,
+            push_rx,
         }
     }
 
     async fn run(&mut self) -> Result<()> {
         let mut buf = [0u8; 8192];
         loop {
-            // Read some bytes
-            let n = self.reader.read(&mut buf).await?;
-            if n == 0 {
-                tracing::debug!(app = %self.app_name, "client disconnected");
-                return Ok(());
-            }
-            self.read_buf.extend_from_slice(&buf[..n]);
+            tokio::select! {
+                // ── Incoming request frames from the client ──────────────────
+                result = self.reader.read(&mut buf) => {
+                    let n = result?;
+                    if n == 0 {
+                        tracing::debug!(app = %self.app_name, "client disconnected");
+                        return Ok(());
+                    }
+                    self.read_buf.extend_from_slice(&buf[..n]);
 
-            // Drain all complete frames from the buffer
-            loop {
-                match Codec::decode_safe(&mut self.read_buf) {
-                    Ok(Some((_hdr, env))) => {
-                        if let Err(e) = self.handle(env).await {
-                            tracing::warn!("handler error: {e:#}");
-                            self.send_error(None, ErrorCode::InternalError, e.to_string()).await?;
+                    loop {
+                        match Codec::decode_safe(&mut self.read_buf) {
+                            Ok(Some((_hdr, env))) => {
+                                if let Err(e) = self.handle(env).await {
+                                    tracing::warn!("handler error: {e:#}");
+                                    self.send_error(None, ErrorCode::InternalError, e.to_string()).await?;
+                                }
+                            }
+                            Ok(None)  => break,
+                            Err(e) => {
+                                tracing::warn!("decode error: {e:#}");
+                                self.send_error(None, ErrorCode::InvalidMessage, e.to_string()).await?;
+                                self.read_buf.clear();
+                                break;
+                            }
                         }
                     }
-                    Ok(None)    => break, // need more data
-                    Err(e) => {
-                        tracing::warn!("decode error: {e:#}");
-                        self.send_error(None, ErrorCode::InvalidMessage, e.to_string()).await?;
-                        self.read_buf.clear();
-                        break;
-                    }
+                }
+
+                // ── Outbound push frames from event-forwarder tasks ──────────
+                Some(frame) = self.push_rx.recv() => {
+                    self.writer.write_all(&frame).await?;
                 }
             }
         }
@@ -142,17 +174,33 @@ where
                     return self.send_error(Some(cid), ErrorCode::ProtocolMismatch,
                         "already handshaked".into()).await;
                 }
+
+                // ── PSK gate ───────────────────────────────────────────────
+                // Skip in dev mode: set VELOCE_SKIP_PSK=1 in the environment.
+                let skip_psk = std::env::var("VELOCE_SKIP_PSK").as_deref() == Ok("1");
+                if !skip_psk {
+                    let ok = match hs.psk_hash {
+                        Some(received) => received == *self.state.psk(),
+                        None           => false,
+                    };
+                    if !ok {
+                        tracing::warn!(app = %hs.app_name, "PSK mismatch — rejecting connection");
+                        self.send_error(Some(cid), ErrorCode::Unauthorized,
+                            "invalid or missing PSK".into()).await?;
+                        bail!("PSK rejected");
+                    }
+                }
+
                 let client_id = Uuid::new_v4();
                 self.client_id    = Some(client_id);
                 self.app_name     = hs.app_name.clone();
-                // Grant all requested capabilities (auth/PSK enforcement future)
                 self.capabilities = hs.capabilities.clone();
 
                 tracing::info!(
                     app = %hs.app_name,
                     sdk_version = %hs.sdk_version,
                     %client_id,
-                    "client handshake"
+                    "client handshake accepted"
                 );
 
                 self.send_reply(cid, HandshakeAck(HandshakeAckMsg {
@@ -195,18 +243,8 @@ where
                     node_id, pid, node_pipe: pipe_path.clone(), spawned_at,
                 })).await?;
 
-                // Forward NodeEvents back to this client
-                let mut rx = event_tx.subscribe();
-                let client_state = self.state.clone();
-                // We can't easily write to the writer from two tasks, so we
-                // queue events into a channel that the main loop drains.
-                // For now log them; the full event-push path requires splitting
-                // the write half further — tracked in VELOCE-42.
-                tokio::spawn(async move {
-                    while let Ok(ev) = rx.recv().await {
-                        tracing::info!(node_id = %ev.node_id, event = ?ev.event, "node event");
-                    }
-                });
+                // Forward NodeEvents to this client via the push channel.
+                spawn_event_forwarder(event_tx.subscribe(), self.push_tx.clone());
             }
 
             KillNode(msg) => {
@@ -293,6 +331,31 @@ where
                 )).await?;
             }
 
+            // ── Push event subscriptions ───────────────────────────────────
+            SubscribeNodeEvents { node_id } => {
+                let event_tx = self.state.node_table()
+                    .list_live()
+                    .into_iter()
+                    .find(|s| s.node_id == node_id)
+                    .map(|s| s.event_tx);
+
+                match event_tx {
+                    None => self.send_error(Some(cid), ErrorCode::NotFound,
+                        format!("node {} not found", node_id)).await?,
+                    Some(tx) => {
+                        spawn_event_forwarder(tx.subscribe(), self.push_tx.clone());
+                        self.send_reply(cid, Body::Pong).await?;
+                    }
+                }
+            }
+
+            UnsubscribeNodeEvents { node_id } => {
+                // Subscription tasks auto-exit when the node's broadcast
+                // sender is dropped; explicit unsubscribe just logs intent.
+                tracing::debug!(%node_id, "client unsubscribed from node events");
+                self.send_reply(cid, Body::Pong).await?;
+            }
+
             other => {
                 tracing::warn!("unhandled message type: {:?}", other.msg_type());
                 self.send_error(Some(cid), ErrorCode::InvalidMessage,
@@ -329,4 +392,39 @@ where
         self.writer.write_all(&buf).await?;
         Ok(())
     }
+}
+
+// ── EVENT FORWARDER ────────────────────────────────────────────────────────────
+
+/// Spawn a task that bridges a node's broadcast event channel to a client's
+/// push mpsc channel.  Exits automatically when either end is dropped.
+fn spawn_event_forwarder(
+    mut rx:  tokio::sync::broadcast::Receiver<crate::job::NodeEventMsg>,
+    push_tx: mpsc::Sender<Vec<u8>>,
+) {
+    tokio::spawn(async move {
+        loop {
+            let ev = match rx.recv().await {
+                Ok(e)  => e,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    tracing::warn!("event forwarder lagged by {n} messages");
+                    continue;
+                }
+                Err(_) => break, // sender dropped — node gone
+            };
+
+            let env = Envelope::new(Body::NodeEvent(NodeEventMsg {
+                node_id: ev.node_id,
+                event:   ev.event,
+            }));
+            match Codec::encode(&env, Flags::PUSH) {
+                Ok(frame) => {
+                    if push_tx.send(frame.to_vec()).await.is_err() {
+                        break; // client session closed
+                    }
+                }
+                Err(e) => tracing::warn!("event encode error: {e:#}"),
+            }
+        }
+    });
 }

@@ -24,14 +24,32 @@ veloce_disconnect(h);
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_uint};
 use std::sync::Mutex;
+use std::time::Duration;
 
-use crate::VeloceClient;
-use veloce_ipc::message::Capability;
+use crate::{client::NodeEventStream, VeloceClient};
+use veloce_ipc::message::{Capability, NodeEvent};
+
+/// C representation of a node event.
+///
+/// `event_type`:  0=Started  1=Exited  2=MemThreshold  3=CpuThrottled  4=LifetimeExpired
+///
+/// `param1`:  pid (Started) | exit_code (Exited) | current_mb (Mem) | current_pct (Cpu)
+/// `param2`:  limit_mb (MemThreshold only)
+#[repr(C)]
+pub struct CVeloceNodeEvent {
+    /// Node UUID, null-terminated ASCII (36 + NUL).
+    pub node_id:    [c_char; 37],
+    pub event_type: u8,
+    pub param1:     u64,
+    pub param2:     u64,
+}
 
 /// Opaque handle type.
 pub struct VeloceHandle {
-    inner: Mutex<Option<tokio::runtime::Runtime>>,
+    inner:  Mutex<Option<tokio::runtime::Runtime>>,
     client: Mutex<Option<VeloceClient>>,
+    /// Broadcast event stream — pre-subscribed at connect for `veloce_poll_event`.
+    events: Mutex<Option<NodeEventStream>>,
 }
 
 // ── FFI EXPORTS ───────────────────────────────────────────────────────────────
@@ -79,9 +97,11 @@ pub extern "C" fn veloce_connect(
 
     match client {
         Ok(c) => {
+            let events = c.subscribe_all_events();
             let handle = Box::new(VeloceHandle {
                 inner:  Mutex::new(Some(rt)),
                 client: Mutex::new(Some(c)),
+                events: Mutex::new(Some(events)),
             });
             Box::into_raw(handle)
         }
@@ -305,6 +325,64 @@ pub extern "C" fn veloce_sdk_version() -> *const c_char {
     VERSION.get_or_init(|| {
         CString::new(env!("CARGO_PKG_VERSION")).expect("version string")
     }).as_ptr()
+}
+
+/// Poll for the next node event.
+///
+/// `timeout_ms`: max wait in milliseconds (0 = non-blocking check).
+///
+/// Returns:
+///  * `0`  — event written to `*out`
+///  * `1`  — timed out (no event yet)
+///  * `-1` — error (null handle/buf, stream closed, or internal error)
+#[no_mangle]
+pub extern "C" fn veloce_poll_event(
+    handle:     *mut VeloceHandle,
+    timeout_ms: u64,
+    out:        *mut CVeloceNodeEvent,
+) -> c_int {
+    if handle.is_null() || out.is_null() { return -1; }
+    let h = unsafe { &*handle };
+
+    let rt_guard = h.inner.lock().unwrap();
+    let rt = match rt_guard.as_ref() {
+        Some(r) => r,
+        None    => return -1,
+    };
+
+    let mut ev_guard = h.events.lock().unwrap();
+    let stream: &mut NodeEventStream = match ev_guard.as_mut() {
+        Some(s) => s,
+        None    => return -1,
+    };
+
+    let timeout = Duration::from_millis(timeout_ms);
+    match rt.block_on(tokio::time::timeout(timeout, stream.next())) {
+        Err(_elapsed)    => 1,   // timed out
+        Ok(None)         => -1,  // stream closed
+        Ok(Some(msg)) => {
+            let node_id_str = CString::new(msg.node_id.to_string()).unwrap();
+            let (event_type, param1, param2) = match msg.event {
+                NodeEvent::Started { pid }                                => (0u8, pid as u64, 0u64),
+                NodeEvent::Exited { exit_code }                           => (1u8, exit_code as u64, 0u64),
+                NodeEvent::MemThresholdExceeded { current_mb, limit_mb } => (2u8, current_mb, limit_mb),
+                NodeEvent::CpuThrottled { current_pct }                   => (3u8, current_pct as u64, 0u64),
+                NodeEvent::LifetimeExpired                                => (4u8, 0u64, 0u64),
+            };
+            unsafe {
+                let o = &mut *out;
+                let id_bytes = node_id_str.as_bytes_with_nul();
+                let id_len   = id_bytes.len().min(37);
+                o.node_id[..id_len].copy_from_slice(
+                    std::slice::from_raw_parts(id_bytes.as_ptr() as *const c_char, id_len),
+                );
+                o.event_type = event_type;
+                o.param1     = param1;
+                o.param2     = param2;
+            }
+            0
+        }
+    }
 }
 
 // ── HELPERS ───────────────────────────────────────────────────────────────────

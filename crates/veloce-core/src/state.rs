@@ -21,6 +21,9 @@ pub struct CoreState {
     node_table:   Arc<NodeTable>,
     net_registry: Arc<NetRegistry>,
     shutdown:     AtomicBool,
+    /// Per-session pre-shared key.  32 random bytes written to the PSK file
+    /// at startup; every connecting client must echo them in its Handshake.
+    psk:          [u8; 32],
 }
 
 impl CoreState {
@@ -29,17 +32,22 @@ impl CoreState {
         std::fs::create_dir_all(db_path.parent().unwrap())?;
         let registry = Registry::open(&db_path)?;
 
+        let psk = generate_and_persist_psk()?;
+
         Ok(Self {
             registry,
             node_table:   Arc::new(NodeTable::new()),
             net_registry: Arc::new(NetRegistry::new()),
             shutdown:     AtomicBool::new(false),
+            psk,
         })
     }
 
     pub fn registry(&self)     -> &Registry         { &self.registry }
     pub fn node_table(&self)   -> &Arc<NodeTable>   { &self.node_table }
     pub fn net_registry(&self) -> &Arc<NetRegistry> { &self.net_registry }
+    /// The current session's PSK bytes.  Clients must send these verbatim.
+    pub fn psk(&self) -> &[u8; 32] { &self.psk }
 
     pub fn shutdown(&self) {
         self.shutdown.store(true, Ordering::Release);
@@ -47,6 +55,31 @@ impl CoreState {
     pub fn is_shutting_down(&self) -> bool {
         self.shutdown.load(Ordering::Acquire)
     }
+}
+
+/// Generate 32 random bytes from two UUIDs, write hex to the PSK file, return
+/// the raw bytes.  The file is recreated on every Core startup — any SDK
+/// connections from the previous session are thereby invalidated.
+fn generate_and_persist_psk() -> anyhow::Result<[u8; 32]> {
+    use uuid::Uuid;
+
+    let u1 = Uuid::new_v4();
+    let u2 = Uuid::new_v4();
+    let mut psk = [0u8; 32];
+    psk[..16].copy_from_slice(u1.as_bytes());
+    psk[16..].copy_from_slice(u2.as_bytes());
+
+    let hex: String = psk.iter().map(|b| format!("{b:02x}")).collect();
+
+    let path = veloce_ipc::psk_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&path, &hex)
+        .map_err(|e| anyhow::anyhow!("write PSK to {}: {e}", path.display()))?;
+
+    tracing::info!("session PSK written to {}", path.display());
+    Ok(psk)
 }
 
 /// In-memory live node table (complementing the durable mmap registry).
