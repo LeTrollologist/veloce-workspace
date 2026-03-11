@@ -23,7 +23,7 @@ use veloce_ipc::{
     message::{
         Body, Capability, Envelope, ErrorCode, ErrorMsg, Flags,
         HandshakeAckMsg, NodeEventMsg, NodeInfo, NodeKilledMsg, NodeListMsg,
-        NodeSpawnedMsg, NodeStatus as IpcNodeStatus,
+        NodeLogChunkMsg, NodeSpawnedMsg, NodeStatus as IpcNodeStatus,
     },
     PIPE_NAME,
 };
@@ -228,7 +228,7 @@ where
                     .context("alloc registry slot")?;
 
                 // Spawn under a Job Object
-                let handle = job::spawn_node(&msg, node_id, slot, PIPE_NAME).await
+                let handle = job::spawn_node(&msg, node_id, slot, PIPE_NAME, None, None).await
                     .context("spawn_node")?;
 
                 let pid       = handle.pid;
@@ -350,9 +350,32 @@ where
             }
 
             UnsubscribeNodeEvents { node_id } => {
-                // Subscription tasks auto-exit when the node's broadcast
-                // sender is dropped; explicit unsubscribe just logs intent.
                 tracing::debug!(%node_id, "client unsubscribed from node events");
+                self.send_reply(cid, Body::Pong).await?;
+            }
+
+            // ── Log subscriptions ──────────────────────────────────────────
+            SubscribeNodeLogs { node_id } => {
+                let log_tx = self.state.node_table()
+                    .list_live()
+                    .into_iter()
+                    .find(|s| s.node_id == node_id)
+                    .map(|s| s.log_tx);
+
+                match log_tx {
+                    None => self.send_error(Some(cid), ErrorCode::NotFound,
+                        format!("node {} not found", node_id)).await?,
+                    Some(tx) => {
+                        spawn_log_forwarder(tx.subscribe(), self.push_tx.clone());
+                        self.send_reply(cid, Body::Pong).await?;
+                    }
+                }
+            }
+
+            UnsubscribeNodeLogs { node_id } => {
+                // Log forwarder tasks auto-exit when the node's broadcast sender
+                // is dropped; explicit unsubscribe just logs intent.
+                tracing::debug!(%node_id, "client unsubscribed from node logs");
                 self.send_reply(cid, Body::Pong).await?;
             }
 
@@ -396,8 +419,7 @@ where
 
 // ── EVENT FORWARDER ────────────────────────────────────────────────────────────
 
-/// Spawn a task that bridges a node's broadcast event channel to a client's
-/// push mpsc channel.  Exits automatically when either end is dropped.
+/// Forwards node lifecycle events to a client's push channel.
 fn spawn_event_forwarder(
     mut rx:  tokio::sync::broadcast::Receiver<crate::job::NodeEventMsg>,
     push_tx: mpsc::Sender<Vec<u8>>,
@@ -410,7 +432,7 @@ fn spawn_event_forwarder(
                     tracing::warn!("event forwarder lagged by {n} messages");
                     continue;
                 }
-                Err(_) => break, // sender dropped — node gone
+                Err(_) => break,
             };
 
             let env = Envelope::new(Body::NodeEvent(NodeEventMsg {
@@ -419,11 +441,36 @@ fn spawn_event_forwarder(
             }));
             match Codec::encode(&env, Flags::PUSH) {
                 Ok(frame) => {
-                    if push_tx.send(frame.to_vec()).await.is_err() {
-                        break; // client session closed
-                    }
+                    if push_tx.send(frame.to_vec()).await.is_err() { break; }
                 }
                 Err(e) => tracing::warn!("event encode error: {e:#}"),
+            }
+        }
+    });
+}
+
+/// Forwards captured stdout/stderr chunks to a client's push channel.
+fn spawn_log_forwarder(
+    mut rx:  tokio::sync::broadcast::Receiver<NodeLogChunkMsg>,
+    push_tx: mpsc::Sender<Vec<u8>>,
+) {
+    tokio::spawn(async move {
+        loop {
+            let chunk = match rx.recv().await {
+                Ok(c)  => c,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    tracing::warn!("log forwarder lagged by {n} chunks");
+                    continue;
+                }
+                Err(_) => break,
+            };
+
+            let env = Envelope::new(Body::NodeLogChunk(chunk));
+            match Codec::encode(&env, Flags::PUSH) {
+                Ok(frame) => {
+                    if push_tx.send(frame.to_vec()).await.is_err() { break; }
+                }
+                Err(e) => tracing::warn!("log encode error: {e:#}"),
             }
         }
     });

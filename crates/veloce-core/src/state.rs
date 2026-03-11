@@ -13,7 +13,8 @@ use parking_lot::RwLock;
 use uuid::Uuid;
 
 use crate::registry::Registry;
-use crate::job::NodeHandle;
+use crate::job::{NodeHandle, NodeEventMsg};
+use veloce_ipc::message::NodeLogChunkMsg;
 use veloce_net::NetRegistry;
 
 pub struct CoreState {
@@ -119,6 +120,7 @@ impl NodeTable {
             #[cfg(not(windows))]
             proc_handle_raw: 0isize,
             event_tx:        h.event_tx.clone(),
+            log_tx:          h.log_tx.clone(),
         }).collect()
     }
 }
@@ -132,7 +134,8 @@ pub struct NodeSummary {
     pub pipe_path:       String,
     /// Raw Win32 HANDLE value (as isize).  0 on non-Windows.
     pub proc_handle_raw: isize,
-    pub event_tx:        tokio::sync::broadcast::Sender<crate::job::NodeEventMsg>,
+    pub event_tx:        tokio::sync::broadcast::Sender<NodeEventMsg>,
+    pub log_tx:          tokio::sync::broadcast::Sender<NodeLogChunkMsg>,
 }
 
 fn data_dir() -> PathBuf {

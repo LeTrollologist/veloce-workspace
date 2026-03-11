@@ -1,8 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 // ── State ──────────────────────────────────────────────────────────────────
 
 let connected = false;
+let selectedLogNodeId = null;      // node currently shown in log viewer
+const logLines = {};               // node_id → array of {stream, text, ts}
+const MAX_LOG_LINES = 2000;        // per node
 
 // ── UI helpers ─────────────────────────────────────────────────────────────
 
@@ -43,12 +47,20 @@ function statusBadge(status) {
 
 function renderNodes(nodes) {
   const tbody = document.getElementById("node-list");
+  const sel   = document.getElementById("log-node-select");
+
+  // Preserve current log selection
+  const prevSel = sel.value;
+
+  // Rebuild log node dropdown
+  sel.innerHTML = `<option value="">— select a node —</option>`;
   if (!nodes || nodes.length === 0) {
     tbody.innerHTML = `<tr id="node-empty-row">
       <td colspan="6" class="empty-cell">No nodes running</td>
     </tr>`;
     return;
   }
+
   tbody.innerHTML = nodes.map(n => `
     <tr>
       <td><strong>${escHtml(n.app_name)}</strong></td>
@@ -62,6 +74,16 @@ function renderNodes(nodes) {
     </tr>
   `).join("");
 
+  nodes.forEach(n => {
+    const opt = document.createElement("option");
+    opt.value = n.node_id;
+    opt.textContent = `${n.app_name} (${n.node_id.slice(0, 8)}…)`;
+    sel.appendChild(opt);
+  });
+
+  // Restore selection
+  if (prevSel) sel.value = prevSel;
+
   tbody.querySelectorAll("[data-kill]").forEach(btn => {
     btn.addEventListener("click", () => killNode(btn.dataset.kill));
   });
@@ -72,6 +94,52 @@ function escHtml(s) {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
+}
+
+// ── Log viewer ─────────────────────────────────────────────────────────────
+
+function appendLog(nodeId, stream, text) {
+  if (!logLines[nodeId]) logLines[nodeId] = [];
+  const lines = logLines[nodeId];
+
+  // Split on newlines but keep partial lines
+  const parts = text.split("\n");
+  for (const part of parts) {
+    if (part === "") continue;
+    lines.push({ stream, text: part, ts: new Date().toLocaleTimeString("en-US", { hour12: false }) });
+  }
+
+  // Cap buffer
+  if (lines.length > MAX_LOG_LINES) {
+    lines.splice(0, lines.length - MAX_LOG_LINES);
+  }
+
+  if (nodeId === selectedLogNodeId) {
+    renderLogViewer();
+  }
+}
+
+function renderLogViewer() {
+  const viewer = document.getElementById("log-viewer");
+  const empty  = document.getElementById("log-empty");
+
+  if (!selectedLogNodeId || !logLines[selectedLogNodeId]?.length) {
+    viewer.innerHTML = `<div class="empty-cell" id="log-empty">
+      ${selectedLogNodeId ? "No output yet" : "Select a node to view its output"}
+    </div>`;
+    return;
+  }
+
+  const wasAtBottom = viewer.scrollHeight - viewer.scrollTop <= viewer.clientHeight + 40;
+
+  viewer.innerHTML = logLines[selectedLogNodeId]
+    .map(l => `<div class="log-line ${escHtml(l.stream)}"><span class="ts">${escHtml(l.ts)}</span>${escHtml(l.text)}</div>`)
+    .join("");
+
+  // Auto-scroll if already at bottom
+  if (wasAtBottom) {
+    viewer.scrollTop = viewer.scrollHeight;
+  }
 }
 
 // ── Commands ───────────────────────────────────────────────────────────────
@@ -166,7 +234,7 @@ function initTabs() {
 
 // ── Init ───────────────────────────────────────────────────────────────────
 
-window.addEventListener("DOMContentLoaded", () => {
+window.addEventListener("DOMContentLoaded", async () => {
   initTabs();
   setStatus(false);
 
@@ -175,6 +243,42 @@ window.addEventListener("DOMContentLoaded", () => {
   document.getElementById("btn-spawn").addEventListener("click",        spawnNode);
   document.getElementById("btn-register").addEventListener("click",     registerHost);
   document.getElementById("btn-unregister").addEventListener("click",   unregisterHost);
+
+  // Log node selector
+  document.getElementById("log-node-select").addEventListener("change", async (e) => {
+    const nodeId = e.target.value;
+    selectedLogNodeId = nodeId || null;
+    if (nodeId && connected) {
+      try {
+        await invoke("subscribe_node_logs", { nodeId });
+      } catch (err) {
+        console.warn("subscribe_node_logs:", err);
+      }
+    }
+    renderLogViewer();
+  });
+
+  // Clear log button
+  document.getElementById("btn-clear-log").addEventListener("click", () => {
+    if (selectedLogNodeId) {
+      logLines[selectedLogNodeId] = [];
+      renderLogViewer();
+    }
+  });
+
+  // Listen for log chunks pushed from the Tauri backend
+  await listen("node-log", (event) => {
+    const { node_id, stream, text } = event.payload;
+    appendLog(node_id, stream, text);
+  });
+
+  // Listen for node lifecycle events — refresh table on crash/restart
+  await listen("node-event", (event) => {
+    const { node_id, event: evName } = event.payload;
+    if (evName.startsWith("Restarting") || evName.startsWith("Exited")) {
+      refreshNodes();
+    }
+  });
 
   // Auto-ping every 10 s to keep status indicator accurate
   setInterval(async () => {

@@ -3,6 +3,10 @@ VeloceNetwork Dashboard — Tauri 2 backend.
 
 Holds a single `VeloceClient` in managed state.  Every Tauri command
 locks the mutex, calls the SDK, maps errors to `String` for the frontend.
+
+Log chunks and node events are pushed to the frontend via Tauri window events:
+  - `"node-log"`   — `{ node_id, stream, text }` for captured stdout/stderr
+  - `"node-event"` — `{ node_id, event }` for lifecycle events (crash, restart…)
 */
 
 use std::sync::Arc;
@@ -11,6 +15,7 @@ use tokio::sync::Mutex;
 use serde::Serialize;
 use uuid::Uuid;
 
+use tauri::Emitter;
 use veloce_ipc::message::{Body, Capability};
 use veloce_sdk::VeloceClient;
 
@@ -38,13 +43,26 @@ struct SpawnResult {
     node_pipe: String,
 }
 
+#[derive(Serialize, Clone)]
+struct LogChunkEvent {
+    node_id: String,
+    stream:  String,
+    text:    String,
+}
+
+#[derive(Serialize, Clone)]
+struct NodeEventPayload {
+    node_id: String,
+    event:   String,
+}
+
 // ── Commands ──────────────────────────────────────────────────────────────────
-//
-// Commands are intentionally not `pub` — only `run()` and the Tauri handler
-// macro need them.  Keeping them crate-private avoids macro name conflicts.
 
 #[tauri::command]
-async fn connect(state: tauri::State<'_, AppState>) -> Result<String, String> {
+async fn connect(
+    app:   tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<String, String> {
     let mut guard = state.client.lock().await;
     if guard.is_some() {
         return Ok("already_connected".into());
@@ -63,6 +81,35 @@ async fn connect(state: tauri::State<'_, AppState>) -> Result<String, String> {
     )
     .await
     .map_err(|e| e.to_string())?;
+
+    // Forward log chunks → "node-log" Tauri events
+    let mut log_stream = client.subscribe_all_logs();
+    let app_log = app.clone();
+    tokio::spawn(async move {
+        while let Some(chunk) = log_stream.next().await {
+            let stream_str = match chunk.stream {
+                veloce_ipc::message::LogStream::Stdout => "stdout",
+                veloce_ipc::message::LogStream::Stderr => "stderr",
+            };
+            let _ = app_log.emit("node-log", LogChunkEvent {
+                node_id: chunk.node_id.to_string(),
+                stream:  stream_str.into(),
+                text:    String::from_utf8_lossy(&chunk.data).into_owned(),
+            });
+        }
+    });
+
+    // Forward node lifecycle events → "node-event" Tauri events
+    let mut ev_stream = client.subscribe_all_events();
+    let app_ev = app.clone();
+    tokio::spawn(async move {
+        while let Some(ev) = ev_stream.next().await {
+            let _ = app_ev.emit("node-event", NodeEventPayload {
+                node_id: ev.node_id.to_string(),
+                event:   format!("{:?}", ev.event),
+            });
+        }
+    });
 
     *guard = Some(client);
     Ok("connected".into())
@@ -152,6 +199,22 @@ async fn unregister_host(
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn subscribe_node_logs(
+    state:   tauri::State<'_, AppState>,
+    node_id: String,
+) -> Result<(), String> {
+    let id = Uuid::parse_str(&node_id).map_err(|e| e.to_string())?;
+    let mut guard = state.client.lock().await;
+    let c = guard.as_mut().ok_or("Not connected to VeloceCore")?;
+    // Tell Core to start pushing log chunks for this node.
+    // The background log_stream task (started in connect) automatically
+    // receives them and emits "node-log" Tauri events.
+    c.subscribe_node_logs(id).await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 // ── App entry point ───────────────────────────────────────────────────────────
 
 pub fn run() {
@@ -166,6 +229,7 @@ pub fn run() {
             kill_node,
             register_host,
             unregister_host,
+            subscribe_node_logs,
         ])
         .run(tauri::generate_context!())
         .expect("error while running VeloceNetwork Dashboard");

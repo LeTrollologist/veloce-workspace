@@ -19,8 +19,8 @@ use uuid::Uuid;
 use veloce_ipc::{
     Codec,
     message::{
-        Body, Capability, Envelope, Flags, NodeLimits, NodeSpawnedMsg,
-        NetHostEntry, NodeEventMsg, SpawnNodeMsg,
+        Body, Capability, Envelope, Flags, NodeLogChunkMsg, NodeSpawnedMsg,
+        NodeEventMsg, SpawnNodeMsg,
     },
     PIPE_NAME,
 };
@@ -29,6 +29,7 @@ use veloce_ipc::{
 
 type PendingMap = Arc<Mutex<HashMap<Uuid, oneshot::Sender<Body>>>>;
 type EventBus   = Arc<tokio::sync::broadcast::Sender<NodeEventMsg>>;
+type LogBus     = Arc<tokio::sync::broadcast::Sender<NodeLogChunkMsg>>;
 
 // ── CLIENT ────────────────────────────────────────────────────────────────────
 
@@ -38,6 +39,8 @@ pub struct VeloceClient {
     pending:   PendingMap,
     /// Broadcast bus for unsolicited NodeEvent push frames from Core.
     event_bus: EventBus,
+    /// Broadcast bus for NodeLogChunk push frames from Core.
+    log_bus:   LogBus,
     /// Our assigned client ID (set after handshake).
     pub client_id: Uuid,
 }
@@ -45,16 +48,12 @@ pub struct VeloceClient {
 // ── NODE EVENT STREAM ─────────────────────────────────────────────────────────
 
 /// Async-friendly stream of `NodeEventMsg` values pushed by VeloceCore.
-///
-/// Optionally filtered to a single `node_id`.  Use `.next().await` to receive.
 pub struct NodeEventStream {
     inner:  tokio::sync::broadcast::Receiver<NodeEventMsg>,
     filter: Option<Uuid>,
 }
 
 impl NodeEventStream {
-    /// Returns the next event, waiting asynchronously.  Returns `None` when
-    /// the channel is closed (Core disconnected).
     pub async fn next(&mut self) -> Option<NodeEventMsg> {
         loop {
             match self.inner.recv().await {
@@ -65,7 +64,33 @@ impl NodeEventStream {
                     return Some(msg);
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    tracing::warn!("NodeEventStream lagged by {n} — some events were dropped");
+                    tracing::warn!("NodeEventStream lagged by {n}");
+                    continue;
+                }
+                Err(_) => return None,
+            }
+        }
+    }
+}
+
+/// Async-friendly stream of `NodeLogChunkMsg` values pushed by VeloceCore.
+pub struct NodeLogStream {
+    inner:  tokio::sync::broadcast::Receiver<NodeLogChunkMsg>,
+    filter: Option<Uuid>,
+}
+
+impl NodeLogStream {
+    pub async fn next(&mut self) -> Option<NodeLogChunkMsg> {
+        loop {
+            match self.inner.recv().await {
+                Ok(msg) => {
+                    if let Some(id) = self.filter {
+                        if msg.node_id != id { continue; }
+                    }
+                    return Some(msg);
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    tracing::warn!("NodeLogStream lagged by {n}");
                     continue;
                 }
                 Err(_) => return None,
@@ -98,17 +123,20 @@ impl VeloceClient {
             let writer     = Arc::new(AsyncMutex::new(writer_half));
             let (event_tx, _) = tokio::sync::broadcast::channel(128);
             let event_bus: EventBus = Arc::new(event_tx);
+            let (log_tx, _) = tokio::sync::broadcast::channel(512);
+            let log_bus: LogBus = Arc::new(log_tx);
 
             // Spawn background reader
             let bg_pending   = pending.clone();
             let bg_event_bus = event_bus.clone();
+            let bg_log_bus   = log_bus.clone();
             tokio::spawn(async move {
-                if let Err(e) = reader_loop(reader, bg_pending, bg_event_bus).await {
+                if let Err(e) = reader_loop(reader, bg_pending, bg_event_bus, bg_log_bus).await {
                     tracing::warn!("VeloceClient reader error: {e:#}");
                 }
             });
 
-            let mut client = Self { writer, pending, event_bus, client_id: Uuid::nil() };
+            let mut client = Self { writer, pending, event_bus, log_bus, client_id: Uuid::nil() };
 
             // Read the per-session PSK that Core wrote at startup.
             let psk_hash = read_psk().context("read session PSK")?;
@@ -145,12 +173,13 @@ impl VeloceClient {
         args:       &[&str],
     ) -> Result<NodeSpawnedMsg> {
         self.spawn_node_with(SpawnNodeMsg {
-            app_name:   app_name.into(),
-            executable: executable.into(),
-            args:       args.iter().map(|s| s.to_string()).collect(),
-            env:        vec![],
-            limits:     None,
-            auto_kill:  true,
+            app_name:       app_name.into(),
+            executable:     executable.into(),
+            args:           args.iter().map(|s| s.to_string()).collect(),
+            env:            vec![],
+            limits:         None,
+            auto_kill:      true,
+            restart_policy: None,
         }).await
     }
 
@@ -237,16 +266,29 @@ impl VeloceClient {
     }
 
     /// Subscribe to events for a specific node.
-    /// Also sends a `SubscribeNodeEvents` request to Core so it begins
-    /// forwarding events for nodes this client didn't spawn directly.
     pub async fn subscribe_node_events(&mut self, node_id: Uuid) -> Result<NodeEventStream> {
-        // Tell Core to forward events for this node_id to us.
         match self.request(Body::SubscribeNodeEvents { node_id }).await? {
             Body::Pong => {}
             Body::Error(e) => anyhow::bail!("subscribe failed: {}", e.message),
             other => anyhow::bail!("unexpected reply: {:?}", other.msg_type()),
         }
         Ok(NodeEventStream { inner: self.event_bus.subscribe(), filter: Some(node_id) })
+    }
+
+    /// Subscribe to stdout/stderr log chunks from ALL nodes.
+    pub fn subscribe_all_logs(&self) -> NodeLogStream {
+        NodeLogStream { inner: self.log_bus.subscribe(), filter: None }
+    }
+
+    /// Subscribe to stdout/stderr log chunks from a specific node.
+    /// Sends `SubscribeNodeLogs` to Core so it begins forwarding chunks.
+    pub async fn subscribe_node_logs(&mut self, node_id: Uuid) -> Result<NodeLogStream> {
+        match self.request(Body::SubscribeNodeLogs { node_id }).await? {
+            Body::Pong => {}
+            Body::Error(e) => anyhow::bail!("subscribe logs failed: {}", e.message),
+            other => anyhow::bail!("unexpected reply: {:?}", other.msg_type()),
+        }
+        Ok(NodeLogStream { inner: self.log_bus.subscribe(), filter: Some(node_id) })
     }
 
     // ── Ping ──────────────────────────────────────────────────────────────────
@@ -289,7 +331,12 @@ impl VeloceClient {
 // ── BACKGROUND READER ─────────────────────────────────────────────────────────
 
 #[cfg(windows)]
-async fn reader_loop<R>(mut reader: R, pending: PendingMap, event_bus: EventBus) -> Result<()>
+async fn reader_loop<R>(
+    mut reader: R,
+    pending:    PendingMap,
+    event_bus:  EventBus,
+    log_bus:    LogBus,
+) -> Result<()>
 where
     R: AsyncReadExt + Unpin,
 {
@@ -304,15 +351,12 @@ where
         loop {
             match Codec::decode_safe(&mut acc) {
                 Ok(Some((_hdr, env))) => {
-                    // Try to route as a correlated reply first.
                     if let Some(tx) = pending.lock().remove(&env.correlation_id) {
                         let _ = tx.send(env.body);
                     } else {
-                        // Unsolicited push — route NodeEvent to the broadcast bus.
                         match env.body {
-                            Body::NodeEvent(msg) => {
-                                let _ = event_bus.send(msg);
-                            }
+                            Body::NodeEvent(msg)    => { let _ = event_bus.send(msg); }
+                            Body::NodeLogChunk(msg) => { let _ = log_bus.send(msg); }
                             other => tracing::debug!("unsolicited push: {:?}", other.msg_type()),
                         }
                     }
