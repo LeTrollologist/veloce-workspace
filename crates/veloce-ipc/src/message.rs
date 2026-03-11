@@ -36,6 +36,10 @@ pub enum MessageType {
     NodeList        = 0x25,
     /// Core → Client: unsolicited node status change event.
     NodeEvent       = 0x26,
+    /// Client → Core: subscribe to push events for a specific node.
+    SubscribeNodeEvents   = 0x27,
+    /// Client → Core: cancel an event subscription.
+    UnsubscribeNodeEvents = 0x28,
 
     // ── Registry queries ──────────────────────────────────────
     /// Client → Core: read a key from the mmap registry.
@@ -75,6 +79,8 @@ impl TryFrom<u8> for MessageType {
             0x20 => SpawnNode,       0x21 => NodeSpawned,     0x22 => KillNode,
             0x23 => NodeKilled,      0x24 => QueryNodes,      0x25 => NodeList,
             0x26 => NodeEvent,
+            0x27 => SubscribeNodeEvents,
+            0x28 => UnsubscribeNodeEvents,
             0x30 => RegistryGet,     0x31 => RegistryValue,   0x32 => RegistrySet,
             0x33 => RegistryAck,
             0x40 => NetRegisterHost, 0x41 => NetHostRegistered,
@@ -148,6 +154,10 @@ pub enum Body {
     QueryNodes,
     NodeList(NodeListMsg),
     NodeEvent(NodeEventMsg),
+    /// Subscribe to push events for a specific node (client → Core).
+    SubscribeNodeEvents { node_id: Uuid },
+    /// Cancel event subscription (client → Core).
+    UnsubscribeNodeEvents { node_id: Uuid },
 
     // Registry
     RegistryGet { key: String },
@@ -182,7 +192,9 @@ impl Body {
             NodeKilled(_)          => MessageType::NodeKilled,
             QueryNodes             => MessageType::QueryNodes,
             NodeList(_)            => MessageType::NodeList,
-            NodeEvent(_)           => MessageType::NodeEvent,
+            NodeEvent(_)               => MessageType::NodeEvent,
+            SubscribeNodeEvents { .. } => MessageType::SubscribeNodeEvents,
+            UnsubscribeNodeEvents{..}  => MessageType::UnsubscribeNodeEvents,
             RegistryGet { .. }     => MessageType::RegistryGet,
             RegistryValue(_)       => MessageType::RegistryValue,
             RegistrySet { .. }     => MessageType::RegistrySet,

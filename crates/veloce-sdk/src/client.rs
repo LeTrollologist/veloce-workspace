@@ -20,7 +20,7 @@ use veloce_ipc::{
     Codec,
     message::{
         Body, Capability, Envelope, Flags, NodeLimits, NodeSpawnedMsg,
-        NetHostEntry, SpawnNodeMsg,
+        NetHostEntry, NodeEventMsg, SpawnNodeMsg,
     },
     PIPE_NAME,
 };
@@ -28,15 +28,50 @@ use veloce_ipc::{
 // ── REQUEST TABLE ─────────────────────────────────────────────────────────────
 
 type PendingMap = Arc<Mutex<HashMap<Uuid, oneshot::Sender<Body>>>>;
+type EventBus   = Arc<tokio::sync::broadcast::Sender<NodeEventMsg>>;
 
 // ── CLIENT ────────────────────────────────────────────────────────────────────
 
 pub struct VeloceClient {
     /// Write half — protected so concurrent callers can send without races.
-    writer:  Arc<AsyncMutex<tokio::io::WriteHalf<tokio::net::windows::named_pipe::NamedPipeClient>>>,
-    pending: PendingMap,
+    writer:    Arc<AsyncMutex<tokio::io::WriteHalf<tokio::net::windows::named_pipe::NamedPipeClient>>>,
+    pending:   PendingMap,
+    /// Broadcast bus for unsolicited NodeEvent push frames from Core.
+    event_bus: EventBus,
     /// Our assigned client ID (set after handshake).
     pub client_id: Uuid,
+}
+
+// ── NODE EVENT STREAM ─────────────────────────────────────────────────────────
+
+/// Async-friendly stream of `NodeEventMsg` values pushed by VeloceCore.
+///
+/// Optionally filtered to a single `node_id`.  Use `.next().await` to receive.
+pub struct NodeEventStream {
+    inner:  tokio::sync::broadcast::Receiver<NodeEventMsg>,
+    filter: Option<Uuid>,
+}
+
+impl NodeEventStream {
+    /// Returns the next event, waiting asynchronously.  Returns `None` when
+    /// the channel is closed (Core disconnected).
+    pub async fn next(&mut self) -> Option<NodeEventMsg> {
+        loop {
+            match self.inner.recv().await {
+                Ok(msg) => {
+                    if let Some(id) = self.filter {
+                        if msg.node_id != id { continue; }
+                    }
+                    return Some(msg);
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    tracing::warn!("NodeEventStream lagged by {n} — some events were dropped");
+                    continue;
+                }
+                Err(_) => return None,
+            }
+        }
+    }
 }
 
 impl VeloceClient {
@@ -59,18 +94,24 @@ impl VeloceClient {
             let pipe = retry_connect(PIPE_NAME, Duration::from_secs(10)).await?;
             let (reader, writer_half) = tokio::io::split(pipe);
 
-            let pending:  PendingMap = Arc::new(Mutex::new(HashMap::new()));
-            let writer    = Arc::new(AsyncMutex::new(writer_half));
+            let pending:   PendingMap = Arc::new(Mutex::new(HashMap::new()));
+            let writer     = Arc::new(AsyncMutex::new(writer_half));
+            let (event_tx, _) = tokio::sync::broadcast::channel(128);
+            let event_bus: EventBus = Arc::new(event_tx);
 
             // Spawn background reader
-            let bg_pending = pending.clone();
+            let bg_pending   = pending.clone();
+            let bg_event_bus = event_bus.clone();
             tokio::spawn(async move {
-                if let Err(e) = reader_loop(reader, bg_pending).await {
+                if let Err(e) = reader_loop(reader, bg_pending, bg_event_bus).await {
                     tracing::warn!("VeloceClient reader error: {e:#}");
                 }
             });
 
-            let mut client = Self { writer, pending, client_id: Uuid::nil() };
+            let mut client = Self { writer, pending, event_bus, client_id: Uuid::nil() };
+
+            // Read the per-session PSK that Core wrote at startup.
+            let psk_hash = read_psk().context("read session PSK")?;
 
             // Handshake
             let ack = client.request(Body::Handshake(
@@ -78,7 +119,7 @@ impl VeloceClient {
                     app_name:    app_name.into(),
                     sdk_version: sdk_version.into(),
                     capabilities,
-                    psk_hash: None,
+                    psk_hash: Some(psk_hash),
                 }
             )).await?;
 
@@ -188,6 +229,26 @@ impl VeloceClient {
         }
     }
 
+    // ── Push event subscriptions ──────────────────────────────────────────────
+
+    /// Subscribe to ALL node events pushed by VeloceCore.
+    pub fn subscribe_all_events(&self) -> NodeEventStream {
+        NodeEventStream { inner: self.event_bus.subscribe(), filter: None }
+    }
+
+    /// Subscribe to events for a specific node.
+    /// Also sends a `SubscribeNodeEvents` request to Core so it begins
+    /// forwarding events for nodes this client didn't spawn directly.
+    pub async fn subscribe_node_events(&mut self, node_id: Uuid) -> Result<NodeEventStream> {
+        // Tell Core to forward events for this node_id to us.
+        match self.request(Body::SubscribeNodeEvents { node_id }).await? {
+            Body::Pong => {}
+            Body::Error(e) => anyhow::bail!("subscribe failed: {}", e.message),
+            other => anyhow::bail!("unexpected reply: {:?}", other.msg_type()),
+        }
+        Ok(NodeEventStream { inner: self.event_bus.subscribe(), filter: Some(node_id) })
+    }
+
     // ── Ping ──────────────────────────────────────────────────────────────────
 
     pub async fn ping(&mut self) -> Result<()> {
@@ -228,7 +289,7 @@ impl VeloceClient {
 // ── BACKGROUND READER ─────────────────────────────────────────────────────────
 
 #[cfg(windows)]
-async fn reader_loop<R>(mut reader: R, pending: PendingMap) -> Result<()>
+async fn reader_loop<R>(mut reader: R, pending: PendingMap, event_bus: EventBus) -> Result<()>
 where
     R: AsyncReadExt + Unpin,
 {
@@ -243,11 +304,17 @@ where
         loop {
             match Codec::decode_safe(&mut acc) {
                 Ok(Some((_hdr, env))) => {
+                    // Try to route as a correlated reply first.
                     if let Some(tx) = pending.lock().remove(&env.correlation_id) {
                         let _ = tx.send(env.body);
                     } else {
-                        // Push (unsolicited) — log for now
-                        tracing::debug!("unsolicited push: {:?}", env.msg_type());
+                        // Unsolicited push — route NodeEvent to the broadcast bus.
+                        match env.body {
+                            Body::NodeEvent(msg) => {
+                                let _ = event_bus.send(msg);
+                            }
+                            other => tracing::debug!("unsolicited push: {:?}", other.msg_type()),
+                        }
                     }
                 }
                 Ok(None)  => break,
@@ -262,6 +329,23 @@ where
 
     tracing::info!("VeloceClient reader loop exited");
     Ok(())
+}
+
+// ── PSK READER ────────────────────────────────────────────────────────────────
+
+/// Read and decode the 32-byte PSK from the file Core wrote at startup.
+fn read_psk() -> Result<[u8; 32]> {
+    let path = veloce_ipc::psk_path();
+    let hex  = std::fs::read_to_string(&path)
+        .with_context(|| format!("open PSK file {} — is VeloceCore running?", path.display()))?;
+    let hex = hex.trim();
+    anyhow::ensure!(hex.len() == 64, "PSK file has unexpected length ({})", hex.len());
+    let mut out = [0u8; 32];
+    for (i, chunk) in hex.as_bytes().chunks(2).enumerate() {
+        let nibble = std::str::from_utf8(chunk).context("PSK file not UTF-8")?;
+        out[i] = u8::from_str_radix(nibble, 16).context("PSK file not hex")?;
+    }
+    Ok(out)
 }
 
 // ── CONNECT WITH RETRY ────────────────────────────────────────────────────────
