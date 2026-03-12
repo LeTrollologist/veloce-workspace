@@ -137,8 +137,9 @@ async fn main() -> Result<()> {
         args:           cli.args.clone(),
         env:            vec![],
         limits,
-        auto_kill:      !cli.detach,  // kill node when this process exits, unless detached
+        auto_kill:        !cli.detach,  // kill node when this process exits, unless detached
         restart_policy,
+        use_appcontainer: false,
     };
 
     // ── Spawn ─────────────────────────────────────────────────────────────────
