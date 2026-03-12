@@ -29,25 +29,23 @@
 
 ## 3. Scope Definition
 
-### In Scope (v0.1 – v0.4)
+### In Scope (v0.1 – v0.5)
 
 | Component | Features shipped |
 |---|---|
-| **veloce-core** | Background Windows service, SID ACL + OsRng PSK, Job Objects (CPU/memory/lifetime), mmap registry, health-loop, AppContainer kernel sandbox, MeshState, mesh TCP server (:7474) |
+| **veloce-core** | Background Windows service, SID ACL + OsRng PSK, Job Objects (CPU/memory/lifetime), mmap registry, health-loop, AppContainer kernel sandbox, MeshState, mesh TCP server (:7474), PolicyEngine (TOML RBAC + mesh ACLs, hot-reload) |
 | **veloce-net** | DNS :5354 for `*.vln`/`*.veloce`, SOCKS5 :1055, TTL GC; DNS compression DoS fix (max 10 pointer jumps) |
-| **veloce-ipc** | VELC framing, bincode encoding, message types 0x00–0x61 (core/net/sdk) + 0x50–0x57 (mesh), stable discriminants |
-| **veloce-sdk** | `VeloceClient` async Rust client, C FFI (`veloce_sdk.dll`), `veloce_poll_event()` pump, 5 template methods, 4 mesh methods |
-| **veloce-mesh** | x25519 identity (Noise_IK_25519_ChaChaPoly_BLAKE2s), PeerConnection gossip (LWW CRDT), transparent TCP forwarder, join-code pairing |
+| **veloce-ipc** | VELC framing, bincode encoding, message types 0x00–0x61 (core/net/sdk) + 0x50–0x57 (mesh) + 0x70–0x72 (policy), stable discriminants; `ErrorCode::PolicyDenied (11)` |
+| **veloce-sdk** | `VeloceClient` async Rust client, C FFI (`veloce_sdk.dll`), `veloce_poll_event()` pump, 5 template methods, 4 mesh methods, `policy_get_rules()`, `policy_reload()` |
+| **veloce-mesh** | x25519 identity (Noise_IK_25519_ChaChaPoly_BLAKE2s), PeerConnection gossip (LWW CRDT), transparent TCP forwarder, join-code pairing, STUN WAN discovery, VM2 multi-address join codes, ACL callback filter |
 | **apps/dashboard** | Tauri 2 GUI — nodes table, templates, log viewer, resource meters (CPU% + peak MB), VeloceNet tab, mesh UI (This Machine card + Connected Peers) |
 | **apps/installer** | Glassmorphic 5-step Tauri installer; service registration, PATH, registry |
-| **apps/veloce-run** | CLI launcher (`--name`, `--hostname`, `--cpu`, `--mem`, `--restarts`, `--watch`, `--detach`) + `mesh identity/join/peers/leave` subcommand group |
+| **apps/veloce-run** | CLI launcher (`--name`, `--hostname`, `--cpu`, `--mem`, `--restarts`, `--watch`, `--detach`) + `mesh identity/join/peers/leave` + `policy show/reload` |
 
 ### Out of Scope (Future Releases)
 
 | Feature | Target |
 |---|---|
-| Policy Engine (process RBAC + mesh ACLs) | v0.5 |
-| STUN/ICE WAN hole-punching | v0.5 |
 | Dashboard v2 (topology canvas, heatmap, log viewer panel) | v0.6 |
 | WireGuard-NT kernel driver (perf upgrade, requires admin) | v1.0 |
 | Signed installer with auto-update | v1.0 |
@@ -96,13 +94,29 @@
 - [x] `apps/veloce-run` CLI — `--name`, `--hostname`, `--cpu`, `--mem`, `--restarts`, `--watch`, `--detach`
 - [x] AppContainer isolation — optional per-node kernel-enforced sandbox (no admin required)
 
-### v0.4.0 🟡 PR #10 open
+### v0.4.0 ✅ Released
 
-- [ ] `crates/veloce-mesh` — Noise_IK P2P encrypted mesh (same crypto as WireGuard, zero-admin)
-- [ ] Multi-machine `.vln` namespace via join-code pairing + LWW gossip protocol
-- [ ] `veloce-run mesh identity / join / peers / leave` CLI subcommands
-- [ ] Dashboard mesh UI (This Machine card + Connected Peers table)
-- [ ] Security fixes: DNS compression DoS, OsRng PSK, identity key file ACL
+- [x] `crates/veloce-mesh` — Noise_IK P2P encrypted mesh (same crypto as WireGuard, zero-admin)
+- [x] Multi-machine `.vln` namespace via join-code pairing + LWW gossip protocol
+- [x] `veloce-run mesh identity / join / peers / leave` CLI subcommands
+- [x] Dashboard mesh UI (This Machine card + Connected Peers table)
+- [x] Security fixes: DNS compression DoS, OsRng PSK, identity key file ACL
+
+### v0.5.0 ✅ Released
+
+- [x] `crates/veloce-core/src/policy.rs` — PolicyEngine: TOML-backed RBAC + mesh ACL rules, hot-reload
+- [x] `crates/veloce-mesh/src/stun.rs` — minimal RFC 5389/8489 STUN binding-request client
+- [x] VM2 multi-address join code format (pub_key + n_addrs + [family+ip+port]* + timestamp)
+- [x] `decode_join_code_addrs()` — transparent VM1 + VM2 backward-compatible decoding
+- [x] STUN background task: upgrades join code cache from VM1 → VM2 at startup when WAN ≠ LAN
+- [x] `connect_to_peer()` address racing: 250 ms stagger, first connection wins
+- [x] Mesh ACL callback injected into `PeerConnection` — filters gossip entries at forwarder install
+- [x] IPC message types `0x70–0x72` (PolicyGetRules, PolicyRulesResult, PolicyReload)
+- [x] `ErrorCode::PolicyDenied (11)`
+- [x] Capability enforcement in SpawnNode, KillNode, NetRegisterHost handlers
+- [x] SDK: `policy_get_rules()`, `policy_reload()` on `VeloceClient`
+- [x] `veloce-run policy show / reload` CLI subcommands
+- [x] Bug fix: `pipe_security` TOKEN_USER buffer alignment (startup crash on x64)
 
 ---
 
@@ -151,7 +165,7 @@
 | Job Object limits exceeded | Medium | Document limits, provide fallback mode |
 | Memory-mapped registry corruption | Low | In-memory fallback, periodic flush |
 | SOCKS5 proxy not supported by app | Low | DNS-only mode, environment variable hints |
-| Mesh peer behind strict NAT (WAN) | Medium | LAN-only for v0.4; STUN hole-punching in v0.5 |
+| Mesh peer behind strict NAT (WAN) | Low | STUN WAN discovery + VM2 join codes shipped in v0.5; symmetric NAT still requires manual port forward to :7474 |
 | Identity key file compromise | Medium | File ACL (read-only, owner-only) set at creation |
 
 ---
@@ -163,9 +177,9 @@
 | v0.1.0 (Core + SDK + Dashboard) | ✅ Released |
 | v0.2.0 (Installer, Templates, Resources, Health, Logs) | ✅ Released |
 | v0.3.0 (veloce-run CLI + AppContainer — Phase 1 complete) | ✅ Released |
-| v0.4.0 (Multi-Machine VeloceNet P2P mesh) | 🟡 Q2 2026, PR #10 open |
-| v0.5.0 (Policy Engine + STUN WAN mesh) | Q3 2026 |
-| v0.6.0 (Dashboard v2 — topology canvas, heatmap, log viewer) | Q3 2026 |
+| v0.4.0 (Multi-Machine VeloceNet P2P mesh) | ✅ Released |
+| v0.5.0 (Policy Engine + STUN WAN mesh) | ✅ Released |
+| v0.6.0 (Dashboard v2 — topology canvas, heatmap, log viewer) | Q2 2026 |
 | v1.0 (WireGuard-NT kernel driver + signed auto-update installer) | Q4 2026 |
 | v2.0 (Linux port + unified SDK bindings) | 2027 |
 
@@ -175,16 +189,17 @@
 
 ### Phase 2 — Mesh & Automation (v0.5 – v0.6)
 
-**Policy Engine (v0.5)**
-- Tier 1 — Process RBAC: declarative rules governing which applications may request which capabilities (`SpawnNodes`, `NetRegister`, etc.)
-- Tier 2 — Mesh ACLs: `ALLOW node:api.vln TO node:db.vln ON PORT 5432` style firewall rules enforced at the forwarder layer
-- TOML/JSON policy files hot-reloaded by `veloce-core` without restart
+**Policy Engine ✅ v0.5**
+- Tier 1 — Process RBAC: declarative TOML rules governing which applications may request which capabilities (`SpawnNodes`, `NetRegister`, etc.); enforced server-side before any action is taken
+- Tier 2 — Mesh ACLs: filter peer-gossiped `.vln` hostnames before forwarder installation; optionally scoped to a specific source peer
+- `veloce-policy.toml` hot-reloaded via `veloce-run policy reload` — no service restart required
+- Glob support (`"*"`, `"*.suffix"`) in both app names and hostnames
 
-**STUN WAN Mesh (v0.5)**
-- Extend the v0.4 LAN mesh across NAT / internet
-- Use STUN binding requests to discover each machine's external IP + port
-- Peers exchange STUN-discovered endpoints over the already-encrypted Noise channel
-- No manual port forwarding or VPN configuration required for typical home/office NAT
+**STUN WAN Mesh ✅ v0.5**
+- At startup, VeloceCore sends a STUN Binding Request (RFC 5389/8489) to discover the external IP
+- Join code upgraded from VM1 (single LAN address) to VM2 (LAN + WAN addresses) when WAN ≠ LAN
+- `connect_to_peer()` races all addresses with 250 ms stagger — LAN wins when on same network, WAN wins across NAT
+- No manual port forwarding required for typical home/office NAT (symmetric NAT still requires `:7474` port forward)
 
 **Dashboard v2 (v0.6)**
 - Drag-and-drop node wiring canvas — visually connect `.vln` services, see data flow

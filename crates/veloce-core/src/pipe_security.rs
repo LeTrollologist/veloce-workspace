@@ -41,20 +41,28 @@ use windows::Win32::{
 unsafe fn sid_string_from_token(token: HANDLE) -> Result<String> {
     // A TOKEN_USER struct is followed immediately in memory by the SID.
     // The SID for a typical domain account fits comfortably in 512 bytes.
-    let mut buf = [0u8; 512];
+    //
+    // TOKEN_USER contains a pointer (PSID), so the buffer must be at least
+    // pointer-aligned (8 bytes on x64).  A bare [u8; 512] is only 1-byte
+    // aligned, which causes a misaligned-pointer panic on the cast below.
+    #[repr(align(8))]
+    struct AlignedBuf([u8; 512]);
+    let mut buf = AlignedBuf([0u8; 512]);
     let mut returned = 0u32;
 
     GetTokenInformation(
         token,
         TokenUser,
-        Some(buf.as_mut_ptr() as *mut _),
-        buf.len() as u32,
+        Some(buf.0.as_mut_ptr() as *mut _),
+        buf.0.len() as u32,
         &mut returned,
     )
     .context("GetTokenInformation(TokenUser)")?;
 
     // Reinterpret the buffer as TOKEN_USER to reach the Sid pointer.
-    let tu = &*(buf.as_ptr() as *const TOKEN_USER);
+    // Safety: buf is repr(align(8)) so the cast is alignment-safe; Windows
+    // wrote a valid TOKEN_USER into it and returned the actual byte count.
+    let tu = &*(buf.0.as_ptr() as *const TOKEN_USER);
     let sid = tu.User.Sid; // PSID (*mut c_void)
 
     // Ask Windows to format the SID as a string; it allocates via LocalAlloc.
