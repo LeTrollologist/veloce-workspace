@@ -4178,7 +4178,7 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
 name = "veloce-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "bincode",
@@ -4230,7 +4230,7 @@ dependencies = [
 
 [[package]]
 name = "veloce-ipc"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bincode",
  "bitflags 2.11.0",
@@ -4243,7 +4243,7 @@ dependencies = [
 
 [[package]]
 name = "veloce-net"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -4256,7 +4256,7 @@ dependencies = [
 
 [[package]]
 name = "veloce-sdk"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "bytes",
