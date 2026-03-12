@@ -227,6 +227,59 @@ impl VeloceClient {
         }
     }
 
+    // ── Node Templates ────────────────────────────────────────────────────────
+    // Templates are stored in the Core registry as JSON under two key schemes:
+    //   "template:__index__"  → JSON Vec<String> of template names
+    //   "template:<name>"     → JSON SpawnNodeMsg
+
+    const TMPL_INDEX: &'static str = "template:__index__";
+
+    fn tmpl_key(name: &str) -> String { format!("template:{name}") }
+
+    /// Persist a named spawn template into the Core registry.
+    pub async fn save_template(&mut self, name: &str, spec: SpawnNodeMsg) -> Result<()> {
+        let value = serde_json::to_vec(&spec)?;
+        self.registry_set(&Self::tmpl_key(name), value).await?;
+        let mut names = self.list_templates().await?;
+        if !names.contains(&name.to_owned()) {
+            names.push(name.to_owned());
+            self.registry_set(Self::TMPL_INDEX, serde_json::to_vec(&names)?).await?;
+        }
+        Ok(())
+    }
+
+    /// Return the names of all saved templates.
+    pub async fn list_templates(&mut self) -> Result<Vec<String>> {
+        match self.registry_get(Self::TMPL_INDEX).await? {
+            Some(b) if !b.is_empty() => Ok(serde_json::from_slice(&b)?),
+            _                        => Ok(vec![]),
+        }
+    }
+
+    /// Retrieve a single template by name, or `None` if it doesn't exist.
+    pub async fn get_template(&mut self, name: &str) -> Result<Option<SpawnNodeMsg>> {
+        match self.registry_get(&Self::tmpl_key(name)).await? {
+            Some(b) if !b.is_empty() => Ok(Some(serde_json::from_slice(&b)?)),
+            _                        => Ok(None),
+        }
+    }
+
+    /// Delete a template by name (removes from index and clears its value).
+    pub async fn delete_template(&mut self, name: &str) -> Result<()> {
+        let mut names = self.list_templates().await?;
+        names.retain(|n| n != name);
+        self.registry_set(Self::TMPL_INDEX, serde_json::to_vec(&names)?).await?;
+        self.registry_set(&Self::tmpl_key(name), vec![]).await?;
+        Ok(())
+    }
+
+    /// Instantiate a node from a saved template.
+    pub async fn spawn_from_template(&mut self, name: &str) -> Result<NodeSpawnedMsg> {
+        let spec = self.get_template(name).await?
+            .ok_or_else(|| anyhow::anyhow!("template '{}' not found", name))?;
+        self.spawn_node_with(spec).await
+    }
+
     // ── VeloceNet ─────────────────────────────────────────────────────────────
 
     pub async fn register_host(
