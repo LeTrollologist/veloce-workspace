@@ -6,6 +6,7 @@ members = [
     "crates/veloce-net",
     "crates/veloce-sdk",
     "apps/dashboard/src-tauri",
+    "apps/installer/src-tauri",
 ]
 
 [workspace.package]
@@ -39,6 +40,7 @@ memmap2     = "0.9"
 parking_lot = "0.12"
 
 # Windows-specific (declared here for version pinning; crates opt-in via their own Cargo.toml)
+winreg           = "0.52"
 windows-service = "0.6"
 windows         = { version = "0.54", features = [
     "Win32_Foundation",
