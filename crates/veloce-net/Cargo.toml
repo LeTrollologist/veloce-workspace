@@ -14,3 +14,4 @@ parking_lot = { workspace = true }
 uuid        = { workspace = true }
 chrono      = { workspace = true }
 thiserror   = { workspace = true }
+veloce-ipc  = { path = "../veloce-ipc" }

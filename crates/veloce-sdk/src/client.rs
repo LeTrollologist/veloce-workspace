@@ -21,7 +21,7 @@ use veloce_ipc::{
     message::{
         Body, Capability, Envelope, Flags, MeshConnectMsg, MeshConnectResultMsg,
         MeshDisconnectMsg, MeshInfoMsg, NodeLogChunkMsg, NodeSpawnedMsg,
-        NodeEventMsg, PeerInfoMsg, PolicyRulesMsg, SpawnNodeMsg,
+        NodeEventMsg, PeerInfoMsg, PolicyRulesMsg, SpawnNodeMsg, TrafficStatsMsg,
     },
     PIPE_NAME,
 };
@@ -420,6 +420,21 @@ impl VeloceClient {
             Body::PolicyRulesResult(msg) => Ok(msg),
             Body::Error(e) => bail!("policy_reload error: {}", e.message),
             other => bail!("policy_reload: unexpected response {:?}", other.msg_type()),
+        }
+    }
+
+    // ── Traffic stats ─────────────────────────────────────────────────────────
+
+    /// Query per-tunnel (Noise) and per-.vln host byte counters from Core.
+    ///
+    /// Returns cumulative counters since the connection was established /
+    /// hostname was registered.  Compute bytes-per-second in the caller by
+    /// diffing successive snapshots using the `ts_ms` timestamp field.
+    pub async fn query_traffic(&mut self) -> Result<TrafficStatsMsg> {
+        match self.request(Body::TrafficQuery).await? {
+            Body::TrafficStatsResult(s) => Ok(s),
+            Body::Error(e) => bail!("query_traffic error: {}", e.message),
+            other => bail!("query_traffic: unexpected {:?}", other.msg_type()),
         }
     }
 

@@ -25,6 +25,7 @@ use veloce_ipc::{
         HandshakeAckMsg, MeshConnectMsg, MeshDisconnectMsg,
         NodeEventMsg, NodeInfo, NodeKilledMsg, NodeListMsg,
         NodeLogChunkMsg, NodeResourceMsg, NodeSpawnedMsg, NodeStatus as IpcNodeStatus,
+        TrafficStatsMsg,
     },
     PIPE_NAME,
 };
@@ -461,6 +462,21 @@ where
             Body::PolicyRulesResult(_) => {
                 self.send_error(Some(cid), ErrorCode::InvalidMessage,
                     "PolicyRulesResult is server-to-client only".into()).await?;
+            }
+
+            // ── Traffic stats ──────────────────────────────────────────────
+            Body::TrafficQuery => {
+                let host_stats = self.state.net_registry().traffic_snapshot();
+                let stats = self.state.mesh.as_ref()
+                    .map(|m| m.query_traffic_stats(host_stats.clone()))
+                    .unwrap_or_else(|| TrafficStatsMsg { hosts: host_stats, ..Default::default() });
+                self.send_reply(cid, Body::TrafficStatsResult(stats)).await?;
+            }
+
+            // TrafficStatsResult is a server→client message; reject it from clients.
+            Body::TrafficStatsResult(_) => {
+                self.send_error(Some(cid), ErrorCode::InvalidMessage,
+                    "TrafficStatsResult is server-to-client only".into()).await?;
             }
 
             other => {

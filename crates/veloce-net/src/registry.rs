@@ -7,7 +7,13 @@ to registered local ports without a full IPC round-trip.
 
 use chrono::{DateTime, Utc};
 use parking_lot::RwLock;
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+};
 use uuid::Uuid;
 
 // ── RECORD ────────────────────────────────────────────────────────────────────
@@ -23,6 +29,9 @@ pub struct NetRecord {
     pub ttl_secs:      u64,
     /// Wall-clock time when the entry was registered.
     pub registered_at: DateTime<Utc>,
+    /// Cumulative bytes proxied through SOCKS5 for this hostname.
+    /// Shared via Arc so clones returned by `resolve()` point to the same counter.
+    pub bytes_proxied: Arc<AtomicU64>,
 }
 
 // ── REGISTRY ──────────────────────────────────────────────────────────────────
@@ -52,6 +61,7 @@ impl NetRegistry {
             local_port,
             ttl_secs,
             registered_at: Utc::now(),
+            bytes_proxied: Arc::new(AtomicU64::new(0)),
         });
     }
 
@@ -90,6 +100,18 @@ impl NetRegistry {
             .read()
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
+    }
+
+    /// Snapshot of per-hostname cumulative byte counters for traffic reporting.
+    pub fn traffic_snapshot(&self) -> Vec<veloce_ipc::message::HostTrafficMsg> {
+        self.entries
+            .read()
+            .iter()
+            .map(|(hostname, rec)| veloce_ipc::message::HostTrafficMsg {
+                hostname:      hostname.clone(),
+                bytes_proxied: rec.bytes_proxied.load(Ordering::Relaxed),
+            })
             .collect()
     }
 }

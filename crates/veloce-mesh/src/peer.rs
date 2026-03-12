@@ -7,7 +7,7 @@
 use std::{
     net::SocketAddr,
     sync::{
-        atomic::{AtomicU32, Ordering},
+        atomic::{AtomicU32, AtomicU64, Ordering},
         Arc,
     },
     time::{SystemTime, UNIX_EPOCH},
@@ -72,6 +72,10 @@ pub struct PeerConnection {
     pub peer_name:        String,
     pub connected_since:  u64,
     pub latency_ms:       Arc<AtomicU32>,
+    /// Cumulative bytes written to the Noise transport (outbound).
+    pub tx_bytes:         Arc<AtomicU64>,
+    /// Cumulative bytes read from the Noise transport (inbound).
+    pub rx_bytes:         Arc<AtomicU64>,
     /// Send a message to the peer.
     pub tx:               mpsc::Sender<PeerMsg>,
     /// .vln entries the remote peer has advertised.
@@ -98,6 +102,8 @@ impl PeerConnection {
     ) -> Arc<Self> {
         let (tx, rx) = mpsc::channel::<PeerMsg>(256);
         let latency  = Arc::new(AtomicU32::new(0));
+        let tx_bytes = Arc::new(AtomicU64::new(0));
+        let rx_bytes = Arc::new(AtomicU64::new(0));
         let remote_hosts = Arc::new(RwLock::new(Vec::<GossipEntry>::new()));
         let connected_since = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -109,6 +115,8 @@ impl PeerConnection {
             peer_name: peer_name.clone(),
             connected_since,
             latency_ms: latency.clone(),
+            tx_bytes: tx_bytes.clone(),
+            rx_bytes: rx_bytes.clone(),
             tx: tx.clone(),
             remote_hosts: remote_hosts.clone(),
         });
@@ -123,7 +131,8 @@ impl PeerConnection {
         let ts_w = transport.clone();
 
         // Writer task
-        let peer_id_w = peer_id;
+        let peer_id_w  = peer_id;
+        let tx_bytes_w = tx_bytes.clone();
         tokio::spawn(async move {
             use tokio::io::AsyncWriteExt;
             let mut write_half = write_half;
@@ -152,15 +161,17 @@ impl PeerConnection {
                     tracing::debug!("peer {peer_id_w} write error: {e}");
                     break;
                 }
+                tx_bytes_w.fetch_add(ciphertext.len() as u64, Ordering::Relaxed);
             }
         });
 
         // Reader task
-        let peer_id_r        = peer_id;
+        let peer_id_r         = peer_id;
         let initial_peer_name = peer_name.clone();
-        let remote_h         = remote_hosts.clone();
-        let net_reg          = net_registry.clone();
-        let tx_ping          = tx.clone();
+        let remote_h          = remote_hosts.clone();
+        let net_reg           = net_registry.clone();
+        let tx_ping           = tx.clone();
+        let rx_bytes_r        = rx_bytes.clone();
         tokio::spawn(async move {
             use tokio::io::AsyncReadExt;
             let mut read_half = read_half;
@@ -194,6 +205,7 @@ impl PeerConnection {
                                 break;
                             }
                         };
+                        rx_bytes_r.fetch_add(cipher.len() as u64, Ordering::Relaxed);
                         let plain = {
                             let mut ts = ts_r.lock().await;
                             let mut buf = vec![0u8; cipher.len()];
@@ -221,6 +233,14 @@ impl PeerConnection {
         });
 
         conn
+    }
+
+    /// Cumulative (tx_bytes, rx_bytes) counters for this tunnel.
+    pub fn traffic_snapshot(&self) -> (u64, u64) {
+        (
+            self.tx_bytes.load(Ordering::Relaxed),
+            self.rx_bytes.load(Ordering::Relaxed),
+        )
     }
 
     /// Snapshot for IPC responses.

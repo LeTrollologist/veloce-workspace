@@ -18,7 +18,7 @@ use uuid::Uuid;
 use tauri::Emitter;
 use veloce_ipc::message::{
     Body, Capability, MeshConnectResultMsg, MeshInfoMsg, NodeLimits, PeerInfoMsg,
-    RestartPolicy, SpawnNodeMsg,
+    PolicyRulesMsg, RestartPolicy, SpawnNodeMsg, TrafficStatsMsg,
 };
 use veloce_sdk::VeloceClient;
 
@@ -120,6 +120,24 @@ async fn connect(
                 node_id: ev.node_id.to_string(),
                 event:   format!("{:?}", ev.event),
             });
+        }
+    });
+
+    // Push traffic snapshot every 2 s → "traffic-update" Tauri events
+    let client_traffic = Arc::clone(&state.client);
+    let app_traffic = app.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+            let mut guard = client_traffic.lock().await;
+            if let Some(c) = guard.as_mut() {
+                if let Ok(stats) = c.query_traffic().await {
+                    let _ = app_traffic.emit("traffic-update", stats);
+                }
+            } else {
+                // Client disconnected — stop the task.
+                break;
+            }
         }
     });
 
@@ -385,6 +403,29 @@ async fn mesh_disconnect(
     c.mesh_disconnect(peer_id).await.map_err(|e| e.to_string())
 }
 
+// ── Traffic & Policy commands ─────────────────────────────────────────────────
+
+#[tauri::command]
+async fn traffic_stats(state: tauri::State<'_, AppState>) -> Result<TrafficStatsMsg, String> {
+    let mut g = state.client.lock().await;
+    let c = g.as_mut().ok_or("Not connected")?;
+    c.query_traffic().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn policy_show(state: tauri::State<'_, AppState>) -> Result<PolicyRulesMsg, String> {
+    let mut g = state.client.lock().await;
+    let c = g.as_mut().ok_or("Not connected")?;
+    c.policy_get_rules().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn policy_reload_cmd(state: tauri::State<'_, AppState>) -> Result<PolicyRulesMsg, String> {
+    let mut g = state.client.lock().await;
+    let c = g.as_mut().ok_or("Not connected")?;
+    c.policy_reload().await.map_err(|e| e.to_string())
+}
+
 // ── App entry point ───────────────────────────────────────────────────────────
 
 pub fn run() {
@@ -410,6 +451,9 @@ pub fn run() {
             mesh_connect,
             mesh_peers,
             mesh_disconnect,
+            traffic_stats,
+            policy_show,
+            policy_reload_cmd,
         ])
         .run(tauri::generate_context!())
         .expect("error while running VeloceNetwork Dashboard");

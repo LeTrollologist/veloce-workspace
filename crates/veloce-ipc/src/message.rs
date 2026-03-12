@@ -103,6 +103,12 @@ pub enum MessageType {
     /// Client → Core: hot-reload policy from veloce-policy.toml.
     PolicyReload      = 0x72,
 
+    // ── Traffic stats ──────────────────────────────────────────
+    /// Client → Core: request cumulative byte counters for all tunnels and .vln hosts.
+    TrafficQuery      = 0x80,
+    /// Core → Client: traffic counters snapshot.
+    TrafficStatsResult = 0x81,
+
     // ── Error ─────────────────────────────────────────────────
     Error           = 0xFF,
 }
@@ -134,6 +140,7 @@ impl TryFrom<u8> for MessageType {
             0x56 => MeshDisconnect,  0x57 => MeshPeerGone,
             0x70 => PolicyGetRules,  0x71 => PolicyRulesResult,
             0x72 => PolicyReload,
+            0x80 => TrafficQuery,    0x81 => TrafficStatsResult,
             0xFF => Error,
             other => return Err(other),
         })
@@ -241,6 +248,12 @@ pub enum Body {
     /// Hot-reload policy from disk (client → Core). Returns PolicyRulesResult.
     PolicyReload,
 
+    // Traffic stats
+    /// Request cumulative byte counters for all tunnels and .vln hosts (client → Core).
+    TrafficQuery,
+    /// Traffic counters snapshot (Core → client).
+    TrafficStatsResult(TrafficStatsMsg),
+
     // Mesh P2P
     /// Request this machine's mesh identity + peer list.
     MeshGetInfo,
@@ -299,6 +312,8 @@ impl Body {
             PolicyGetRules         => MessageType::PolicyGetRules,
             PolicyRulesResult(_)   => MessageType::PolicyRulesResult,
             PolicyReload           => MessageType::PolicyReload,
+            TrafficQuery           => MessageType::TrafficQuery,
+            TrafficStatsResult(_)  => MessageType::TrafficStatsResult,
             MeshGetInfo            => MessageType::MeshGetInfo,
             MeshInfo(_)            => MessageType::MeshInfo,
             MeshConnect(_)         => MessageType::MeshConnect,
@@ -601,6 +616,36 @@ pub struct PolicyRulesMsg {
     pub default_effect: String,
     pub rules:     Vec<PolicyRuleMsg>,
     pub mesh_acls: Vec<MeshAclMsg>,
+}
+
+// ── TRAFFIC STATS MESSAGE TYPES ───────────────────────────────────────────────
+
+/// Cumulative byte counters for a single encrypted Noise tunnel to a peer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TunnelTrafficMsg {
+    pub peer_id:   Uuid,
+    pub peer_name: String,
+    /// Total bytes written to the Noise transport since connection established.
+    pub tx_bytes:  u64,
+    /// Total bytes read from the Noise transport since connection established.
+    pub rx_bytes:  u64,
+}
+
+/// Cumulative bytes proxied through the SOCKS5 forwarder for a `.vln` hostname.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HostTrafficMsg {
+    pub hostname:      String,
+    /// Total bytes proxied via SOCKS5 since this hostname was registered.
+    pub bytes_proxied: u64,
+}
+
+/// Snapshot of traffic counters across all tunnels and registered `.vln` hosts.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TrafficStatsMsg {
+    pub tunnels: Vec<TunnelTrafficMsg>,
+    pub hosts:   Vec<HostTrafficMsg>,
+    /// Unix epoch milliseconds at the time this snapshot was taken.
+    pub ts_ms:   u64,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
