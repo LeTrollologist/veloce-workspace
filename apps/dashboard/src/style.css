@@ -301,3 +301,21 @@ tbody td {
 }
 .btn-spawn-tmpl:hover:not(:disabled) { background: rgba(91, 138, 245, 0.20); }
 .btn-spawn-tmpl:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ── Resource usage columns ─────────────────────────────────────────────────── */
+.res-cell {
+  white-space: nowrap;
+  min-width: 68px;
+}
+
+.res-val {
+  font-family: 'Cascadia Code', 'Consolas', monospace;
+  font-size: 12px;
+  color: var(--accent-h);
+  font-weight: 600;
+}
+
+.res-muted {
+  color: var(--muted);
+  font-size: 12px;
+}

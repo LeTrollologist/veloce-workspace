@@ -280,6 +280,19 @@ impl VeloceClient {
         self.spawn_node_with(spec).await
     }
 
+    // ── Resource usage ────────────────────────────────────────────────────────
+
+    /// Query live CPU and memory usage for all running nodes.
+    pub async fn query_node_resources(
+        &mut self,
+    ) -> Result<Vec<veloce_ipc::message::NodeResourceMsg>> {
+        match self.request(Body::QueryNodeResources).await? {
+            Body::NodeResourceList(list) => Ok(list),
+            Body::Error(e)               => bail!("{}", e.message),
+            other                        => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
     // ── VeloceNet ─────────────────────────────────────────────────────────────
 
     pub async fn register_host(

@@ -105,6 +105,16 @@ impl NodeTable {
         self.nodes.read().get(&id).map(|h| h.pid)
     }
 
+    /// Query live CPU and memory usage for every node.
+    /// Returns `(node_id, pid, cpu_ms, mem_bytes)` per node.
+    /// Holds the read lock only for the duration of the call.
+    pub fn query_all_resources(&self) -> Vec<(Uuid, u32, u64, u64)> {
+        self.nodes.read().values().map(|h| {
+            let (cpu_ms, mem_bytes) = h.query_resources();
+            (h.node_id, h.pid, cpu_ms, mem_bytes)
+        }).collect()
+    }
+
     /// Snapshot of all live nodes — includes a raw process handle (isize)
     /// so the health loop can call WaitForSingleObject without holding the lock.
     /// On non-Windows, `proc_handle_raw` is always 0.
