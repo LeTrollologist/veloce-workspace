@@ -6,9 +6,11 @@
 
 ## What Is VeloceNetwork?
 
-VeloceNetwork is a lightweight orchestration layer that runs on any Windows machine. It acts as a local control plane: your applications connect to it via a named-pipe SDK, request compute nodes, and communicate with each other over a private virtual namespace — all confined to the user's own machine and session.
+VeloceNetwork is a lightweight orchestration layer that runs on any Windows machine. It acts as a local control plane: your applications connect to it via a named-pipe SDK, request compute nodes, and communicate with each other over a private virtual namespace.
 
-Think of it as a stripped-down, single-machine version of the ideas behind Kubernetes or Service Mesh, but designed for desktop environments, developer tooling, and lightweight commercial applications rather than cloud infrastructure.
+With v0.4, the mesh extends transparently across machines — two `veloce-core` instances exchange a join code, perform a Noise_IK handshake, and each other's `.vln` hostnames become locally resolvable on both sides. No VPN client, no admin elevation, no manual port rules.
+
+Think of it as a stripped-down version of Kubernetes Service Mesh ideas, designed for desktop environments, developer tooling, and lightweight commercial applications rather than cloud infrastructure.
 
 ---
 
@@ -18,37 +20,42 @@ Think of it as a stripped-down, single-machine version of the ideas behind Kuber
 ┌─────────────────────────────────────────────────────────┐
 │                      Your Application                   │
 │   veloce-sdk (Rust) ──or── veloce_sdk.dll (C FFI)       │
+│   veloce-run (CLI)                                      │
 └────────────────────┬────────────────────────────────────┘
                      │  Named pipe  \\.\pipe\VeloceCore
                      ▼
 ┌─────────────────────────────────────────────────────────┐
 │                      VeloceCore                         │
-│  • Session auth (SID ACL + PSK)                         │
+│  • Session auth (SID ACL + OsRng PSK)                   │
 │  • Node lifecycle (spawn / kill / monitor)              │
-│  • Job Objects (CPU / memory / lifetime limits)         │
+│  • Job Objects + AppContainer (CPU / memory / sandbox)  │
 │  • Shared mmap registry (fast key-value store)          │
-│  • VeloceNet integration                                │
+│  • VeloceNet + Mesh integration                         │
 └──────────┬──────────────────────┬───────────────────────┘
            │                      │
            ▼                      ▼
-  ┌─────────────────┐   ┌──────────────────────┐
-  │  Node Processes │   │     VeloceNet         │
-  │  (Job Objects)  │   │  DNS  :5354  (*.vln)  │
-  │                 │   │  SOCKS5  :1055        │
-  └─────────────────┘   └──────────────────────┘
+  ┌─────────────────┐   ┌──────────────────────────────┐
+  │  Node Processes │   │     VeloceNet                │
+  │  (Job Objects / │   │  DNS  :5354  (*.vln)         │
+  │  AppContainer)  │   │  SOCKS5  :1055               │
+  └─────────────────┘   │  Mesh TCP  :7474  ◄──────────┼── Remote machines
+                        └──────────────────────────────┘
 ```
 
 | Crate | Role |
 |---|---|
-| `veloce-core` | Background Windows service — the single source of truth |
+| `veloce-core` | Background Windows service — single source of truth |
 | `veloce-ipc` | Wire protocol (framing, message types, codec) shared by all components |
 | `veloce-net` | Userspace DNS resolver and SOCKS5 proxy for the `*.vln` namespace |
-| `veloce-sdk` | Rust async client + C FFI layer for sideloaded apps |
-| `apps/dashboard` | Tauri 2 desktop GUI — connect, manage nodes, register hostnames |
+| `veloce-mesh` | Noise_IK P2P mesh — encrypted tunnels and `.vln` gossip between machines |
+| `veloce-sdk` | Async Rust client + C FFI layer for sideloaded apps |
+| `apps/dashboard` | Tauri 2 desktop GUI — nodes, templates, log viewer, resource meters, mesh UI |
+| `apps/installer` | Glassmorphic 5-step Tauri installer |
+| `apps/veloce-run` | CLI launcher — wraps any exe into the mesh with full flag set |
 
 ---
 
-## Core Features (v0.1)
+## Core Features
 
 ### Node Management
 - Spawn isolated child processes as **Windows Job Objects** — each node is sandboxed from interfering with others
@@ -68,19 +75,57 @@ Think of it as a stripped-down, single-machine version of the ideas behind Kuber
 - Fast memory-mapped key-value store scoped per session
 - Any authorised client can read or write — suitable for inter-node coordination, feature flags, and configuration
 
+### Node Templates
+- Save any node configuration (executable, args, resource limits, hostname, restart policy) as a named template
+- Spawn from a template with a single command — no need to repeat flags every time
+- Templates stored in the shared mmap registry; visible to all connected clients
+
+### Resource Monitoring
+- Live CPU% delta (utilisation since last poll) displayed per node in the Dashboard
+- Peak memory (working-set MB) tracked and displayed without a separate monitoring agent
+- Resource columns update in real time as nodes run
+
+### Log Streaming
+- `stdout` and `stderr` of every node captured and streamed over the IPC channel
+- Dashboard log viewer shows live output; `veloce-run --watch` streams directly to the terminal
+- Log chunks framed with node ID and stream tag — multiple subscribers can attach simultaneously
+
+### AppContainer Isolation
+- Optional per-node **Windows AppContainer** kernel sandbox — tighter than Job Objects alone
+- Restricts filesystem access, registry access, and network egress without admin elevation
+- Enabled per spawn via `use_appcontainer: true`; transparent to the node process itself
+
+### veloce-run CLI
+- Zero-friction wrapper: `veloce-run -- myapp.exe` registers the process as a mesh node instantly
+- Full flag set: `--name`, `--hostname`, `--port`, `--cpu`, `--mem`, `--restarts`, `--watch`, `--detach`
+- `--watch` streams live stdout/stderr to the terminal; `--detach` prints the node ID and exits
+- `mesh` subcommand group for P2P mesh management (see Multi-Machine section below)
+
+### Multi-Machine VeloceNet (v0.4)
+- Two machines share a **join code** (one command each) to establish an encrypted P2P tunnel
+- Crypto: **Noise_IK_25519_ChaChaPoly_BLAKE2s** — same algorithm as WireGuard, pure Rust, zero-admin
+- Each machine's `.vln` hosts are gossiped to the peer via LWW (last-write-wins) CRDT protocol
+- Remote `.vln` hosts appear **locally resolvable** — DNS and SOCKS5 require no changes
+- Transparent TCP forwarder: traffic to a remote `.vln` host is silently tunnelled through the Noise channel
+- Peer identities derived from x25519 static keys; persisted across restarts as `veloce-identity.key`
+
 ### Security
 - **SID-based pipe ACL**: the named pipe is restricted to the owning Windows user at the kernel level — cross-user connections are rejected before any data is read
-- **Per-session PSK**: VeloceCore generates a fresh 32-byte random key at every startup, writes it to `%LOCALAPPDATA%\VeloceCore\session.key`, and rejects any client that cannot echo it — invalidating connections from prior sessions automatically
+- **OsRng PSK**: VeloceCore generates a fresh 32-byte random key (full 256-bit entropy) at every startup; invalidates connections from prior sessions automatically
+- **Noise_IK authentication**: mesh peers mutually authenticate via static x25519 key pairs — no certificates, no CA
+- **DNS compression loop protection**: hand-rolled DNS parser enforces max 10 pointer jumps (DoS fix)
+- **Identity key file ACL**: `veloce-identity.key` is set read-only and owner-only at creation
 - Capability negotiation: clients declare exactly which operations they need (`SpawnNodes`, `KillNodes`, `RegistryRead`, `NetRegister`, …) and Core enforces the grant
 
 ### Dashboard
-- Tauri 2 desktop app (Windows, ships as a lightweight `.exe` installer)
-- Dark-themed UI with live node table, per-node Kill button, and a VeloceNet tab for hostname registration
+- Tauri 2 desktop app (Windows, ships as a lightweight installer)
+- Dark-themed UI with live node table, per-node Kill button, resource meters, log viewer
+- Templates tab for saving and spawning named configurations
+- VeloceNet tab with hostname registration, mesh join-code input, and connected peers table
 - Auto-pings Core every 10 s to keep connection status accurate
-- No web server required — the frontend runs fully embedded
 
 ### SDK
-- Async Rust client (`VeloceClient`) — ergonomic `.connect()`, `.spawn_node()`, `.kill_node()`, `.register_host()`, …
+- Async Rust client (`VeloceClient`) — ergonomic `.connect()`, `.spawn_node()`, `.kill_node()`, `.register_host()`, mesh methods, …
 - C FFI (`veloce_sdk.dll` + `veloce_sdk.h`) — drop-in for any language with a C ABI: Python, C++, Go, Node, Delphi, etc.
 - `veloce_poll_event()` non-blocking event pump for FFI consumers that can't use async runtimes
 
@@ -91,8 +136,8 @@ Think of it as a stripped-down, single-machine version of the ideas behind Kuber
 ### Commercial / Enterprise
 - **Microservice dev environments** — spin up a set of named services locally, wire them together over `.vln` hostnames, and tear down cleanly without port conflicts or leftover processes
 - **Background worker orchestration** — run and monitor a fleet of worker processes with hard resource limits; restart on crash; stream events to a supervisor
-- **Sandboxed plugin hosts** — load third-party plugins as isolated Job Object nodes; a crashed plugin cannot take down the host
-- **Internal tooling middleware** — build internal desktop tools that talk to each other over a private namespace without exposing anything on the network
+- **Sandboxed plugin hosts** — load third-party plugins as isolated Job Object / AppContainer nodes; a crashed plugin cannot take down the host
+- **Multi-machine dev cluster** — share `.vln` namespaces across developer VMs over the encrypted mesh; no VPN required
 
 ### Personal / Developer
 - **Local multi-service projects** — run several microservices in development without Docker or WSL, with automatic cleanup when your IDE closes
@@ -100,7 +145,7 @@ Think of it as a stripped-down, single-machine version of the ideas behind Kuber
 - **Automation pipelines** — chain scripts and programs as nodes, subscribe to their exit events, trigger next steps programmatically
 
 ### Recreational
-- **Hobby clusters** — experiment with node orchestration concepts on a single desktop machine
+- **Hobby clusters** — experiment with node orchestration and P2P mesh concepts on desktop hardware
 - **Modding platforms** — host game mods or extensions as isolated nodes with defined resource budgets
 - **Stream/broadcast tooling** — manage a set of capture, encoding, and overlay processes with coordinated start/stop and live status monitoring
 
@@ -108,21 +153,24 @@ Think of it as a stripped-down, single-machine version of the ideas behind Kuber
 
 ## Roadmap
 
-The following capabilities are planned or in active exploration:
-
-| Feature | Description |
+| Feature | Status |
 |---|---|
-| **Multi-machine VeloceNet** | Extend the `.vln` namespace across machines on a LAN or WireGuard tunnel — no public IPs needed |
-| **Node templates** | Define reusable node configurations (executable, limits, env, args) as named templates in the registry |
-| **Health policies** | Automatic restart-on-crash with back-off, max-restart limits, and alerting hooks |
-| **Log streaming** | Capture stdout/stderr from nodes and stream them to clients or to disk via the IPC channel |
-| **Linux / macOS support** | Port `veloce-core` to Unix — replace named pipes with Unix domain sockets, Job Objects with cgroups/rlimits |
-| **Node-to-node messaging** | Typed message bus between nodes brokered by Core — no shared memory or raw sockets required |
-| **Dashboard v2** | Historical metrics, log viewer, drag-and-drop node wiring, per-node resource graphs |
-| **Policy engine** | Declarative TOML/JSON policies: which apps can spawn which nodes, network rules, capability deny-lists |
-| **Encrypted VeloceNet** | TLS/QUIC between `.vln` peers for multi-machine deployments |
-| **SDK bindings** | Official Python, Node.js, and Go client libraries built on the C FFI |
-| **Installer** | NSIS/WiX signed installer with auto-update, service installation, and dashboard shortcut |
+| Windows Named-Pipe IPC + SID/PSK security | ✅ v0.1 |
+| VeloceNet DNS + SOCKS5 | ✅ v0.1 |
+| Job Objects (CPU / memory / lifetime limits) | ✅ v0.1 |
+| Health policies + log streaming | ✅ v0.2 |
+| Node templates | ✅ v0.2 |
+| Resource usage display (CPU% + peak memory) | ✅ v0.2 |
+| Glassmorphic Tauri installer | ✅ v0.2 |
+| veloce-run CLI + AppContainer isolation | ✅ v0.3 |
+| Multi-Machine VeloceNet (Noise_IK P2P mesh) | 🟡 v0.4 (PR #10) |
+| Policy Engine (process RBAC + mesh ACLs) | 📋 v0.5 |
+| STUN WAN hole-punching | 📋 v0.5 |
+| Dashboard v2 (topology canvas, heatmap, log viewer) | 📋 v0.6 |
+| WireGuard-NT kernel driver (perf) | 📋 v1.0 |
+| Signed installer with auto-update | 📋 v1.0 |
+| Linux port (cgroups v2 + Unix sockets) | 📋 v2.0 |
+| Python / Node.js / Go SDK bindings | 📋 v2.0 |
 
 ---
 
@@ -161,6 +209,43 @@ cargo tauri dev
 # Run once in an elevated terminal
 .\target\release\veloce-core.exe install
 .\target\release\veloce-core.exe start
+```
+
+### Launch nodes with veloce-run
+
+```powershell
+# Wrap any exe into the mesh and stream its logs live
+veloce-run --name worker --cpu 25 --mem 512 -- worker.exe
+
+# Register a .vln hostname and detach (prints node ID)
+veloce-run --hostname api.vln --port 3000 --detach -- node server.js
+
+# Stream stdout/stderr of a long-running process
+veloce-run --watch -- ping -t 127.0.0.1
+```
+
+### Connect two machines via P2P mesh (v0.4+)
+
+```powershell
+# Machine A — print the join code
+veloce-run mesh identity
+# Output: VM1:AAA...==
+# machine_id: xxxxxxxx-...
+# listening on port: 7474
+
+# Machine B — connect using the join code from Machine A
+veloce-run mesh join "VM1:AAA...=="
+# Output: ✓ connected to DESKTOP-A (peer_id=abc-123...)
+
+# Verify both sides see each other
+veloce-run mesh peers
+
+# Machine A registers a service
+veloce-run --hostname api.vln --port 8080 --detach -- node server.js
+
+# Machine B resolves it transparently — no config changes required
+curl --proxy socks5://127.0.0.1:1055 http://api.vln/health
+# → 200 OK  (traffic routed through Noise_IK tunnel to Machine A)
 ```
 
 ### Connect via the SDK
