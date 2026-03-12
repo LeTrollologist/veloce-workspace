@@ -7,6 +7,8 @@ Usage:
     veloce-run mesh join <CODE>
     veloce-run mesh peers
     veloce-run mesh leave <PEER_ID>
+    veloce-run policy show
+    veloce-run policy reload
 
 Examples:
     # Wrap ping and stream its output to the terminal
@@ -15,11 +17,17 @@ Examples:
     # Start a Node.js server, register a .vln hostname, detach
     veloce-run --name api --hostname api.vln --port 3000 --detach -- node server.js
 
-    # Print this machine's join code for another machine to use
+    # Print this machine's join code for another machine to use (VM2 if STUN succeeds)
     veloce-run mesh identity
 
     # Connect to a peer (run on Machine B, paste code from Machine A)
-    veloce-run mesh join "VM1:AAA..."
+    veloce-run mesh join "VM2:BBB..."
+
+    # Show active policy rules
+    veloce-run policy show
+
+    # Hot-reload policy from veloce-policy.toml
+    veloce-run policy reload
 */
 
 use anyhow::{Context, Result};
@@ -89,6 +97,11 @@ enum Commands {
         #[command(subcommand)]
         action: MeshAction,
     },
+    /// Policy engine management commands
+    Policy {
+        #[command(subcommand)]
+        action: PolicyAction,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -107,6 +120,14 @@ enum MeshAction {
         /// Peer UUID from `veloce-run mesh peers`
         peer_id: uuid::Uuid,
     },
+}
+
+#[derive(Subcommand, Debug)]
+enum PolicyAction {
+    /// Print the currently active policy rules
+    Show,
+    /// Reload `veloce-policy.toml` from disk and print the new rules
+    Reload,
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -134,7 +155,8 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Commands::Mesh { action }) => run_mesh(action).await,
+        Some(Commands::Mesh   { action }) => run_mesh(action).await,
+        Some(Commands::Policy { action }) => run_policy(action).await,
         None => {
             let executable = cli.executable.expect("clap ensures executable is set when no subcommand");
             run_spawn(
@@ -153,8 +175,14 @@ async fn run_mesh(action: MeshAction) -> Result<()> {
         MeshAction::Identity => {
             let info = client.mesh_info().await?;
             println!("{}", info.join_code);
-            eprintln!("machine_id: {}", info.machine_id);
+            eprintln!("machine_id:    {}", info.machine_id);
             eprintln!("listening on port: {}", info.listen_port);
+            if info.join_code.starts_with("VM2:") {
+                eprintln!("(WAN-ready — STUN discovered external IP)");
+            } else {
+                eprintln!("(LAN only — STUN unreachable; WAN connections require manual port forward to :{}))",
+                    info.listen_port);
+            }
         }
 
         MeshAction::Join { code } => {
@@ -186,6 +214,54 @@ async fn run_mesh(action: MeshAction) -> Result<()> {
             println!("✓ disconnected from {peer_id}");
         }
     }
+    Ok(())
+}
+
+// ── Policy subcommands ────────────────────────────────────────────────────────
+
+async fn run_policy(action: PolicyAction) -> Result<()> {
+    let mut client = connect_client("veloce-run-policy", vec![]).await?;
+    let rules = match action {
+        PolicyAction::Show   => client.policy_get_rules().await?,
+        PolicyAction::Reload => {
+            let r = client.policy_reload().await?;
+            eprintln!("✓ policy reloaded");
+            r
+        }
+    };
+
+    println!("default_effect: {}", rules.default_effect);
+
+    if rules.rules.is_empty() {
+        println!("\nCapability rules: (none — all capabilities allowed by default)");
+    } else {
+        println!("\nCapability rules ({}):", rules.rules.len());
+        println!("  {:<30}  {:<10}  {}", "APP", "MODE", "CAPABILITIES");
+        println!("  {}", "-".repeat(70));
+        for r in &rules.rules {
+            let (mode, caps) = if let Some(a) = &r.allow {
+                ("allow", a.join(", "))
+            } else if let Some(d) = &r.deny {
+                ("deny", d.join(", "))
+            } else {
+                ("(none)", String::new())
+            };
+            println!("  {:<30}  {:<10}  {}", r.app, mode, caps);
+        }
+    }
+
+    if rules.mesh_acls.is_empty() {
+        println!("\nMesh ACL rules: (none — all gossip allowed by default)");
+    } else {
+        println!("\nMesh ACL rules ({}):", rules.mesh_acls.len());
+        println!("  {:<30}  {:<20}  {}", "HOSTNAME", "FROM PEER", "EFFECT");
+        println!("  {}", "-".repeat(65));
+        for a in &rules.mesh_acls {
+            let peer = a.from_peer.as_deref().unwrap_or("*");
+            println!("  {:<30}  {:<20}  {}", a.hostname, peer, a.effect);
+        }
+    }
+
     Ok(())
 }
 

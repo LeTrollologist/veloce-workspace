@@ -4618,7 +4618,7 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
 name = "veloce-core"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "bincode",
@@ -4628,7 +4628,9 @@ dependencies = [
  "parking_lot",
  "rand 0.8.5",
  "serde",
+ "serde_json",
  "tokio",
+ "toml 0.8.2",
  "tracing",
  "tracing-subscriber",
  "uuid",
@@ -4672,7 +4674,7 @@ dependencies = [
 
 [[package]]
 name = "veloce-ipc"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "bincode",
  "bitflags 2.11.0",
@@ -4685,7 +4687,7 @@ dependencies = [
 
 [[package]]
 name = "veloce-mesh"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -4707,7 +4709,7 @@ dependencies = [
 
 [[package]]
 name = "veloce-net"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -4720,7 +4722,7 @@ dependencies = [
 
 [[package]]
 name = "veloce-run"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -4733,7 +4735,7 @@ dependencies = [
 
 [[package]]
 name = "veloce-sdk"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "bytes",

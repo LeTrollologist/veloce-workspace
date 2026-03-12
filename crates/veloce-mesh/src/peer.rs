@@ -29,6 +29,12 @@ use veloce_net::registry::NetRegistry;
 use crate::forward;
 use crate::noise;
 
+/// Callback type used for mesh gossip ACL filtering.
+///
+/// `f(hostname, peer_name)` → `true` means the entry is allowed to be
+/// installed in the local forwarding table.
+pub type AclFn = Arc<dyn Fn(&str, &str) -> bool + Send + Sync>;
+
 // ── Wire messages ──────────────────────────────────────────────────────────────
 
 /// Messages exchanged over the Noise transport channel between two peers.
@@ -77,6 +83,10 @@ impl PeerConnection {
     ///
     /// The caller must have already completed the Noise handshake;  `transport`
     /// is the resulting `TransportState`.
+    ///
+    /// `acl_fn` is an optional callback `f(hostname, peer_name) -> bool` applied
+    /// to each gossip entry in [`PeerMsg::RegistrySync`].  Returning `false`
+    /// prevents that entry from being installed in the local forwarder table.
     pub fn start(
         peer_id:      Uuid,
         peer_name:    String,
@@ -84,6 +94,7 @@ impl PeerConnection {
         stream:       TcpStream,
         net_registry: Arc<NetRegistry>,
         on_disconnect: impl FnOnce(Uuid) + Send + 'static,
+        acl_fn:       Option<AclFn>,
     ) -> Arc<Self> {
         let (tx, rx) = mpsc::channel::<PeerMsg>(256);
         let latency  = Arc::new(AtomicU32::new(0));
@@ -145,16 +156,19 @@ impl PeerConnection {
         });
 
         // Reader task
-        let peer_id_r  = peer_id;
-        let remote_h   = remote_hosts.clone();
-        let net_reg    = net_registry.clone();
-        let tx_ping    = tx.clone();
+        let peer_id_r        = peer_id;
+        let initial_peer_name = peer_name.clone();
+        let remote_h         = remote_hosts.clone();
+        let net_reg          = net_registry.clone();
+        let tx_ping          = tx.clone();
         tokio::spawn(async move {
             use tokio::io::AsyncReadExt;
             let mut read_half = read_half;
             let mut ping_seq: u32 = 0;
             let mut ping_ticker = interval(Duration::from_secs(30));
             ping_ticker.tick().await; // skip the immediate tick
+            // Track the peer's real name once we receive their Hello.
+            let mut current_peer_name = initial_peer_name;
 
             loop {
                 tokio::select! {
@@ -192,7 +206,14 @@ impl PeerConnection {
                             Ok(m) => m,
                             Err(e) => { tracing::warn!("peer {peer_id_r} msg decode: {e}"); continue; }
                         };
-                        handle_incoming(msg, peer_id_r, &remote_h, &net_reg, &tx_ping, &latency).await;
+                        // Update the tracked name as soon as we see the Hello.
+                        if let PeerMsg::Hello { ref machine_name, .. } = msg {
+                            current_peer_name = machine_name.clone();
+                        }
+                        handle_incoming(
+                            msg, peer_id_r, &current_peer_name,
+                            &remote_h, &net_reg, &tx_ping, &latency, &acl_fn,
+                        ).await;
                     }
                 }
             }
@@ -223,10 +244,12 @@ impl PeerConnection {
 async fn handle_incoming(
     msg: PeerMsg,
     peer_id: Uuid,
+    peer_name: &str,
     remote_hosts: &Arc<RwLock<Vec<GossipEntry>>>,
     net_registry: &Arc<NetRegistry>,
     reply_tx: &mpsc::Sender<PeerMsg>,
     latency: &Arc<AtomicU32>,
+    acl_fn: &Option<AclFn>,
 ) {
     match msg {
         PeerMsg::Hello { machine_name, machine_id } => {
@@ -234,7 +257,17 @@ async fn handle_incoming(
         }
 
         PeerMsg::RegistrySync { entries } => {
-            tracing::debug!("peer {peer_id} gossiped {} entries", entries.len());
+            // Apply mesh ACL: filter out entries the policy disallows.
+            let entries: Vec<_> = entries
+                .into_iter()
+                .filter(|e| {
+                    acl_fn.as_ref().map(|f| f(&e.hostname, peer_name)).unwrap_or(true)
+                })
+                .collect();
+            tracing::debug!(
+                "peer {peer_id} gossiped {} entries (after ACL filter)",
+                entries.len()
+            );
             let mut hosts = remote_hosts.write().await;
             for entry in &entries {
                 // LWW: only accept if newer than what we have.

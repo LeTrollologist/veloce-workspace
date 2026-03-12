@@ -21,7 +21,7 @@ use veloce_ipc::{
     message::{
         Body, Capability, Envelope, Flags, MeshConnectMsg, MeshConnectResultMsg,
         MeshDisconnectMsg, MeshInfoMsg, NodeLogChunkMsg, NodeSpawnedMsg,
-        NodeEventMsg, PeerInfoMsg, SpawnNodeMsg,
+        NodeEventMsg, PeerInfoMsg, PolicyRulesMsg, SpawnNodeMsg,
     },
     PIPE_NAME,
 };
@@ -401,6 +401,25 @@ impl VeloceClient {
         match self.request(Body::Ping).await? {
             Body::Pong => Ok(()),
             other      => bail!("unexpected pong: {:?}", other.msg_type()),
+        }
+    }
+
+    /// Retrieve the current policy rules from the core.
+    pub async fn policy_get_rules(&mut self) -> Result<PolicyRulesMsg> {
+        match self.request(Body::PolicyGetRules).await? {
+            Body::PolicyRulesResult(msg) => Ok(msg),
+            Body::Error(e) => bail!("policy_get_rules error: {}", e.message),
+            other => bail!("policy_get_rules: unexpected response {:?}", other.msg_type()),
+        }
+    }
+
+    /// Ask the core to reload `veloce-policy.toml` from disk, then return the
+    /// newly active rules.
+    pub async fn policy_reload(&mut self) -> Result<PolicyRulesMsg> {
+        match self.request(Body::PolicyReload).await? {
+            Body::PolicyRulesResult(msg) => Ok(msg),
+            Body::Error(e) => bail!("policy_reload error: {}", e.message),
+            other => bail!("policy_reload: unexpected response {:?}", other.msg_type()),
         }
     }
 

@@ -29,6 +29,8 @@ bytes              = { workspace = true }
 veloce-net         = { path = "../veloce-net" }
 veloce-mesh        = { path = "../veloce-mesh" }
 rand               = "0.8"
+toml               = "0.8"
+serde_json         = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 windows-service = { workspace = true }

@@ -12,6 +12,7 @@ use std::sync::{
 use parking_lot::RwLock;
 use uuid::Uuid;
 
+use crate::policy::PolicyEngine;
 use crate::registry::Registry;
 use crate::job::{NodeHandle, NodeEventMsg};
 use veloce_ipc::message::NodeLogChunkMsg;
@@ -24,6 +25,9 @@ pub struct CoreState {
     net_registry: Arc<NetRegistry>,
     /// Optional P2P mesh state.  `None` if the mesh server failed to bind.
     pub mesh:     Option<Arc<MeshState>>,
+    /// Policy engine (capability RBAC + mesh ACL).  Always present; file-absent
+    /// means permissive defaults.
+    pub policy:   Arc<PolicyEngine>,
     shutdown:     AtomicBool,
     /// Per-session pre-shared key.  32 truly random bytes from OsRng, written to
     /// the PSK file at startup; every connecting client must echo them.
@@ -40,9 +44,23 @@ impl CoreState {
         let psk = generate_and_persist_psk()?;
         let net_registry = Arc::new(NetRegistry::new());
 
-        // Build mesh identity and state.
+        // Load the policy engine (permissive if file absent).
+        let policy = PolicyEngine::load_or_default(dir.join("veloce-policy.toml"));
+
+        // Build mesh identity and state, wiring the policy ACL callback.
         let mesh = match veloce_mesh::identity::MachineIdentity::load_or_create(&dir) {
-            Ok(id) => Some(MeshState::new(id, DEFAULT_MESH_PORT, Arc::clone(&net_registry))),
+            Ok(id) => {
+                let policy_acl = Arc::clone(&policy);
+                let acl_fn: veloce_mesh::peer::AclFn = Arc::new(move |hostname, peer| {
+                    policy_acl.check_mesh_acl(hostname, peer)
+                });
+                Some(MeshState::new(
+                    id,
+                    DEFAULT_MESH_PORT,
+                    Arc::clone(&net_registry),
+                    Some(acl_fn),
+                ))
+            }
             Err(e) => {
                 tracing::warn!("mesh identity init failed (mesh disabled): {e}");
                 None
@@ -54,6 +72,7 @@ impl CoreState {
             node_table:   Arc::new(NodeTable::new()),
             net_registry,
             mesh,
+            policy,
             shutdown:     AtomicBool::new(false),
             psk,
         })
