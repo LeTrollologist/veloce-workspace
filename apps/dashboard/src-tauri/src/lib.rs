@@ -43,6 +43,15 @@ struct SpawnResult {
     node_pipe: String,
 }
 
+#[derive(Serialize)]
+struct ResourceRow {
+    node_id:   String,
+    /// Cumulative CPU time (kernel + user) in milliseconds.
+    cpu_ms:    u64,
+    /// Peak memory used by the job in bytes.
+    mem_bytes: u64,
+}
+
 #[derive(Serialize, Clone)]
 struct LogChunkEvent {
     node_id: String,
@@ -215,6 +224,23 @@ async fn subscribe_node_logs(
         .map_err(|e| e.to_string())
 }
 
+// ── Resource usage ────────────────────────────────────────────────────────────
+
+#[tauri::command]
+async fn query_resources(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<ResourceRow>, String> {
+    let mut guard = state.client.lock().await;
+    let c = guard.as_mut().ok_or("Not connected to VeloceCore")?;
+    c.query_node_resources().await
+        .map(|list| list.into_iter().map(|r| ResourceRow {
+            node_id:   r.node_id.to_string(),
+            cpu_ms:    r.cpu_ms,
+            mem_bytes: r.mem_bytes,
+        }).collect())
+        .map_err(|e| e.to_string())
+}
+
 // ── Node Templates ────────────────────────────────────────────────────────────
 
 /// Full description of a spawn template, shared between save and get.
@@ -330,6 +356,7 @@ pub fn run() {
             register_host,
             unregister_host,
             subscribe_node_logs,
+            query_resources,
             list_templates,
             get_template,
             save_template,

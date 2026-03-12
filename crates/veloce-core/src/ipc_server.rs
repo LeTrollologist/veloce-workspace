@@ -23,7 +23,7 @@ use veloce_ipc::{
     message::{
         Body, Capability, Envelope, ErrorCode, ErrorMsg, Flags,
         HandshakeAckMsg, NodeEventMsg, NodeInfo, NodeKilledMsg, NodeListMsg,
-        NodeLogChunkMsg, NodeSpawnedMsg, NodeStatus as IpcNodeStatus,
+        NodeLogChunkMsg, NodeResourceMsg, NodeSpawnedMsg, NodeStatus as IpcNodeStatus,
     },
     PIPE_NAME,
 };
@@ -329,6 +329,18 @@ where
                         node_id:  result.map(|r| r.node_id),
                     }
                 )).await?;
+            }
+
+            // ── Resource usage ─────────────────────────────────────────────
+            QueryNodeResources => {
+                let resources: Vec<NodeResourceMsg> = self.state.node_table()
+                    .query_all_resources()
+                    .into_iter()
+                    .map(|(node_id, _pid, cpu_ms, mem_bytes)| NodeResourceMsg {
+                        node_id, cpu_ms, mem_bytes,
+                    })
+                    .collect();
+                self.send_reply(cid, NodeResourceList(resources)).await?;
             }
 
             // ── Push event subscriptions ───────────────────────────────────

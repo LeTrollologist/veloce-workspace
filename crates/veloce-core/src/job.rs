@@ -29,23 +29,24 @@ use crate::state::CoreState;
 use windows::{
     core::PCWSTR,
     Win32::{
-        Foundation::{CloseHandle, BOOL, HANDLE},
+        Foundation::{CloseHandle, BOOL, FILETIME, HANDLE},
         Security::SECURITY_ATTRIBUTES,
         Storage::FileSystem::ReadFile,
         System::{
             JobObjects::{
                 AssignProcessToJobObject, CreateJobObjectW,
                 JobObjectCpuRateControlInformation, JobObjectExtendedLimitInformation,
-                SetInformationJobObject, JOBOBJECT_CPU_RATE_CONTROL_INFORMATION,
+                QueryJobObjectInformation, SetInformationJobObject,
+                JOBOBJECT_CPU_RATE_CONTROL_INFORMATION,
                 JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_CPU_RATE_CONTROL_ENABLE,
                 JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP, JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION,
                 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOB_OBJECT_LIMIT_PROCESS_MEMORY,
             },
             Pipes::CreatePipe,
             Threading::{
-                CreateProcessW, GetExitCodeProcess, TerminateProcess, WaitForSingleObject,
-                CREATE_UNICODE_ENVIRONMENT, PROCESS_INFORMATION, STARTF_USESTDHANDLES,
-                STARTUPINFOW,
+                CreateProcessW, GetExitCodeProcess, GetProcessTimes, TerminateProcess,
+                WaitForSingleObject, CREATE_UNICODE_ENVIRONMENT, PROCESS_INFORMATION,
+                STARTF_USESTDHANDLES, STARTUPINFOW,
             },
         },
     },
@@ -83,6 +84,47 @@ impl NodeHandle {
     }
     #[cfg(not(windows))]
     pub fn proc_handle_raw(&self) -> isize { 0 }
+
+    /// Returns `(cpu_ms, mem_bytes)` — cumulative CPU time and peak job memory.
+    ///
+    /// `cpu_ms`    = kernel + user time in milliseconds (from `GetProcessTimes`).
+    /// `mem_bytes` = peak memory used by all job processes (from `QueryJobObjectInformation`).
+    #[cfg(windows)]
+    pub fn query_resources(&self) -> (u64, u64) {
+        let cpu_ms = unsafe {
+            let mut creation = FILETIME::default();
+            let mut exit_ft  = FILETIME::default();
+            let mut kernel   = FILETIME::default();
+            let mut user     = FILETIME::default();
+            match GetProcessTimes(self.proc_handle.0, &mut creation, &mut exit_ft, &mut kernel, &mut user) {
+                Ok(_) => {
+                    let k = (kernel.dwHighDateTime as u64) << 32 | kernel.dwLowDateTime as u64;
+                    let u = (user.dwHighDateTime   as u64) << 32 | user.dwLowDateTime   as u64;
+                    (k + u) / 10_000  // 100-nanosecond units → milliseconds
+                }
+                Err(_) => 0,
+            }
+        };
+
+        let mem_bytes = unsafe {
+            let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+            match QueryJobObjectInformation(
+                self.job_handle.0,
+                JobObjectExtendedLimitInformation,
+                &mut info as *mut _ as *mut _,
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                None,
+            ) {
+                Ok(_) => info.PeakJobMemoryUsed as u64,
+                Err(_) => 0,
+            }
+        };
+
+        (cpu_ms, mem_bytes)
+    }
+
+    #[cfg(not(windows))]
+    pub fn query_resources(&self) -> (u64, u64) { (0, 0) }
 }
 
 #[derive(Debug, Clone)]

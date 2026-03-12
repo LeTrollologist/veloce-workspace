@@ -57,6 +57,12 @@ pub enum MessageType {
     /// Core → Client: write acknowledged.
     RegistryAck     = 0x33,
 
+    // ── Resource usage ────────────────────────────────────────
+    /// Client → Core: query live CPU and memory usage for all nodes.
+    QueryNodeResources = 0x60,
+    /// Core → Client: resource usage list response.
+    NodeResourceList   = 0x61,
+
     // ── VeloceNet: private namespace ──────────────────────────
     /// Client → Net: register a *.vln hostname → node_id mapping.
     NetRegisterHost = 0x40,
@@ -92,6 +98,7 @@ impl TryFrom<u8> for MessageType {
             0x2B => NodeLogChunk,
             0x30 => RegistryGet,     0x31 => RegistryValue,   0x32 => RegistrySet,
             0x33 => RegistryAck,
+            0x60 => QueryNodeResources, 0x61 => NodeResourceList,
             0x40 => NetRegisterHost, 0x41 => NetHostRegistered,
             0x42 => NetUnregisterHost,0x43 => NetResolve,
             0x44 => NetResolveResult, 0x45 => NetHostList,
@@ -180,6 +187,12 @@ pub enum Body {
     RegistrySet { key: String, value: Vec<u8> },
     RegistryAck { key: String },
 
+    // Resource usage
+    /// Query CPU/memory for all running nodes (client → Core).
+    QueryNodeResources,
+    /// Resource usage response (Core → client).
+    NodeResourceList(Vec<NodeResourceMsg>),
+
     // VeloceNet
     NetRegisterHost(NetRegisterHostMsg),
     NetHostRegistered { hostname: String, addr: String },
@@ -217,6 +230,8 @@ impl Body {
             RegistryValue(_)       => MessageType::RegistryValue,
             RegistrySet { .. }     => MessageType::RegistrySet,
             RegistryAck { .. }     => MessageType::RegistryAck,
+            QueryNodeResources     => MessageType::QueryNodeResources,
+            NodeResourceList(_)    => MessageType::NodeResourceList,
             NetRegisterHost(_)     => MessageType::NetRegisterHost,
             NetHostRegistered{..}  => MessageType::NetHostRegistered,
             NetUnregisterHost{..}  => MessageType::NetUnregisterHost,
@@ -411,6 +426,15 @@ pub struct NetHostEntry {
     pub local_port: u16,
     pub registered_at: DateTime<Utc>,
     pub ttl_secs: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeResourceMsg {
+    pub node_id:   Uuid,
+    /// Cumulative CPU time (kernel + user) in milliseconds.
+    pub cpu_ms:    u64,
+    /// Peak memory used by the job's processes in bytes (0 if unavailable).
+    pub mem_bytes: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

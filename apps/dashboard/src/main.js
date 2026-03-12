@@ -8,6 +8,13 @@ let selectedLogNodeId = null;      // node currently shown in log viewer
 const logLines = {};               // node_id → array of {stream, text, ts}
 const MAX_LOG_LINES = 2000;        // per node
 
+// Resource tracking: node_id → { cpu_ms, last_ts }
+const resourceBaseline = {};
+// Computed display values: node_id → { cpu_pct: string, mem_mb: string }
+const resourceDisplay  = {};
+let   resourceTimer    = null;     // setInterval handle
+let   lastNodes        = [];       // most recent node list for re-render after resource poll
+
 // ── UI helpers ─────────────────────────────────────────────────────────────
 
 function setStatus(isConnected) {
@@ -46,6 +53,7 @@ function statusBadge(status) {
 // ── Node table ─────────────────────────────────────────────────────────────
 
 function renderNodes(nodes) {
+  lastNodes = nodes || [];
   const tbody = document.getElementById("node-list");
   const sel   = document.getElementById("log-node-select");
 
@@ -56,23 +64,34 @@ function renderNodes(nodes) {
   sel.innerHTML = `<option value="">— select a node —</option>`;
   if (!nodes || nodes.length === 0) {
     tbody.innerHTML = `<tr id="node-empty-row">
-      <td colspan="6" class="empty-cell">No nodes running</td>
+      <td colspan="8" class="empty-cell">No nodes running</td>
     </tr>`;
     return;
   }
 
-  tbody.innerHTML = nodes.map(n => `
-    <tr>
-      <td><strong>${escHtml(n.app_name)}</strong></td>
-      <td>${n.pid}</td>
-      <td>${statusBadge(n.status)}</td>
-      <td>${escHtml(n.spawned_at)}</td>
-      <td class="mono">${escHtml(n.node_id.slice(0, 8))}…</td>
-      <td>
-        <button class="btn btn-danger btn-sm" data-kill="${escHtml(n.node_id)}">Kill</button>
-      </td>
-    </tr>
-  `).join("");
+  tbody.innerHTML = nodes.map(n => {
+    const res = resourceDisplay[n.node_id] || {};
+    const cpuCell = res.cpu_pct !== undefined
+      ? `<span class="res-val">${res.cpu_pct}%</span>`
+      : `<span class="res-muted">—</span>`;
+    const memCell = res.mem_mb !== undefined
+      ? `<span class="res-val">${res.mem_mb} MB</span>`
+      : `<span class="res-muted">—</span>`;
+    return `
+      <tr>
+        <td><strong>${escHtml(n.app_name)}</strong></td>
+        <td>${n.pid}</td>
+        <td>${statusBadge(n.status)}</td>
+        <td class="res-cell">${cpuCell}</td>
+        <td class="res-cell">${memCell}</td>
+        <td>${escHtml(n.spawned_at)}</td>
+        <td class="mono">${escHtml(n.node_id.slice(0, 8))}…</td>
+        <td>
+          <button class="btn btn-danger btn-sm" data-kill="${escHtml(n.node_id)}">Kill</button>
+        </td>
+      </tr>
+    `;
+  }).join("");
 
   nodes.forEach(n => {
     const opt = document.createElement("option");
@@ -149,12 +168,16 @@ async function toggleConnect() {
     await invoke("disconnect");
     setStatus(false);
     renderNodes([]);
+    if (resourceTimer) { clearInterval(resourceTimer); resourceTimer = null; }
   } else {
     try {
       await invoke("connect");
       setStatus(true);
       refreshNodes();
       refreshTemplates();
+      // Poll resource usage every 5 s (two samples needed for CPU%)
+      resourceTimer = setInterval(refreshResources, 5_000);
+      refreshResources();   // prime the first baseline immediately
     } catch (e) {
       alert("Connect failed:\n" + e);
     }
@@ -169,6 +192,47 @@ async function refreshNodes() {
   } catch (e) {
     renderNodes([]);
     console.error("list_nodes:", e);
+  }
+}
+
+async function refreshResources() {
+  if (!connected) return;
+  try {
+    const now  = Date.now();
+    const rows = await invoke("query_resources");
+    let changed = false;
+    for (const r of rows) {
+      const prev = resourceBaseline[r.node_id];
+      // Memory: convert bytes → MB (round to 1 dp)
+      const mem_mb = (r.mem_bytes / (1024 * 1024)).toFixed(1);
+      if (prev) {
+        // CPU%: delta cpu_ms over elapsed wall-clock ms, normalised to 100
+        const dt_wall = now - prev.last_ts;
+        const dt_cpu  = r.cpu_ms - prev.cpu_ms;
+        const cpu_pct = dt_wall > 0
+          ? Math.min(100, (dt_cpu / dt_wall) * 100).toFixed(1)
+          : "0.0";
+        resourceDisplay[r.node_id] = { cpu_pct, mem_mb };
+      } else {
+        // First sample — memory is meaningful right away, CPU needs two samples
+        resourceDisplay[r.node_id] = { mem_mb };
+      }
+      resourceBaseline[r.node_id] = { cpu_ms: r.cpu_ms, last_ts: now };
+      changed = true;
+    }
+    // Remove stale entries for nodes that no longer exist
+    for (const id of Object.keys(resourceDisplay)) {
+      if (!rows.find(r => r.node_id === id)) {
+        delete resourceDisplay[id];
+        delete resourceBaseline[id];
+        changed = true;
+      }
+    }
+    if (changed && lastNodes.length > 0) {
+      renderNodes(lastNodes);
+    }
+  } catch (e) {
+    console.warn("query_resources:", e);
   }
 }
 
