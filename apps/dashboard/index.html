@@ -160,6 +160,56 @@
         </div>
         <div id="unreg-result" class="result hidden"></div>
       </div>
+
+      <!-- ── Mesh identity ──────────────────────────────────────────────── -->
+      <div class="card" id="mesh-identity-card">
+        <h3>This Machine</h3>
+        <div class="form-row mesh-identity-row">
+          <label class="label-sm">Machine ID</label>
+          <span  id="mesh-machine-id" class="mono-chip">—</span>
+        </div>
+        <div class="form-row mesh-identity-row">
+          <label class="label-sm">Join Code</label>
+          <input id="mesh-join-code" class="input wide" readonly placeholder="(connect to load)" />
+          <button id="btn-copy-join-code" class="btn btn-secondary" title="Copy to clipboard">Copy</button>
+        </div>
+        <div class="form-row mesh-identity-row">
+          <label class="label-sm">Port</label>
+          <span  id="mesh-listen-port" class="mono-chip">—</span>
+        </div>
+      </div>
+
+      <!-- ── Connect to peer ───────────────────────────────────────────── -->
+      <div class="card">
+        <h3>Connect to Peer</h3>
+        <div class="form-row">
+          <input id="mesh-peer-code" class="input wide" placeholder="Paste join code from remote machine (VM1:…)" />
+          <button id="btn-mesh-connect" class="btn btn-primary">Connect</button>
+        </div>
+        <div id="mesh-connect-result" class="result hidden"></div>
+      </div>
+
+      <!-- ── Connected peers ───────────────────────────────────────────── -->
+      <div class="card">
+        <div class="card-header">
+          <h3>Connected Peers</h3>
+          <button id="btn-refresh-peers" class="btn btn-secondary btn-sm">Refresh</button>
+        </div>
+        <table class="data-table" id="peers-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Peer ID</th>
+              <th>Latency</th>
+              <th>Remote Hosts</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="peers-tbody">
+            <tr><td colspan="5" class="empty-row">No connected peers</td></tr>
+          </tbody>
+        </table>
+      </div>
     </section>
 
   </div>

@@ -347,3 +347,40 @@ tbody td {
   height: 15px;
   cursor: pointer;
 }
+
+/* ── Mesh UI ──────────────────────────────────────────────────────────────── */
+.mesh-identity-row { align-items: center; gap: 10px; }
+.label-sm { font-size: 0.78rem; color: var(--text-muted, #aaa); min-width: 80px; }
+.mono-chip {
+  font-family: monospace;
+  font-size: 0.82rem;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 4px;
+  padding: 2px 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 340px;
+}
+.badge-remote {
+  display: inline-block;
+  font-size: 0.65rem;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: rgba(120, 80, 220, 0.25);
+  color: #b08aff;
+  border: 1px solid rgba(120,80,220,0.4);
+  margin-left: 4px;
+  vertical-align: middle;
+}
+.btn-mesh-leave {
+  font-size: 0.72rem;
+  padding: 3px 10px;
+  background: rgba(220,50,50,0.2);
+  border: 1px solid rgba(220,50,50,0.4);
+  color: #ff8080;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.btn-mesh-leave:hover { background: rgba(220,50,50,0.35); }

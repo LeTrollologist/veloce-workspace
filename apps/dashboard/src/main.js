@@ -175,6 +175,7 @@ async function toggleConnect() {
       setStatus(true);
       refreshNodes();
       refreshTemplates();
+      refreshMeshInfo();
       // Poll resource usage every 5 s (two samples needed for CPU%)
       resourceTimer = setInterval(refreshResources, 5_000);
       refreshResources();   // prime the first baseline immediately
@@ -407,6 +408,62 @@ function initTabs() {
   });
 }
 
+// ── Mesh functions ──────────────────────────────────────────────────────────
+
+async function refreshMeshInfo() {
+  if (!connected) return;
+  try {
+    const info = await invoke("mesh_info");
+    document.getElementById("mesh-machine-id").textContent = info.machine_id.slice(0, 18) + "…";
+    document.getElementById("mesh-machine-id").title       = info.machine_id;
+    document.getElementById("mesh-join-code").value        = info.join_code;
+    document.getElementById("mesh-listen-port").textContent = info.listen_port;
+    renderPeers(info.peers);
+  } catch (e) {
+    console.warn("mesh_info:", e);
+  }
+}
+
+function renderPeers(peers) {
+  const tbody = document.getElementById("peers-tbody");
+  if (!peers || peers.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty-row">No connected peers</td></tr>';
+    return;
+  }
+  tbody.innerHTML = peers.map(p => {
+    const hosts = (p.remote_hosts || []).map(h =>
+      `<span class="badge badge-remote">${h}</span>`
+    ).join(" ");
+    return `<tr>
+      <td>${escHtml(p.peer_name)}</td>
+      <td class="mono-chip" title="${p.peer_id}">${p.peer_id.slice(0, 14)}…</td>
+      <td>${p.latency_ms} ms</td>
+      <td>${hosts || "(none)"}</td>
+      <td>
+        <button class="btn-mesh-leave" data-peer-id="${p.peer_id}">Leave</button>
+      </td>
+    </tr>`;
+  }).join("");
+
+  tbody.querySelectorAll(".btn-mesh-leave").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const peerId = btn.dataset.peerId;
+      try {
+        await invoke("mesh_disconnect", { peerId });
+        await refreshMeshInfo();
+      } catch (e) { alert("Disconnect failed:\n" + e); }
+    });
+  });
+}
+
+function escHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 // ── Init ───────────────────────────────────────────────────────────────────
 
 window.addEventListener("DOMContentLoaded", async () => {
@@ -420,6 +477,27 @@ window.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("btn-unregister").addEventListener("click",         unregisterHost);
   document.getElementById("btn-refresh-templates").addEventListener("click",  refreshTemplates);
   document.getElementById("btn-save-template").addEventListener("click",      saveTemplate);
+  document.getElementById("btn-refresh-peers").addEventListener("click",      refreshMeshInfo);
+  document.getElementById("btn-copy-join-code").addEventListener("click", () => {
+    const code = document.getElementById("mesh-join-code").value;
+    if (code) { navigator.clipboard.writeText(code).catch(() => {}); }
+  });
+  document.getElementById("btn-mesh-connect").addEventListener("click", async () => {
+    const code = document.getElementById("mesh-peer-code").value.trim();
+    const res  = document.getElementById("mesh-connect-result");
+    if (!code) { res.className = "result"; res.textContent = "Paste a join code first."; return; }
+    try {
+      const r = await invoke("mesh_connect", { joinCode: code });
+      res.className = "result ok";
+      res.textContent = `✓ Connected to ${r.peer_name} (${r.peer_id})`;
+      document.getElementById("mesh-peer-code").value = "";
+      await refreshMeshInfo();
+    } catch (e) {
+      res.className = "result error";
+      res.textContent = "Connect failed: " + e;
+    }
+    res.classList.remove("hidden");
+  });
 
   // Log node selector
   document.getElementById("log-node-select").addEventListener("change", async (e) => {

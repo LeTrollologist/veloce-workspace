@@ -19,8 +19,9 @@ use uuid::Uuid;
 use veloce_ipc::{
     Codec,
     message::{
-        Body, Capability, Envelope, Flags, NodeLogChunkMsg, NodeSpawnedMsg,
-        NodeEventMsg, SpawnNodeMsg,
+        Body, Capability, Envelope, Flags, MeshConnectMsg, MeshConnectResultMsg,
+        MeshDisconnectMsg, MeshInfoMsg, NodeLogChunkMsg, NodeSpawnedMsg,
+        NodeEventMsg, PeerInfoMsg, SpawnNodeMsg,
     },
     PIPE_NAME,
 };
@@ -359,6 +360,42 @@ impl VeloceClient {
     }
 
     // ── Ping ──────────────────────────────────────────────────────────────────
+
+    // ── Mesh P2P ──────────────────────────────────────────────────────────────
+
+    /// Get this machine's mesh identity (join code, listen port, connected peers).
+    pub async fn mesh_info(&mut self) -> Result<MeshInfoMsg> {
+        match self.request(Body::MeshGetInfo).await? {
+            Body::MeshInfo(m) => Ok(m),
+            other => bail!("mesh_info: unexpected response {:?}", other.msg_type()),
+        }
+    }
+
+    /// Connect to a remote peer using a join code from `mesh identity`.
+    pub async fn mesh_connect(&mut self, join_code: &str) -> Result<MeshConnectResultMsg> {
+        match self.request(Body::MeshConnect(MeshConnectMsg {
+            join_code: join_code.to_owned(),
+        })).await? {
+            Body::MeshConnectResult(r) => Ok(r),
+            other => bail!("mesh_connect: unexpected response {:?}", other.msg_type()),
+        }
+    }
+
+    /// List all connected peers and their hosted .vln entries.
+    pub async fn mesh_peers(&mut self) -> Result<Vec<PeerInfoMsg>> {
+        match self.request(Body::MeshPeerList).await? {
+            Body::MeshPeerListResult(p) => Ok(p),
+            other => bail!("mesh_peers: unexpected response {:?}", other.msg_type()),
+        }
+    }
+
+    /// Disconnect from a specific peer by UUID.
+    pub async fn mesh_disconnect(&mut self, peer_id: Uuid) -> Result<()> {
+        match self.request(Body::MeshDisconnect(MeshDisconnectMsg { peer_id })).await? {
+            Body::Pong => Ok(()),
+            other => bail!("mesh_disconnect: unexpected response {:?}", other.msg_type()),
+        }
+    }
 
     pub async fn ping(&mut self) -> Result<()> {
         match self.request(Body::Ping).await? {

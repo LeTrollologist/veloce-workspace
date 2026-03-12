@@ -4,6 +4,7 @@ members = [
     "crates/veloce-ipc",
     "crates/veloce-core",
     "crates/veloce-net",
+    "crates/veloce-mesh",
     "crates/veloce-sdk",
     "apps/dashboard/src-tauri",
     "apps/installer/src-tauri",

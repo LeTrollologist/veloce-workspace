@@ -16,7 +16,10 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use tauri::Emitter;
-use veloce_ipc::message::{Body, Capability, NodeLimits, RestartPolicy, SpawnNodeMsg};
+use veloce_ipc::message::{
+    Body, Capability, MeshConnectResultMsg, MeshInfoMsg, NodeLimits, PeerInfoMsg,
+    RestartPolicy, SpawnNodeMsg,
+};
 use veloce_sdk::VeloceClient;
 
 // ── Managed state ─────────────────────────────────────────────────────────────
@@ -346,6 +349,42 @@ async fn spawn_from_template(
         .map_err(|e| e.to_string())
 }
 
+// ── Mesh commands ─────────────────────────────────────────────────────────────
+
+#[tauri::command]
+async fn mesh_info(state: tauri::State<'_, AppState>) -> Result<MeshInfoMsg, String> {
+    let mut g = state.client.lock().await;
+    let c = g.as_mut().ok_or("Not connected")?;
+    c.mesh_info().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn mesh_connect(
+    state:     tauri::State<'_, AppState>,
+    join_code: String,
+) -> Result<MeshConnectResultMsg, String> {
+    let mut g = state.client.lock().await;
+    let c = g.as_mut().ok_or("Not connected")?;
+    c.mesh_connect(&join_code).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn mesh_peers(state: tauri::State<'_, AppState>) -> Result<Vec<PeerInfoMsg>, String> {
+    let mut g = state.client.lock().await;
+    let c = g.as_mut().ok_or("Not connected")?;
+    c.mesh_peers().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn mesh_disconnect(
+    state:   tauri::State<'_, AppState>,
+    peer_id: Uuid,
+) -> Result<(), String> {
+    let mut g = state.client.lock().await;
+    let c = g.as_mut().ok_or("Not connected")?;
+    c.mesh_disconnect(peer_id).await.map_err(|e| e.to_string())
+}
+
 // ── App entry point ───────────────────────────────────────────────────────────
 
 pub fn run() {
@@ -367,6 +406,10 @@ pub fn run() {
             save_template,
             delete_template,
             spawn_from_template,
+            mesh_info,
+            mesh_connect,
+            mesh_peers,
+            mesh_disconnect,
         ])
         .run(tauri::generate_context!())
         .expect("error while running VeloceNetwork Dashboard");

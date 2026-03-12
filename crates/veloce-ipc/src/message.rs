@@ -77,6 +77,24 @@ pub enum MessageType {
     /// Net → Client: push a list of all currently registered hosts.
     NetHostList     = 0x45,
 
+    // ── Mesh (P2P multi-machine) ──────────────────────────────
+    /// Client → Core: get this machine's mesh identity + peer list.
+    MeshGetInfo         = 0x50,
+    /// Core → Client: mesh identity response.
+    MeshInfo            = 0x51,
+    /// Client → Core: connect to a remote peer using a join code.
+    MeshConnect         = 0x52,
+    /// Core → Client: peer connection result.
+    MeshConnectResult   = 0x53,
+    /// Client → Core: list connected peers.
+    MeshPeerList        = 0x54,
+    /// Core → Client: peer list response.
+    MeshPeerListResult  = 0x55,
+    /// Client → Core: disconnect from a peer.
+    MeshDisconnect      = 0x56,
+    /// Core → Client (push): a peer went offline.
+    MeshPeerGone        = 0x57,
+
     // ── Error ─────────────────────────────────────────────────
     Error           = 0xFF,
 }
@@ -102,6 +120,10 @@ impl TryFrom<u8> for MessageType {
             0x40 => NetRegisterHost, 0x41 => NetHostRegistered,
             0x42 => NetUnregisterHost,0x43 => NetResolve,
             0x44 => NetResolveResult, 0x45 => NetHostList,
+            0x50 => MeshGetInfo,     0x51 => MeshInfo,
+            0x52 => MeshConnect,     0x53 => MeshConnectResult,
+            0x54 => MeshPeerList,    0x55 => MeshPeerListResult,
+            0x56 => MeshDisconnect,  0x57 => MeshPeerGone,
             0xFF => Error,
             other => return Err(other),
         })
@@ -201,6 +223,24 @@ pub enum Body {
     NetResolveResult(NetResolveResultMsg),
     NetHostList(Vec<NetHostEntry>),
 
+    // Mesh P2P
+    /// Request this machine's mesh identity + peer list.
+    MeshGetInfo,
+    /// Mesh identity response.
+    MeshInfo(MeshInfoMsg),
+    /// Connect to a remote peer using a join code.
+    MeshConnect(MeshConnectMsg),
+    /// Peer connection result.
+    MeshConnectResult(MeshConnectResultMsg),
+    /// List connected peers.
+    MeshPeerList,
+    /// Peer list response.
+    MeshPeerListResult(Vec<PeerInfoMsg>),
+    /// Disconnect from a peer.
+    MeshDisconnect(MeshDisconnectMsg),
+    /// Push: a peer went offline.
+    MeshPeerGone(MeshPeerGoneMsg),
+
     // Error
     Error(ErrorMsg),
 }
@@ -238,6 +278,14 @@ impl Body {
             NetResolve{..}         => MessageType::NetResolve,
             NetResolveResult(_)    => MessageType::NetResolveResult,
             NetHostList(_)         => MessageType::NetHostList,
+            MeshGetInfo            => MessageType::MeshGetInfo,
+            MeshInfo(_)            => MessageType::MeshInfo,
+            MeshConnect(_)         => MessageType::MeshConnect,
+            MeshConnectResult(_)   => MessageType::MeshConnectResult,
+            MeshPeerList           => MessageType::MeshPeerList,
+            MeshPeerListResult(_)  => MessageType::MeshPeerListResult,
+            MeshDisconnect(_)      => MessageType::MeshDisconnect,
+            MeshPeerGone(_)        => MessageType::MeshPeerGone,
             Error(_)               => MessageType::Error,
         }
     }
@@ -449,6 +497,59 @@ pub struct ErrorMsg {
     /// The correlation_id of the request that caused this error, if applicable.
     pub context_id: Option<Uuid>,
 }
+
+// ── MESH P2P MESSAGE TYPES ────────────────────────────────────────────────────
+
+/// Information about this machine's mesh identity and peers.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MeshInfoMsg {
+    pub machine_id:   Uuid,
+    /// Base64 join code that can be given to another machine.
+    pub join_code:    String,
+    /// TCP port the mesh server is listening on.
+    pub listen_port:  u16,
+    pub peers:        Vec<PeerInfoMsg>,
+}
+
+/// Snapshot of a connected peer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PeerInfoMsg {
+    pub peer_id:          Uuid,
+    pub peer_name:        String,
+    /// Unix timestamp when the connection was established.
+    pub connected_since:  u64,
+    pub latency_ms:       u32,
+    /// .vln hostnames hosted on that peer.
+    pub remote_hosts:     Vec<String>,
+}
+
+/// Connect to a remote peer using a one-time join code.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MeshConnectMsg {
+    pub join_code: String,
+}
+
+/// Result of a successful peer connection.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MeshConnectResultMsg {
+    pub peer_id:   Uuid,
+    pub peer_name: String,
+}
+
+/// Disconnect from a specific peer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MeshDisconnectMsg {
+    pub peer_id: Uuid,
+}
+
+/// Push notification: a peer disconnected or went offline.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MeshPeerGoneMsg {
+    pub peer_id:   Uuid,
+    pub peer_name: String,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u16)]
