@@ -173,13 +173,14 @@ impl VeloceClient {
         args:       &[&str],
     ) -> Result<NodeSpawnedMsg> {
         self.spawn_node_with(SpawnNodeMsg {
-            app_name:       app_name.into(),
-            executable:     executable.into(),
-            args:           args.iter().map(|s| s.to_string()).collect(),
-            env:            vec![],
-            limits:         None,
-            auto_kill:      true,
-            restart_policy: None,
+            app_name:         app_name.into(),
+            executable:       executable.into(),
+            args:             args.iter().map(|s| s.to_string()).collect(),
+            env:              vec![],
+            limits:           None,
+            auto_kill:        true,
+            restart_policy:   None,
+            use_appcontainer: false,
         }).await
     }
 

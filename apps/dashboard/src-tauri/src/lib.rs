@@ -246,14 +246,17 @@ async fn query_resources(
 /// Full description of a spawn template, shared between save and get.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct TemplateSpec {
-    name:          String,
-    app_name:      String,
-    executable:    String,
-    args:          Vec<String>,
-    cpu_pct:       Option<u32>,
-    mem_mb:        Option<u64>,
-    lifetime_secs: Option<u64>,
-    max_restarts:  Option<u32>,
+    name:             String,
+    app_name:         String,
+    executable:       String,
+    args:             Vec<String>,
+    cpu_pct:          Option<u32>,
+    mem_mb:           Option<u64>,
+    lifetime_secs:    Option<u64>,
+    max_restarts:     Option<u32>,
+    /// If true, spawn the node inside a Windows AppContainer sandbox.
+    #[serde(default)]
+    use_appcontainer: bool,
 }
 
 impl From<TemplateSpec> for SpawnNodeMsg {
@@ -268,12 +271,13 @@ impl From<TemplateSpec> for SpawnNodeMsg {
             } else {
                 None
             },
-            auto_kill:      true,
-            restart_policy: t.max_restarts.map(|mr| RestartPolicy {
+            auto_kill:        true,
+            restart_policy:   t.max_restarts.map(|mr| RestartPolicy {
                 max_restarts:   mr,
                 base_delay_secs: 2,
                 max_delay_secs:  60,
             }),
+            use_appcontainer: t.use_appcontainer,
         }
     }
 }
@@ -296,13 +300,14 @@ async fn get_template(
         None      => Ok(None),
         Some(msg) => Ok(Some(TemplateSpec {
             name,
-            app_name:      msg.app_name,
-            executable:    msg.executable,
-            args:          msg.args,
-            cpu_pct:       msg.limits.as_ref().and_then(|l| l.cpu_pct),
-            mem_mb:        msg.limits.as_ref().and_then(|l| l.mem_mb),
-            lifetime_secs: msg.limits.as_ref().and_then(|l| l.max_lifetime_secs),
-            max_restarts:  msg.restart_policy.map(|rp| rp.max_restarts),
+            app_name:         msg.app_name,
+            executable:       msg.executable,
+            args:             msg.args,
+            cpu_pct:          msg.limits.as_ref().and_then(|l| l.cpu_pct),
+            mem_mb:           msg.limits.as_ref().and_then(|l| l.mem_mb),
+            lifetime_secs:    msg.limits.as_ref().and_then(|l| l.max_lifetime_secs),
+            max_restarts:     msg.restart_policy.map(|rp| rp.max_restarts),
+            use_appcontainer: msg.use_appcontainer,
         })),
     }
 }
