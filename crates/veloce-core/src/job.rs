@@ -36,7 +36,7 @@ use windows::{
             JobObjects::{
                 AssignProcessToJobObject, CreateJobObjectW,
                 JobObjectCpuRateControlInformation, JobObjectExtendedLimitInformation,
-                QueryJobObjectInformation, SetInformationJobObject,
+                QueryInformationJobObject, SetInformationJobObject,
                 JOBOBJECT_CPU_RATE_CONTROL_INFORMATION,
                 JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_CPU_RATE_CONTROL_ENABLE,
                 JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP, JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION,
@@ -108,7 +108,7 @@ impl NodeHandle {
 
         let mem_bytes = unsafe {
             let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-            match QueryJobObjectInformation(
+            match QueryInformationJobObject(
                 self.job_handle.0,
                 JobObjectExtendedLimitInformation,
                 &mut info as *mut _ as *mut _,
