@@ -26,7 +26,10 @@ use anyhow::Context;
 use tokio::{net::TcpListener, sync::RwLock};
 use uuid::Uuid;
 
-use veloce_ipc::message::{MeshInfoMsg, MeshConnectResultMsg, PeerInfoMsg};
+use veloce_ipc::message::{
+    HostTrafficMsg, MeshConnectResultMsg, MeshInfoMsg, PeerInfoMsg, TrafficStatsMsg,
+    TunnelTrafficMsg,
+};
 use veloce_net::registry::NetRegistry;
 
 use identity::MachineIdentity;
@@ -193,6 +196,29 @@ impl MeshState {
 
     pub fn peer_list(&self) -> Vec<PeerInfoMsg> {
         self.peers.blocking_read().values().map(|p| p.to_info()).collect()
+    }
+
+    /// Build a `TrafficStatsMsg` snapshot combining per-tunnel byte counters from
+    /// this mesh state and per-host byte counters supplied by the caller (from
+    /// `NetRegistry::traffic_snapshot()`).
+    pub fn query_traffic_stats(&self, host_stats: Vec<HostTrafficMsg>) -> TrafficStatsMsg {
+        let ts_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        let tunnels = self.peers.blocking_read()
+            .values()
+            .map(|p| {
+                let (tx, rx) = p.traffic_snapshot();
+                TunnelTrafficMsg {
+                    peer_id:   p.peer_id,
+                    peer_name: p.peer_name.clone(),
+                    tx_bytes:  tx,
+                    rx_bytes:  rx,
+                }
+            })
+            .collect();
+        TrafficStatsMsg { tunnels, hosts: host_stats, ts_ms }
     }
 
     /// Build the gossip payload from our local NetRegistry.

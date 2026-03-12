@@ -13,7 +13,10 @@ per-language settings) to get automatic `*.vln` routing.
 
 use anyhow::{bail, Context, Result};
 use std::net::{Ipv4Addr, SocketAddr};
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
 use tokio::io::{self, AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -89,20 +92,25 @@ async fn handle_connection(
     }
 
     // ── Step 3: Route ─────────────────────────────────────────────────────────
-    let real_addr = if registry.is_vln(&target_host) {
-        match registry.resolve(&target_host) {
-            Some(rec) => {
-                tracing::debug!(hostname = %target_host, port = rec.local_port, "SOCKS5: vln route");
-                format!("127.0.0.1:{}", rec.local_port)
+    // For .vln hostnames, also capture a shared byte counter for traffic reporting.
+    let (real_addr, bytes_counter): (String, Option<Arc<AtomicU64>>) =
+        if registry.is_vln(&target_host) {
+            match registry.resolve(&target_host) {
+                Some(rec) => {
+                    tracing::debug!(
+                        hostname = %target_host, port = rec.local_port, "SOCKS5: vln route"
+                    );
+                    let counter = Arc::clone(&rec.bytes_proxied);
+                    (format!("127.0.0.1:{}", rec.local_port), Some(counter))
+                }
+                None => {
+                    send_reply(&mut stream, REP_UNREACHABLE, Ipv4Addr::UNSPECIFIED, 0).await?;
+                    bail!("vln hostname not registered: {target_host}");
+                }
             }
-            None => {
-                send_reply(&mut stream, REP_UNREACHABLE, Ipv4Addr::UNSPECIFIED, 0).await?;
-                bail!("vln hostname not registered: {target_host}");
-            }
-        }
-    } else {
-        format!("{target_host}:{target_port}")
-    };
+        } else {
+            (format!("{target_host}:{target_port}"), None)
+        };
 
     // ── Step 4: Connect to target ─────────────────────────────────────────────
     match TcpStream::connect(&real_addr).await {
@@ -115,12 +123,18 @@ async fn handle_connection(
             };
             send_reply(&mut stream, REP_SUCCESS, bind_ip, bind_port).await?;
 
-            // Bidirectional copy
+            // Bidirectional copy — count bytes for .vln routes.
             let (mut cr, mut cw) = stream.split();
             let (mut tr, mut tw) = target.split();
             tokio::select! {
-                r = io::copy(&mut cr, &mut tw) => { r?; }
-                r = io::copy(&mut tr, &mut cw) => { r?; }
+                res = io::copy(&mut cr, &mut tw) => {
+                    let n = res?;
+                    if let Some(ref c) = bytes_counter { c.fetch_add(n, Ordering::Relaxed); }
+                }
+                res = io::copy(&mut tr, &mut cw) => {
+                    let n = res?;
+                    if let Some(ref c) = bytes_counter { c.fetch_add(n, Ordering::Relaxed); }
+                }
             }
         }
         Err(e) => {
