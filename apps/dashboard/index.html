@@ -24,6 +24,7 @@
     <!-- ── Tabs ── -->
     <nav class="tabs">
       <button class="tab-btn active" data-tab="nodes">Nodes</button>
+      <button class="tab-btn"        data-tab="templates">Templates</button>
       <button class="tab-btn"        data-tab="network">VeloceNet</button>
       <button class="tab-btn"        data-tab="logs">Logs</button>
     </nav>
@@ -63,6 +64,54 @@
           <button id="btn-spawn" class="btn btn-primary">Spawn</button>
         </div>
         <div id="spawn-result" class="result hidden"></div>
+      </div>
+    </section>
+
+    <!-- ── Templates Panel ── -->
+    <section id="tab-templates" class="tab-panel">
+      <div class="panel-row">
+        <h2>Node Templates</h2>
+        <button id="btn-refresh-templates" class="btn btn-ghost">↻ Refresh</button>
+      </div>
+
+      <!-- Saved templates list -->
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>App Name</th>
+              <th>Executable</th>
+              <th>CPU%</th>
+              <th>RAM (MB)</th>
+              <th>Restarts</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="template-list">
+            <tr id="template-empty-row">
+              <td colspan="7" class="empty-cell">No templates saved</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Create / edit template form -->
+      <div class="card spawn-card">
+        <h3>Save Template</h3>
+        <div class="form-row">
+          <input id="tmpl-name"   class="input"        placeholder="Template name (e.g. webserver)" />
+          <input id="tmpl-app"    class="input"        placeholder="App name" />
+          <input id="tmpl-exe"    class="input wide"   placeholder="C:\path\to\app.exe" />
+        </div>
+        <div class="form-row">
+          <input id="tmpl-args"   class="input wide"   placeholder="Args (space-separated, optional)" />
+          <input id="tmpl-cpu"    class="input narrow" type="number" min="1" max="100" placeholder="CPU%" />
+          <input id="tmpl-mem"    class="input narrow" type="number" min="1" placeholder="RAM MB" />
+          <input id="tmpl-restarts" class="input narrow" type="number" min="0" placeholder="Max restarts" />
+          <button id="btn-save-template" class="btn btn-primary">Save</button>
+        </div>
+        <div id="tmpl-result" class="result hidden"></div>
       </div>
     </section>
 

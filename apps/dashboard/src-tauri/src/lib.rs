@@ -12,11 +12,11 @@ Log chunks and node events are pushed to the frontend via Tauri window events:
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use tauri::Emitter;
-use veloce_ipc::message::{Body, Capability};
+use veloce_ipc::message::{Body, Capability, NodeLimits, RestartPolicy, SpawnNodeMsg};
 use veloce_sdk::VeloceClient;
 
 // ── Managed state ─────────────────────────────────────────────────────────────
@@ -215,6 +215,106 @@ async fn subscribe_node_logs(
         .map_err(|e| e.to_string())
 }
 
+// ── Node Templates ────────────────────────────────────────────────────────────
+
+/// Full description of a spawn template, shared between save and get.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct TemplateSpec {
+    name:          String,
+    app_name:      String,
+    executable:    String,
+    args:          Vec<String>,
+    cpu_pct:       Option<u32>,
+    mem_mb:        Option<u64>,
+    lifetime_secs: Option<u64>,
+    max_restarts:  Option<u32>,
+}
+
+impl From<TemplateSpec> for SpawnNodeMsg {
+    fn from(t: TemplateSpec) -> Self {
+        SpawnNodeMsg {
+            app_name:   t.app_name,
+            executable: t.executable,
+            args:       t.args,
+            env:        vec![],
+            limits: if t.cpu_pct.is_some() || t.mem_mb.is_some() || t.lifetime_secs.is_some() {
+                Some(NodeLimits { cpu_pct: t.cpu_pct, mem_mb: t.mem_mb, max_lifetime_secs: t.lifetime_secs })
+            } else {
+                None
+            },
+            auto_kill:      true,
+            restart_policy: t.max_restarts.map(|mr| RestartPolicy {
+                max_restarts:   mr,
+                base_delay_secs: 2,
+                max_delay_secs:  60,
+            }),
+        }
+    }
+}
+
+#[tauri::command]
+async fn list_templates(state: tauri::State<'_, AppState>) -> Result<Vec<String>, String> {
+    let mut g = state.client.lock().await;
+    let c = g.as_mut().ok_or("Not connected")?;
+    c.list_templates().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn get_template(
+    state: tauri::State<'_, AppState>,
+    name:  String,
+) -> Result<Option<TemplateSpec>, String> {
+    let mut g = state.client.lock().await;
+    let c = g.as_mut().ok_or("Not connected")?;
+    match c.get_template(&name).await.map_err(|e| e.to_string())? {
+        None      => Ok(None),
+        Some(msg) => Ok(Some(TemplateSpec {
+            name,
+            app_name:      msg.app_name,
+            executable:    msg.executable,
+            args:          msg.args,
+            cpu_pct:       msg.limits.as_ref().and_then(|l| l.cpu_pct),
+            mem_mb:        msg.limits.as_ref().and_then(|l| l.mem_mb),
+            lifetime_secs: msg.limits.as_ref().and_then(|l| l.max_lifetime_secs),
+            max_restarts:  msg.restart_policy.map(|rp| rp.max_restarts),
+        })),
+    }
+}
+
+#[tauri::command]
+async fn save_template(
+    state: tauri::State<'_, AppState>,
+    spec:  TemplateSpec,
+) -> Result<(), String> {
+    let mut g = state.client.lock().await;
+    let c = g.as_mut().ok_or("Not connected")?;
+    let name = spec.name.clone();
+    let msg: SpawnNodeMsg = spec.into();
+    c.save_template(&name, msg).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn delete_template(
+    state: tauri::State<'_, AppState>,
+    name:  String,
+) -> Result<(), String> {
+    let mut g = state.client.lock().await;
+    let c = g.as_mut().ok_or("Not connected")?;
+    c.delete_template(&name).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn spawn_from_template(
+    state: tauri::State<'_, AppState>,
+    name:  String,
+) -> Result<SpawnResult, String> {
+    let mut g = state.client.lock().await;
+    let c = g.as_mut().ok_or("Not connected")?;
+    c.spawn_from_template(&name).await
+        .map(|r| SpawnResult { node_id: r.node_id.to_string(), pid: r.pid, node_pipe: r.node_pipe })
+        .map_err(|e| e.to_string())
+}
+
 // ── App entry point ───────────────────────────────────────────────────────────
 
 pub fn run() {
@@ -230,6 +330,11 @@ pub fn run() {
             register_host,
             unregister_host,
             subscribe_node_logs,
+            list_templates,
+            get_template,
+            save_template,
+            delete_template,
+            spawn_from_template,
         ])
         .run(tauri::generate_context!())
         .expect("error while running VeloceNetwork Dashboard");

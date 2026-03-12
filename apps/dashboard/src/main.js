@@ -154,6 +154,7 @@ async function toggleConnect() {
       await invoke("connect");
       setStatus(true);
       refreshNodes();
+      refreshTemplates();
     } catch (e) {
       alert("Connect failed:\n" + e);
     }
@@ -219,6 +220,112 @@ async function unregisterHost() {
   }
 }
 
+// ── Templates ──────────────────────────────────────────────────────────────
+
+function renderTemplates(templates) {
+  const tbody = document.getElementById("template-list");
+  if (!templates || templates.length === 0) {
+    tbody.innerHTML = `<tr id="template-empty-row">
+      <td colspan="7" class="empty-cell">No templates saved</td>
+    </tr>`;
+    return;
+  }
+  tbody.innerHTML = templates.map(t => `
+    <tr data-tmpl-name="${escHtml(t.name)}">
+      <td><strong>${escHtml(t.name)}</strong></td>
+      <td>${escHtml(t.app_name)}</td>
+      <td class="mono">${escHtml(t.executable)}</td>
+      <td>${t.cpu_pct != null ? t.cpu_pct + "%" : "—"}</td>
+      <td>${t.mem_mb  != null ? t.mem_mb  + " MB" : "—"}</td>
+      <td>${t.max_restarts != null ? t.max_restarts : "—"}</td>
+      <td style="display:flex;gap:4px">
+        <button class="btn-spawn-tmpl" data-spawn-tmpl="${escHtml(t.name)}" ${connected ? "" : "disabled"}>▶ Spawn</button>
+        <button class="btn btn-danger btn-sm" data-del-tmpl="${escHtml(t.name)}">✕</button>
+      </td>
+    </tr>
+  `).join("");
+
+  tbody.querySelectorAll("[data-spawn-tmpl]").forEach(btn => {
+    btn.addEventListener("click", () => spawnFromTemplate(btn.dataset.spawnTmpl));
+  });
+  tbody.querySelectorAll("[data-del-tmpl]").forEach(btn => {
+    btn.addEventListener("click", () => deleteTemplate(btn.dataset.delTmpl));
+  });
+}
+
+async function refreshTemplates() {
+  if (!connected) return;
+  try {
+    const templates = await invoke("list_templates");
+    // list_templates returns names; fetch each to get full details
+    const full = await Promise.all(
+      templates.map(name => invoke("get_template", { name }))
+    );
+    renderTemplates(full.filter(Boolean));
+  } catch (e) {
+    console.error("list_templates:", e);
+    renderTemplates([]);
+  }
+}
+
+async function saveTemplate() {
+  const name     = document.getElementById("tmpl-name").value.trim();
+  const appName  = document.getElementById("tmpl-app").value.trim();
+  const exe      = document.getElementById("tmpl-exe").value.trim();
+  const argsRaw  = document.getElementById("tmpl-args").value.trim();
+  const cpuRaw   = document.getElementById("tmpl-cpu").value.trim();
+  const memRaw   = document.getElementById("tmpl-mem").value.trim();
+  const rstRaw   = document.getElementById("tmpl-restarts").value.trim();
+
+  if (!name || !appName || !exe) {
+    showResult("tmpl-result", "Template name, app name, and executable are required.", false);
+    return;
+  }
+  hideResult("tmpl-result");
+
+  const spec = {
+    name,
+    app_name:     appName,
+    executable:   exe,
+    args:         argsRaw ? argsRaw.split(/\s+/) : [],
+    cpu_pct:      cpuRaw   ? parseInt(cpuRaw)   : null,
+    mem_mb:       memRaw   ? parseInt(memRaw)   : null,
+    lifetime_secs: null,
+    max_restarts: rstRaw   ? parseInt(rstRaw)   : null,
+  };
+
+  try {
+    await invoke("save_template", { spec });
+    showResult("tmpl-result", `Template "${name}" saved.`, true);
+    // Clear form
+    ["tmpl-name","tmpl-app","tmpl-exe","tmpl-args","tmpl-cpu","tmpl-mem","tmpl-restarts"]
+      .forEach(id => { document.getElementById(id).value = ""; });
+    refreshTemplates();
+  } catch (e) {
+    showResult("tmpl-result", "Error: " + e, false);
+  }
+}
+
+async function spawnFromTemplate(name) {
+  try {
+    const r = await invoke("spawn_from_template", { name });
+    showResult("tmpl-result", `Spawned from "${name}" — PID ${r.pid}`, true);
+    refreshNodes();
+  } catch (e) {
+    showResult("tmpl-result", "Spawn error: " + e, false);
+  }
+}
+
+async function deleteTemplate(name) {
+  if (!confirm(`Delete template "${name}"?`)) return;
+  try {
+    await invoke("delete_template", { name });
+    refreshTemplates();
+  } catch (e) {
+    alert("Delete failed:\n" + e);
+  }
+}
+
 // ── Tab switching ──────────────────────────────────────────────────────────
 
 function initTabs() {
@@ -238,11 +345,13 @@ window.addEventListener("DOMContentLoaded", async () => {
   initTabs();
   setStatus(false);
 
-  document.getElementById("btn-connect").addEventListener("click",      toggleConnect);
-  document.getElementById("btn-refresh").addEventListener("click",      refreshNodes);
-  document.getElementById("btn-spawn").addEventListener("click",        spawnNode);
-  document.getElementById("btn-register").addEventListener("click",     registerHost);
-  document.getElementById("btn-unregister").addEventListener("click",   unregisterHost);
+  document.getElementById("btn-connect").addEventListener("click",            toggleConnect);
+  document.getElementById("btn-refresh").addEventListener("click",            refreshNodes);
+  document.getElementById("btn-spawn").addEventListener("click",              spawnNode);
+  document.getElementById("btn-register").addEventListener("click",           registerHost);
+  document.getElementById("btn-unregister").addEventListener("click",         unregisterHost);
+  document.getElementById("btn-refresh-templates").addEventListener("click",  refreshTemplates);
+  document.getElementById("btn-save-template").addEventListener("click",      saveTemplate);
 
   // Log node selector
   document.getElementById("log-node-select").addEventListener("change", async (e) => {
