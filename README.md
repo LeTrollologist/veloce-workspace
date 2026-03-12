@@ -10,6 +10,8 @@ VeloceNetwork is a lightweight orchestration layer that runs on any Windows mach
 
 With v0.4, the mesh extends transparently across machines — two `veloce-core` instances exchange a join code, perform a Noise_IK handshake, and each other's `.vln` hostnames become locally resolvable on both sides. No VPN client, no admin elevation, no manual port rules.
 
+With v0.5, the mesh reaches across NAT and the internet automatically: STUN discovers each machine's WAN IP at startup, the join code is upgraded to a dual-address VM2 format, and a declarative TOML policy engine controls which applications may request which capabilities and which peer-gossiped hostnames are installed locally.
+
 Think of it as a stripped-down version of Kubernetes Service Mesh ideas, designed for desktop environments, developer tooling, and lightweight commercial applications rather than cloud infrastructure.
 
 ---
@@ -29,6 +31,7 @@ Think of it as a stripped-down version of Kubernetes Service Mesh ideas, designe
 │  • Session auth (SID ACL + OsRng PSK)                   │
 │  • Node lifecycle (spawn / kill / monitor)              │
 │  • Job Objects + AppContainer (CPU / memory / sandbox)  │
+│  • Policy Engine (RBAC + mesh ACLs, TOML hot-reload)    │
 │  • Shared mmap registry (fast key-value store)          │
 │  • VeloceNet + Mesh integration                         │
 └──────────┬──────────────────────┬───────────────────────┘
@@ -47,7 +50,7 @@ Think of it as a stripped-down version of Kubernetes Service Mesh ideas, designe
 | `veloce-core` | Background Windows service — single source of truth |
 | `veloce-ipc` | Wire protocol (framing, message types, codec) shared by all components |
 | `veloce-net` | Userspace DNS resolver and SOCKS5 proxy for the `*.vln` namespace |
-| `veloce-mesh` | Noise_IK P2P mesh — encrypted tunnels and `.vln` gossip between machines |
+| `veloce-mesh` | Noise_IK P2P mesh — encrypted tunnels, `.vln` gossip, STUN WAN discovery |
 | `veloce-sdk` | Async Rust client + C FFI layer for sideloaded apps |
 | `apps/dashboard` | Tauri 2 desktop GUI — nodes, templates, log viewer, resource meters, mesh UI |
 | `apps/installer` | Glassmorphic 5-step Tauri installer |
@@ -101,13 +104,22 @@ Think of it as a stripped-down version of Kubernetes Service Mesh ideas, designe
 - `--watch` streams live stdout/stderr to the terminal; `--detach` prints the node ID and exits
 - `mesh` subcommand group for P2P mesh management (see Multi-Machine section below)
 
-### Multi-Machine VeloceNet (v0.4)
+### Multi-Machine VeloceNet (v0.4+)
 - Two machines share a **join code** (one command each) to establish an encrypted P2P tunnel
 - Crypto: **Noise_IK_25519_ChaChaPoly_BLAKE2s** — same algorithm as WireGuard, pure Rust, zero-admin
 - Each machine's `.vln` hosts are gossiped to the peer via LWW (last-write-wins) CRDT protocol
 - Remote `.vln` hosts appear **locally resolvable** — DNS and SOCKS5 require no changes
 - Transparent TCP forwarder: traffic to a remote `.vln` host is silently tunnelled through the Noise channel
 - Peer identities derived from x25519 static keys; persisted across restarts as `veloce-identity.key`
+- **v0.5 — STUN WAN Mesh**: at startup, VeloceCore probes a STUN server to discover the machine's external IP; the join code is upgraded to **VM2** format (dual LAN + WAN addresses); `connect_to_peer()` races all addresses with a 250 ms stagger so NAT traversal is automatic
+
+### Policy Engine (v0.5)
+- Declarative **TOML policy file** (`veloce-policy.toml`) — absent = allow-all, fully backward compatible
+- **Tier 1 — Process RBAC**: per-app `allow`/`deny` lists for capabilities (`SpawnNodes`, `KillNodes`, `NetRegister`, …)
+- **Tier 2 — Mesh ACLs**: filter which peer-gossiped `.vln` hostnames are installed as local forwarders, optionally scoped by source peer
+- Glob patterns: `"*"` (any) and `"*.suffix"` supported in both app names and hostnames
+- Hot-reloadable at runtime via `veloce-run policy reload` — no service restart required
+- `veloce-run policy show` prints a formatted table of all active rules
 
 ### Security
 - **SID-based pipe ACL**: the named pipe is restricted to the owning Windows user at the kernel level — cross-user connections are rejected before any data is read
@@ -116,6 +128,7 @@ Think of it as a stripped-down version of Kubernetes Service Mesh ideas, designe
 - **DNS compression loop protection**: hand-rolled DNS parser enforces max 10 pointer jumps (DoS fix)
 - **Identity key file ACL**: `veloce-identity.key` is set read-only and owner-only at creation
 - Capability negotiation: clients declare exactly which operations they need (`SpawnNodes`, `KillNodes`, `RegistryRead`, `NetRegister`, …) and Core enforces the grant
+- **Policy Engine**: declarative TOML RBAC enforced server-side — blocked capabilities return `PolicyDenied (11)` before any action is taken; mesh ACLs prevent untrusted peers from installing forwarders for sensitive hostnames
 
 ### Dashboard
 - Tauri 2 desktop app (Windows, ships as a lightweight installer)
@@ -163,9 +176,9 @@ Think of it as a stripped-down version of Kubernetes Service Mesh ideas, designe
 | Resource usage display (CPU% + peak memory) | ✅ v0.2 |
 | Glassmorphic Tauri installer | ✅ v0.2 |
 | veloce-run CLI + AppContainer isolation | ✅ v0.3 |
-| Multi-Machine VeloceNet (Noise_IK P2P mesh) | 🟡 v0.4 (PR #10) |
-| Policy Engine (process RBAC + mesh ACLs) | 📋 v0.5 |
-| STUN WAN hole-punching | 📋 v0.5 |
+| Multi-Machine VeloceNet (Noise_IK P2P mesh) | ✅ v0.4 |
+| Policy Engine (process RBAC + mesh ACLs) | ✅ v0.5 |
+| STUN WAN mesh + VM2 join codes | ✅ v0.5 |
 | Dashboard v2 (topology canvas, heatmap, log viewer) | 📋 v0.6 |
 | WireGuard-NT kernel driver (perf) | 📋 v1.0 |
 | Signed installer with auto-update | 📋 v1.0 |
@@ -229,13 +242,14 @@ veloce-run --watch -- ping -t 127.0.0.1
 ```powershell
 # Machine A — print the join code
 veloce-run mesh identity
-# Output: VM1:AAA...==
+# VM2:BBBB...==                       ← VM2 if internet available (LAN + WAN)
 # machine_id: xxxxxxxx-...
 # listening on port: 7474
+# wan: 203.0.113.45  (via stun.l.google.com)
 
-# Machine B — connect using the join code from Machine A
-veloce-run mesh join "VM1:AAA...=="
-# Output: ✓ connected to DESKTOP-A (peer_id=abc-123...)
+# Machine B — connect using the join code from Machine A (works across NAT)
+veloce-run mesh join "VM2:BBBB...=="
+# ✓ connected to DESKTOP-A (peer_id=abc-123...)
 
 # Verify both sides see each other
 veloce-run mesh peers
@@ -246,6 +260,23 @@ veloce-run --hostname api.vln --port 8080 --detach -- node server.js
 # Machine B resolves it transparently — no config changes required
 curl --proxy socks5://127.0.0.1:1055 http://api.vln/health
 # → 200 OK  (traffic routed through Noise_IK tunnel to Machine A)
+```
+
+### Manage access with the Policy Engine (v0.5+)
+
+```powershell
+# View the active policy rules (default: allow-all when no file is present)
+veloce-run policy show
+
+# Create a policy file at %ProgramData%\VeloceSolutions\VeloceCore\veloce-policy.toml
+# Example: block an untrusted sideloaded agent from spawning nodes
+#
+# [[rules]]
+# app  = "untrusted-agent"
+# deny = ["SpawnNodes", "KillNodes"]
+
+# Hot-reload without restarting the service
+veloce-run policy reload
 ```
 
 ### Connect via the SDK
