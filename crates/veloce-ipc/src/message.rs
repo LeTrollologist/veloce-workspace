@@ -295,6 +295,11 @@ pub struct SpawnNodeMsg {
     pub auto_kill: bool,
     /// Optional restart-on-crash policy.
     pub restart_policy: Option<RestartPolicy>,
+    /// If true, spawn the process inside a Windows AppContainer (filesystem + network
+    /// sandbox).  The container is created fresh per-node and deleted on exit.
+    /// Falls back to a standard Job-Object spawn if AppContainer creation fails.
+    #[serde(default)]
+    pub use_appcontainer: bool,
 }
 
 /// Automatic restart policy for nodes that exit unexpectedly.

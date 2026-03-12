@@ -87,12 +87,13 @@
               <th>CPU%</th>
               <th>RAM (MB)</th>
               <th>Restarts</th>
+              <th>Sandbox</th>
               <th></th>
             </tr>
           </thead>
           <tbody id="template-list">
             <tr id="template-empty-row">
-              <td colspan="7" class="empty-cell">No templates saved</td>
+              <td colspan="8" class="empty-cell">No templates saved</td>
             </tr>
           </tbody>
         </table>
@@ -111,6 +112,10 @@
           <input id="tmpl-cpu"    class="input narrow" type="number" min="1" max="100" placeholder="CPU%" />
           <input id="tmpl-mem"    class="input narrow" type="number" min="1" placeholder="RAM MB" />
           <input id="tmpl-restarts" class="input narrow" type="number" min="0" placeholder="Max restarts" />
+          <label class="checkbox-label" title="Wrap node in Windows AppContainer (filesystem + network sandbox)">
+            <input id="tmpl-appcontainer" type="checkbox" />
+            AppContainer sandbox
+          </label>
           <button id="btn-save-template" class="btn btn-primary">Save</button>
         </div>
         <div id="tmpl-result" class="result hidden"></div>

@@ -30,7 +30,13 @@ use windows::{
     core::PCWSTR,
     Win32::{
         Foundation::{CloseHandle, BOOL, FILETIME, HANDLE},
-        Security::SECURITY_ATTRIBUTES,
+        Security::{
+            Isolation::{
+                CreateAppContainerProfile, DeleteAppContainerProfile,
+                DeriveAppContainerSidFromAppContainerName,
+            },
+            FreeSid, SID_AND_ATTRIBUTES, SECURITY_ATTRIBUTES, SECURITY_CAPABILITIES,
+        },
         Storage::FileSystem::ReadFile,
         System::{
             JobObjects::{
@@ -44,13 +50,21 @@ use windows::{
             },
             Pipes::CreatePipe,
             Threading::{
-                CreateProcessW, GetExitCodeProcess, GetProcessTimes, TerminateProcess,
-                WaitForSingleObject, CREATE_UNICODE_ENVIRONMENT, PROCESS_INFORMATION,
-                STARTF_USESTDHANDLES, STARTUPINFOW,
+                CreateProcessW, DeleteProcThreadAttributeList, GetExitCodeProcess,
+                GetProcessTimes, InitializeProcThreadAttributeList, TerminateProcess,
+                UpdateProcThreadAttribute, WaitForSingleObject,
+                CREATE_UNICODE_ENVIRONMENT, EXTENDED_STARTUPINFO_PRESENT,
+                LPPROC_THREAD_ATTRIBUTE_LIST, PROCESS_INFORMATION,
+                STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW,
             },
         },
     },
 };
+
+/// Value of PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES for UpdateProcThreadAttribute.
+/// Computed as ProcThreadAttributeValue(9, FALSE, TRUE, FALSE) = 0x0002_0009.
+#[cfg(windows)]
+const PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES: usize = 0x0002_0009;
 
 // ── NODE HANDLE ───────────────────────────────────────────────────────────────
 
@@ -219,14 +233,101 @@ pub async fn spawn_node(
     let cmdline   = build_cmdline(&msg.executable, &msg.args);
     let cmdline_w: Vec<u16> = OsStr::new(&cmdline).encode_wide().chain(Some(0)).collect();
 
-    let mut si = STARTUPINFOW {
-        cb:         std::mem::size_of::<STARTUPINFOW>() as u32,
-        dwFlags:    STARTF_USESTDHANDLES,
-        hStdOutput: stdout_write,
-        hStdError:  stderr_write,
-        ..Default::default()
+    // ── AppContainer setup (optional) ────────────────────────────────────────
+    // All of these must remain valid through the CreateProcessW call.
+    let mut _ac_sid:   windows::Win32::Foundation::PSID = windows::Win32::Foundation::PSID::default();
+    let mut _attr_buf: Vec<u8>                          = Vec::new();
+    let mut _sec_cap:  SECURITY_CAPABILITIES            = SECURITY_CAPABILITIES {
+        AppContainerSid: windows::Win32::Foundation::PSID::default(),
+        Capabilities:    std::ptr::null_mut::<SID_AND_ATTRIBUTES>(),
+        CapabilityCount: 0,
+        Reserved:        0,
+    };
+    let mut _ac_profile: String = String::new(); // kept for DeleteAppContainerProfile
+
+    if msg.use_appcontainer {
+        // Build a per-node AppContainer profile name
+        let profile = format!("VeloceAC-{}", node_id.simple());
+        let profile_w: Vec<u16> = OsStr::new(&profile).encode_wide().chain(Some(0)).collect();
+        _ac_profile = profile;
+
+        // Create the profile; if it already exists, derive the SID instead
+        let ac_sid = unsafe {
+            match CreateAppContainerProfile(
+                PCWSTR(profile_w.as_ptr()),
+                PCWSTR(profile_w.as_ptr()),
+                PCWSTR(profile_w.as_ptr()),
+                None,   // no named capabilities → minimal sandbox
+            ) {
+                Ok(sid) => sid,
+                Err(_)  => DeriveAppContainerSidFromAppContainerName(
+                    PCWSTR(profile_w.as_ptr()),
+                ).context("DeriveAppContainerSidFromAppContainerName")?,
+            }
+        };
+        _ac_sid = ac_sid;
+
+        _sec_cap = SECURITY_CAPABILITIES {
+            AppContainerSid: _ac_sid,
+            Capabilities:    std::ptr::null_mut::<SID_AND_ATTRIBUTES>(),
+            CapabilityCount: 0,
+            Reserved:        0,
+        };
+
+        // Size probe for the attribute list buffer
+        let mut attr_size = 0usize;
+        unsafe {
+            let _ = InitializeProcThreadAttributeList(
+                LPPROC_THREAD_ATTRIBUTE_LIST(std::ptr::null_mut()), 1, 0, &mut attr_size,
+            );
+        }
+        _attr_buf = vec![0u8; attr_size];
+        let attr_ptr = LPPROC_THREAD_ATTRIBUTE_LIST(_attr_buf.as_mut_ptr() as *mut _);
+        unsafe {
+            InitializeProcThreadAttributeList(attr_ptr, 1, 0, &mut attr_size)
+                .context("InitializeProcThreadAttributeList")?;
+            UpdateProcThreadAttribute(
+                attr_ptr,
+                0,
+                PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES,
+                Some(&_sec_cap as *const SECURITY_CAPABILITIES as *const _),
+                std::mem::size_of::<SECURITY_CAPABILITIES>(),
+                None,
+                None,
+            ).context("UpdateProcThreadAttribute")?;
+        }
+
+        tracing::debug!(%node_id, "AppContainer profile created");
+    }
+
+    // Build STARTUPINFOEXW (superset of STARTUPINFOW).
+    // When NOT using AppContainer, lpAttributeList stays null and cb is set to
+    // sizeof(STARTUPINFOW) — Windows accepts this for backward compat.
+    let si_ex = STARTUPINFOEXW {
+        StartupInfo: STARTUPINFOW {
+            cb:         if msg.use_appcontainer {
+                            std::mem::size_of::<STARTUPINFOEXW>() as u32
+                        } else {
+                            std::mem::size_of::<STARTUPINFOW>() as u32
+                        },
+            dwFlags:    STARTF_USESTDHANDLES,
+            hStdOutput: stdout_write,
+            hStdError:  stderr_write,
+            ..Default::default()
+        },
+        lpAttributeList: if msg.use_appcontainer && !_attr_buf.is_empty() {
+            LPPROC_THREAD_ATTRIBUTE_LIST(_attr_buf.as_mut_ptr() as *mut _)
+        } else {
+            LPPROC_THREAD_ATTRIBUTE_LIST(std::ptr::null_mut())
+        },
     };
     let mut pi = PROCESS_INFORMATION::default();
+
+    let create_flags = if msg.use_appcontainer {
+        CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT
+    } else {
+        CREATE_UNICODE_ENVIRONMENT
+    };
 
     unsafe {
         CreateProcessW(
@@ -235,10 +336,10 @@ pub async fn spawn_node(
             None,
             None,
             BOOL(1), // bInheritHandles = TRUE so child gets the write pipe ends
-            CREATE_UNICODE_ENVIRONMENT,
+            create_flags,
             Some(env_block.as_ptr() as *const _),
             PCWSTR::null(),
-            &si,
+            &si_ex.StartupInfo,
             &mut pi,
         ).context("CreateProcess")?;
     }
@@ -246,6 +347,31 @@ pub async fn spawn_node(
     let pid = pi.dwProcessId;
     let proc_handle = SafeHandle(pi.hProcess);
     unsafe { let _ = CloseHandle(pi.hThread); }
+
+    // ── AppContainer cleanup ─────────────────────────────────────────────────
+    // The attribute list and profile are only needed during CreateProcessW.
+    // Once the process is running, the kernel holds the SID internally and the
+    // profile record can be safely removed.
+    if msg.use_appcontainer {
+        if !_attr_buf.is_empty() {
+            unsafe {
+                DeleteProcThreadAttributeList(
+                    LPPROC_THREAD_ATTRIBUTE_LIST(_attr_buf.as_mut_ptr() as *mut _)
+                );
+            }
+        }
+        if !_ac_sid.is_invalid() {
+            unsafe { FreeSid(_ac_sid); }
+        }
+        if !_ac_profile.is_empty() {
+            let profile_w: Vec<u16> = OsStr::new(&_ac_profile)
+                .encode_wide().chain(Some(0)).collect();
+            unsafe {
+                let _ = DeleteAppContainerProfile(PCWSTR(profile_w.as_ptr()));
+            }
+            tracing::debug!(%node_id, "AppContainer profile cleaned up");
+        }
+    }
 
     // Close the write ends in the parent — the child owns them now.
     // Keeping them open would prevent ReadFile from returning EOF.

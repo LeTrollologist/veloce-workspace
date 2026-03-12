@@ -290,7 +290,7 @@ function renderTemplates(templates) {
   const tbody = document.getElementById("template-list");
   if (!templates || templates.length === 0) {
     tbody.innerHTML = `<tr id="template-empty-row">
-      <td colspan="7" class="empty-cell">No templates saved</td>
+      <td colspan="8" class="empty-cell">No templates saved</td>
     </tr>`;
     return;
   }
@@ -302,6 +302,7 @@ function renderTemplates(templates) {
       <td>${t.cpu_pct != null ? t.cpu_pct + "%" : "—"}</td>
       <td>${t.mem_mb  != null ? t.mem_mb  + " MB" : "—"}</td>
       <td>${t.max_restarts != null ? t.max_restarts : "—"}</td>
+      <td>${t.use_appcontainer ? '<span class="badge-sandbox" title="Windows AppContainer">🛡 AC</span>' : "—"}</td>
       <td style="display:flex;gap:4px">
         <button class="btn-spawn-tmpl" data-spawn-tmpl="${escHtml(t.name)}" ${connected ? "" : "disabled"}>▶ Spawn</button>
         <button class="btn btn-danger btn-sm" data-del-tmpl="${escHtml(t.name)}">✕</button>
@@ -336,10 +337,11 @@ async function saveTemplate() {
   const name     = document.getElementById("tmpl-name").value.trim();
   const appName  = document.getElementById("tmpl-app").value.trim();
   const exe      = document.getElementById("tmpl-exe").value.trim();
-  const argsRaw  = document.getElementById("tmpl-args").value.trim();
-  const cpuRaw   = document.getElementById("tmpl-cpu").value.trim();
-  const memRaw   = document.getElementById("tmpl-mem").value.trim();
-  const rstRaw   = document.getElementById("tmpl-restarts").value.trim();
+  const argsRaw       = document.getElementById("tmpl-args").value.trim();
+  const cpuRaw        = document.getElementById("tmpl-cpu").value.trim();
+  const memRaw        = document.getElementById("tmpl-mem").value.trim();
+  const rstRaw        = document.getElementById("tmpl-restarts").value.trim();
+  const useAppContainer = document.getElementById("tmpl-appcontainer").checked;
 
   if (!name || !appName || !exe) {
     showResult("tmpl-result", "Template name, app name, and executable are required.", false);
@@ -349,13 +351,14 @@ async function saveTemplate() {
 
   const spec = {
     name,
-    app_name:     appName,
-    executable:   exe,
-    args:         argsRaw ? argsRaw.split(/\s+/) : [],
-    cpu_pct:      cpuRaw   ? parseInt(cpuRaw)   : null,
-    mem_mb:       memRaw   ? parseInt(memRaw)   : null,
-    lifetime_secs: null,
-    max_restarts: rstRaw   ? parseInt(rstRaw)   : null,
+    app_name:         appName,
+    executable:       exe,
+    args:             argsRaw ? argsRaw.split(/\s+/) : [],
+    cpu_pct:          cpuRaw   ? parseInt(cpuRaw)   : null,
+    mem_mb:           memRaw   ? parseInt(memRaw)   : null,
+    lifetime_secs:    null,
+    max_restarts:     rstRaw   ? parseInt(rstRaw)   : null,
+    use_appcontainer: useAppContainer,
   };
 
   try {
@@ -364,6 +367,7 @@ async function saveTemplate() {
     // Clear form
     ["tmpl-name","tmpl-app","tmpl-exe","tmpl-args","tmpl-cpu","tmpl-mem","tmpl-restarts"]
       .forEach(id => { document.getElementById(id).value = ""; });
+    document.getElementById("tmpl-appcontainer").checked = false;
     refreshTemplates();
   } catch (e) {
     showResult("tmpl-result", "Error: " + e, false);
