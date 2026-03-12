@@ -16,29 +16,44 @@ use crate::registry::Registry;
 use crate::job::{NodeHandle, NodeEventMsg};
 use veloce_ipc::message::NodeLogChunkMsg;
 use veloce_net::NetRegistry;
+use veloce_mesh::{MeshState, DEFAULT_MESH_PORT};
 
 pub struct CoreState {
     registry:     Registry,
     node_table:   Arc<NodeTable>,
     net_registry: Arc<NetRegistry>,
+    /// Optional P2P mesh state.  `None` if the mesh server failed to bind.
+    pub mesh:     Option<Arc<MeshState>>,
     shutdown:     AtomicBool,
-    /// Per-session pre-shared key.  32 random bytes written to the PSK file
-    /// at startup; every connecting client must echo them in its Handshake.
+    /// Per-session pre-shared key.  32 truly random bytes from OsRng, written to
+    /// the PSK file at startup; every connecting client must echo them.
     psk:          [u8; 32],
 }
 
 impl CoreState {
     pub fn new() -> anyhow::Result<Self> {
-        let db_path = data_dir().join("veloce-registry.bin");
-        std::fs::create_dir_all(db_path.parent().unwrap())?;
+        let dir = data_dir();
+        let db_path = dir.join("veloce-registry.bin");
+        std::fs::create_dir_all(&dir)?;
         let registry = Registry::open(&db_path)?;
 
         let psk = generate_and_persist_psk()?;
+        let net_registry = Arc::new(NetRegistry::new());
+
+        // Build mesh identity and state.
+        let mesh = match veloce_mesh::identity::MachineIdentity::load_or_create(&dir) {
+            Ok(id) => Some(MeshState::new(id, DEFAULT_MESH_PORT, Arc::clone(&net_registry))),
+            Err(e) => {
+                tracing::warn!("mesh identity init failed (mesh disabled): {e}");
+                None
+            }
+        };
 
         Ok(Self {
             registry,
             node_table:   Arc::new(NodeTable::new()),
-            net_registry: Arc::new(NetRegistry::new()),
+            net_registry,
+            mesh,
             shutdown:     AtomicBool::new(false),
             psk,
         })
@@ -58,17 +73,17 @@ impl CoreState {
     }
 }
 
-/// Generate 32 random bytes from two UUIDs, write hex to the PSK file, return
-/// the raw bytes.  The file is recreated on every Core startup — any SDK
-/// connections from the previous session are thereby invalidated.
+/// Generate 32 cryptographically random bytes via OsRng, write hex to the PSK
+/// file, and return the raw bytes.  The file is recreated on every Core startup
+/// — any SDK connections from the previous session are thereby invalidated.
+///
+/// Using OsRng directly (rather than two UUIDs) gives the full 256 bits of
+/// entropy without the 12 fixed version/variant bits that UUIDs sacrifice.
 fn generate_and_persist_psk() -> anyhow::Result<[u8; 32]> {
-    use uuid::Uuid;
+    use rand::RngCore;
 
-    let u1 = Uuid::new_v4();
-    let u2 = Uuid::new_v4();
     let mut psk = [0u8; 32];
-    psk[..16].copy_from_slice(u1.as_bytes());
-    psk[16..].copy_from_slice(u2.as_bytes());
+    rand::rngs::OsRng.fill_bytes(&mut psk);
 
     let hex: String = psk.iter().map(|b| format!("{b:02x}")).collect();
 
@@ -143,6 +158,12 @@ pub struct NodeSummary {
     pub app_name:        String,
     pub pipe_path:       String,
     /// Raw Win32 HANDLE value (as isize).  0 on non-Windows.
+    ///
+    /// **IMPORTANT — never serialize this field over the IPC pipe.**
+    /// Win32 HANDLEs are process-local and meaningless to any other process.
+    /// This field is only used internally by the health-monitoring loop
+    /// (`WaitForSingleObject`).  The IPC wire type `NodeInfo` intentionally
+    /// omits it.
     pub proc_handle_raw: isize,
     pub event_tx:        tokio::sync::broadcast::Sender<NodeEventMsg>,
     pub log_tx:          tokio::sync::broadcast::Sender<NodeLogChunkMsg>,

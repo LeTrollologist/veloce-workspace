@@ -22,7 +22,8 @@ use veloce_ipc::{
     Codec,
     message::{
         Body, Capability, Envelope, ErrorCode, ErrorMsg, Flags,
-        HandshakeAckMsg, NodeEventMsg, NodeInfo, NodeKilledMsg, NodeListMsg,
+        HandshakeAckMsg, MeshConnectMsg, MeshDisconnectMsg,
+        NodeEventMsg, NodeInfo, NodeKilledMsg, NodeListMsg,
         NodeLogChunkMsg, NodeResourceMsg, NodeSpawnedMsg, NodeStatus as IpcNodeStatus,
     },
     PIPE_NAME,
@@ -388,6 +389,42 @@ where
                 // Log forwarder tasks auto-exit when the node's broadcast sender
                 // is dropped; explicit unsubscribe just logs intent.
                 tracing::debug!(%node_id, "client unsubscribed from node logs");
+                self.send_reply(cid, Body::Pong).await?;
+            }
+
+            // ── Mesh P2P ──────────────────────────────────────────────────
+            Body::MeshGetInfo => {
+                let info = self.state.mesh.as_ref()
+                    .map(|m| m.mesh_info())
+                    .ok_or_else(|| anyhow::anyhow!("mesh not initialised"))?;
+                self.send_reply(cid, Body::MeshInfo(info)).await?;
+            }
+
+            Body::MeshConnect(MeshConnectMsg { join_code }) => {
+                let mesh = self.state.mesh.as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("mesh not initialised"))?;
+                match mesh.connect_to_peer(&join_code).await {
+                    Ok(result) => self.send_reply(cid, Body::MeshConnectResult(result)).await?,
+                    Err(e) => self.send_error(Some(cid), ErrorCode::InternalError,
+                        format!("mesh connect: {e}")).await?,
+                }
+            }
+
+            Body::MeshPeerList => {
+                let peers = self.state.mesh.as_ref()
+                    .map(|m| m.peer_list())
+                    .unwrap_or_default();
+                self.send_reply(cid, Body::MeshPeerListResult(peers)).await?;
+            }
+
+            Body::MeshDisconnect(MeshDisconnectMsg { peer_id }) => {
+                if let Some(mesh) = &self.state.mesh {
+                    if let Err(e) = mesh.disconnect(peer_id).await {
+                        self.send_error(Some(cid), ErrorCode::NotFound,
+                            format!("mesh disconnect: {e}")).await?;
+                        return Ok(());
+                    }
+                }
                 self.send_reply(cid, Body::Pong).await?;
             }
 

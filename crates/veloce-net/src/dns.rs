@@ -163,27 +163,34 @@ impl DnsMessage {
 }
 
 /// Parse a DNS name at `pos`, returning (name, new_pos).
+///
+/// Guards against compression pointer loops (a DoS vector in hand-rolled DNS
+/// parsers) by bailing if more than 10 pointer jumps are followed in one name.
 fn parse_name(buf: &[u8], mut pos: usize) -> Result<(String, usize)> {
-    let mut labels = Vec::new();
-    let mut jumped = false;
+    let mut labels  = Vec::new();
+    let mut jumps   = 0usize;   // counts pointer hops; bail if > MAX_JUMPS
     let mut end_pos = 0;
+    const MAX_JUMPS: usize = 10;
 
     loop {
         if pos >= buf.len() { anyhow::bail!("name past end of packet"); }
         let len = buf[pos] as usize;
 
         if len == 0 {
-            if !jumped { end_pos = pos + 1; }
+            if jumps == 0 { end_pos = pos + 1; }
             break;
         }
 
         // Pointer (compression)
         if len & 0xC0 == 0xC0 {
             if pos + 1 >= buf.len() { anyhow::bail!("compression pointer truncated"); }
-            if !jumped { end_pos = pos + 2; }
+            jumps += 1;
+            if jumps > MAX_JUMPS {
+                anyhow::bail!("DNS compression pointer loop detected (> {MAX_JUMPS} jumps)");
+            }
+            if jumps == 1 { end_pos = pos + 2; } // record where the uncompressed stream ends
             let ptr = (((len & 0x3F) as usize) << 8) | buf[pos+1] as usize;
             pos = ptr;
-            jumped = true;
             continue;
         }
 
@@ -193,7 +200,7 @@ fn parse_name(buf: &[u8], mut pos: usize) -> Result<(String, usize)> {
         pos += len;
     }
 
-    if !jumped { end_pos = pos; }
+    if jumps == 0 { end_pos = pos; }
     Ok((labels.join("."), end_pos))
 }
 

@@ -3,6 +3,10 @@ veloce-run — launch any executable into the VeloceNetwork mesh.
 
 Usage:
     veloce-run [OPTIONS] <EXECUTABLE> [ARGS]...
+    veloce-run mesh identity
+    veloce-run mesh join <CODE>
+    veloce-run mesh peers
+    veloce-run mesh leave <PEER_ID>
 
 Examples:
     # Wrap ping and stream its output to the terminal
@@ -11,29 +15,35 @@ Examples:
     # Start a Node.js server, register a .vln hostname, detach
     veloce-run --name api --hostname api.vln --port 3000 --detach -- node server.js
 
-    # Run with crash-restart and resource limits
-    veloce-run --cpu 25 --mem 512 --restarts 5 -- worker.exe
+    # Print this machine's join code for another machine to use
+    veloce-run mesh identity
+
+    # Connect to a peer (run on Machine B, paste code from Machine A)
+    veloce-run mesh join "VM1:AAA..."
 */
 
 use anyhow::{Context, Result};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use veloce_ipc::message::{Capability, LogStream, NodeLimits, RestartPolicy, SpawnNodeMsg};
 use veloce_sdk::VeloceClient;
 
-// ── CLI args ──────────────────────────────────────────────────────────────────
+// ── Top-level CLI ─────────────────────────────────────────────────────────────
 
 #[derive(Parser, Debug)]
 #[command(
     name    = "veloce-run",
-    about   = "Launch any executable into the VeloceNetwork mesh",
+    about   = "Launch any executable into the VeloceNetwork mesh, or manage mesh peers",
     version,
-    // allow `veloce-run -- my.exe arg1 arg2`
-    trailing_var_arg = true,
 )]
 struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+
+    // ── Run mode (default when no subcommand is given) ────────────────────────
+
     /// Executable to launch (path or name on PATH)
-    #[arg(required = true)]
-    executable: String,
+    #[arg(required_unless_present = "command")]
+    executable: Option<String>,
 
     /// Arguments forwarded to the executable
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -72,14 +82,49 @@ struct Cli {
     detach: bool,
 }
 
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Mesh peer management commands
+    Mesh {
+        #[command(subcommand)]
+        action: MeshAction,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum MeshAction {
+    /// Print this machine's join code (share it with a peer to connect)
+    Identity,
+    /// Connect to a remote peer using its join code
+    Join {
+        /// Join code printed by `veloce-run mesh identity` on the remote machine
+        code: String,
+    },
+    /// List all connected peers and their .vln hosts
+    Peers,
+    /// Disconnect from a peer
+    Leave {
+        /// Peer UUID from `veloce-run mesh peers`
+        peer_id: uuid::Uuid,
+    },
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/// Extract the last component (sans extension) of a path string.
 fn basename(path: &str) -> String {
     std::path::Path::new(path)
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.to_owned())
+}
+
+async fn connect_client(name: &str, caps: Vec<Capability>) -> Result<VeloceClient> {
+    eprintln!("veloce-run: connecting to VeloceCore…");
+    let client = VeloceClient::connect(name, env!("CARGO_PKG_VERSION"), caps)
+        .await
+        .context("failed to connect to VeloceCore — is the service running?")?;
+    eprintln!("veloce-run: connected (client_id={})", client.client_id);
+    Ok(client)
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
@@ -88,42 +133,100 @@ fn basename(path: &str) -> String {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    // Default app name: basename of the executable
-    let app_name = cli
-        .name
-        .clone()
-        .unwrap_or_else(|| basename(&cli.executable));
+    match cli.command {
+        Some(Commands::Mesh { action }) => run_mesh(action).await,
+        None => {
+            let executable = cli.executable.expect("clap ensures executable is set when no subcommand");
+            run_spawn(
+                executable, cli.args, cli.name, cli.hostname,
+                cli.port, cli.cpu, cli.mem, cli.restarts, cli.detach,
+            ).await
+        }
+    }
+}
 
-    // Determine capabilities we need
+// ── Mesh subcommands ──────────────────────────────────────────────────────────
+
+async fn run_mesh(action: MeshAction) -> Result<()> {
+    let mut client = connect_client("veloce-run-mesh", vec![]).await?;
+    match action {
+        MeshAction::Identity => {
+            let info = client.mesh_info().await?;
+            println!("{}", info.join_code);
+            eprintln!("machine_id: {}", info.machine_id);
+            eprintln!("listening on port: {}", info.listen_port);
+        }
+
+        MeshAction::Join { code } => {
+            let result = client.mesh_connect(&code).await?;
+            println!("✓ connected to {} (peer_id={})", result.peer_name, result.peer_id);
+        }
+
+        MeshAction::Peers => {
+            let peers = client.mesh_peers().await?;
+            if peers.is_empty() {
+                println!("No connected peers.");
+                return Ok(());
+            }
+            println!("{:<36}  {:<20}  {:>8}  {}", "PEER ID", "NAME", "LATENCY", "REMOTE HOSTS");
+            println!("{}", "-".repeat(90));
+            for p in &peers {
+                let hosts = if p.remote_hosts.is_empty() {
+                    "(none)".to_owned()
+                } else {
+                    p.remote_hosts.join(", ")
+                };
+                println!("{:<36}  {:<20}  {:>7}ms  {}",
+                    p.peer_id, p.peer_name, p.latency_ms, hosts);
+            }
+        }
+
+        MeshAction::Leave { peer_id } => {
+            client.mesh_disconnect(peer_id).await?;
+            println!("✓ disconnected from {peer_id}");
+        }
+    }
+    Ok(())
+}
+
+// ── Spawn mode ────────────────────────────────────────────────────────────────
+
+#[allow(clippy::too_many_arguments)]
+async fn run_spawn(
+    executable: String,
+    args: Vec<String>,
+    name: Option<String>,
+    hostname: Option<String>,
+    port: Option<u16>,
+    cpu: Option<u8>,
+    mem: Option<u64>,
+    restarts: u32,
+    detach: bool,
+) -> Result<()> {
+    let app_name = name.unwrap_or_else(|| basename(&executable));
+
     let mut caps = vec![
         Capability::SpawnNodes,
         Capability::KillNodes,
         Capability::RegistryRead,
     ];
-    if cli.hostname.is_some() {
-        caps.push(Capability::NetRegister);
-    }
+    if hostname.is_some() { caps.push(Capability::NetRegister); }
 
-    eprintln!("veloce-run: connecting to VeloceCore…");
-    let mut client = VeloceClient::connect(&app_name, env!("CARGO_PKG_VERSION"), caps)
-        .await
-        .context("failed to connect to VeloceCore — is the service running?")?;
-    eprintln!("veloce-run: connected (client_id={})", client.client_id);
+    let mut client = connect_client(&app_name, caps).await?;
 
-    // ── Build spawn message ───────────────────────────────────────────────────
-    let limits = if cli.cpu.is_some() || cli.mem.is_some() {
+    let limits = if cpu.is_some() || mem.is_some() {
         Some(NodeLimits {
-            cpu_pct:          cli.cpu.map(|c| c as u32),
-            mem_mb:           cli.mem,
+            cpu_pct:           cpu.map(|c| c as u32),
+            mem_mb:            mem,
             max_lifetime_secs: None,
         })
     } else {
         None
     };
 
-    let restart_policy = if cli.restarts > 0 {
+    let restart_policy = if restarts > 0 {
         Some(RestartPolicy {
-            max_restarts:    cli.restarts,
+            max_restarts:    restarts,
             base_delay_secs: 1,
             max_delay_secs:  30,
         })
@@ -132,56 +235,40 @@ async fn main() -> Result<()> {
     };
 
     let msg = SpawnNodeMsg {
-        app_name:       app_name.clone(),
-        executable:     cli.executable.clone(),
-        args:           cli.args.clone(),
-        env:            vec![],
+        app_name:        app_name.clone(),
+        executable:      executable.clone(),
+        args:            args.clone(),
+        env:             vec![],
         limits,
-        auto_kill:        !cli.detach,  // kill node when this process exits, unless detached
+        auto_kill:       !detach,
         restart_policy,
         use_appcontainer: false,
     };
 
-    // ── Spawn ─────────────────────────────────────────────────────────────────
-    let spawned = client
-        .spawn_node_with(msg)
-        .await
-        .context("spawn_node failed")?;
+    let spawned = client.spawn_node_with(msg).await.context("spawn_node failed")?;
+    eprintln!("veloce-run: ✓ spawned  node_id={}  pid={}", spawned.node_id, spawned.pid);
 
-    eprintln!(
-        "veloce-run: ✓ spawned  node_id={}  pid={}",
-        spawned.node_id, spawned.pid
-    );
-
-    // ── Optional .vln registration ────────────────────────────────────────────
-    if let (Some(host), Some(port)) = (&cli.hostname, cli.port) {
-        client
-            .register_host(host, spawned.node_id, port, 3600)
+    if let (Some(host), Some(p)) = (&hostname, port) {
+        client.register_host(host, spawned.node_id, p, 3600)
             .await
             .context("register_host failed")?;
-        eprintln!("veloce-run: ✓ {host} → 127.0.0.1:{port}");
+        eprintln!("veloce-run: ✓ {host} → 127.0.0.1:{p}");
     }
 
-    // ── Detach mode: print node ID and exit ───────────────────────────────────
-    if cli.detach {
+    if detach {
         println!("{}", spawned.node_id);
         return Ok(());
     }
 
-    // ── Watch / stream mode ───────────────────────────────────────────────────
     let mut logs = client
         .subscribe_node_logs(spawned.node_id)
         .await
         .context("subscribe_node_logs failed")?;
 
-    // Channel to signal the log loop to exit cleanly on Ctrl-C
     let (stop_tx, mut stop_rx) = tokio::sync::oneshot::channel::<()>();
     let stop_tx = std::sync::Mutex::new(Some(stop_tx));
-
     ctrlc::set_handler(move || {
-        if let Some(tx) = stop_tx.lock().unwrap().take() {
-            let _ = tx.send(());
-        }
+        if let Some(tx) = stop_tx.lock().unwrap().take() { let _ = tx.send(()); }
     })
     .context("failed to install Ctrl-C handler")?;
 
@@ -189,22 +276,16 @@ async fn main() -> Result<()> {
 
     loop {
         tokio::select! {
-            chunk = logs.next() => {
-                match chunk {
-                    Some(c) => {
-                        let text = String::from_utf8_lossy(&c.data);
-                        match c.stream {
-                            LogStream::Stdout => print!("{text}"),
-                            LogStream::Stderr => eprint!("{text}"),
-                        }
-                    }
-                    // Core closed the log channel — node has exited
-                    None => {
-                        eprintln!("\nveloce-run: node exited.");
-                        break;
+            chunk = logs.next() => match chunk {
+                Some(c) => {
+                    let text = String::from_utf8_lossy(&c.data);
+                    match c.stream {
+                        LogStream::Stdout => print!("{text}"),
+                        LogStream::Stderr => eprint!("{text}"),
                     }
                 }
-            }
+                None => { eprintln!("\nveloce-run: node exited."); break; }
+            },
             _ = &mut stop_rx => {
                 eprintln!("\nveloce-run: stopping…");
                 let _ = client.kill_node(spawned.node_id).await;
@@ -213,6 +294,5 @@ async fn main() -> Result<()> {
             }
         }
     }
-
     Ok(())
 }

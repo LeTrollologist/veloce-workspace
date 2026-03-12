@@ -78,6 +78,16 @@ pub async fn run_core() -> anyhow::Result<()> {
         }
     });
 
+    // 3b. Start the P2P mesh TCP server (if mesh is enabled).
+    if let Some(mesh) = state.mesh.clone() {
+        let listen_port = mesh.listen_port;
+        tokio::spawn(async move {
+            if let Err(e) = veloce_mesh::run_mesh_server(mesh, listen_port).await {
+                tracing::error!("VeloceNet mesh server error: {e}");
+            }
+        });
+    }
+
     // 4. Node health-check loop
     let hc_state = state.clone();
     tokio::spawn(async move {

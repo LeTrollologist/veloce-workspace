@@ -27,6 +27,8 @@ parking_lot        = { workspace = true }
 veloce-ipc         = { path = "../veloce-ipc" }
 bytes              = { workspace = true }
 veloce-net         = { path = "../veloce-net" }
+veloce-mesh        = { path = "../veloce-mesh" }
+rand               = "0.8"
 
 [target.'cfg(windows)'.dependencies]
 windows-service = { workspace = true }

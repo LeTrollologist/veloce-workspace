@@ -17,3 +17,4 @@ tokio       = { workspace = true }
 anyhow      = { workspace = true }
 clap        = { workspace = true }
 ctrlc       = { workspace = true }
+uuid        = { workspace = true }
