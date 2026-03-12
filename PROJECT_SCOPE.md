@@ -29,16 +29,16 @@
 
 ## 3. Scope Definition
 
-### In Scope (v0.1 – v0.5)
+### In Scope (v0.1 – v0.6)
 
 | Component | Features shipped |
 |---|---|
-| **veloce-core** | Background Windows service, SID ACL + OsRng PSK, Job Objects (CPU/memory/lifetime), mmap registry, health-loop, AppContainer kernel sandbox, MeshState, mesh TCP server (:7474), PolicyEngine (TOML RBAC + mesh ACLs, hot-reload) |
-| **veloce-net** | DNS :5354 for `*.vln`/`*.veloce`, SOCKS5 :1055, TTL GC; DNS compression DoS fix (max 10 pointer jumps) |
-| **veloce-ipc** | VELC framing, bincode encoding, message types 0x00–0x61 (core/net/sdk) + 0x50–0x57 (mesh) + 0x70–0x72 (policy), stable discriminants; `ErrorCode::PolicyDenied (11)` |
-| **veloce-sdk** | `VeloceClient` async Rust client, C FFI (`veloce_sdk.dll`), `veloce_poll_event()` pump, 5 template methods, 4 mesh methods, `policy_get_rules()`, `policy_reload()` |
-| **veloce-mesh** | x25519 identity (Noise_IK_25519_ChaChaPoly_BLAKE2s), PeerConnection gossip (LWW CRDT), transparent TCP forwarder, join-code pairing, STUN WAN discovery, VM2 multi-address join codes, ACL callback filter |
-| **apps/dashboard** | Tauri 2 GUI — nodes table, templates, log viewer, resource meters (CPU% + peak MB), VeloceNet tab, mesh UI (This Machine card + Connected Peers) |
+| **veloce-core** | Background Windows service, SID ACL + OsRng PSK, Job Objects (CPU/memory/lifetime), mmap registry, health-loop, AppContainer kernel sandbox, MeshState, mesh TCP server (:7474), PolicyEngine (TOML RBAC + mesh ACLs, hot-reload); `TrafficQuery` IPC handler |
+| **veloce-net** | DNS :5354 for `*.vln`/`*.veloce`, SOCKS5 :1055, TTL GC; DNS compression DoS fix; `Arc<AtomicU64>` `bytes_proxied` per `NetRecord`; `NetRegistry::traffic_snapshot()` |
+| **veloce-ipc** | VELC framing, bincode encoding, message types 0x00–0x72 + `TrafficQuery (0x80)` / `TrafficStatsResult (0x81)`; `TunnelTrafficMsg`, `HostTrafficMsg`, `TrafficStatsMsg` |
+| **veloce-sdk** | `VeloceClient` async Rust client, C FFI (`veloce_sdk.dll`), template methods, mesh methods, `policy_get_rules()`, `policy_reload()`, `query_traffic()` |
+| **veloce-mesh** | x25519 identity (Noise_IK_25519_ChaChaPoly_BLAKE2s), PeerConnection gossip (LWW CRDT), TCP forwarder, STUN WAN discovery, VM2 join codes, ACL callback; `Arc<AtomicU64>` `tx_bytes`/`rx_bytes` per `PeerConnection`; `MeshState::query_traffic_stats()` |
+| **apps/dashboard** | Svelte 5 + Canvas 2D — nodes + sparklines + history graphs, templates, logs (search/filter/auto-scroll/5k-cap), VeloceNet + policy panel, topology canvas (drag-and-drop, heatmap, live traffic tables) |
 | **apps/installer** | Glassmorphic 5-step Tauri installer; service registration, PATH, registry |
 | **apps/veloce-run** | CLI launcher (`--name`, `--hostname`, `--cpu`, `--mem`, `--restarts`, `--watch`, `--detach`) + `mesh identity/join/peers/leave` + `policy show/reload` |
 
@@ -46,7 +46,9 @@
 
 | Feature | Target |
 |---|---|
-| Dashboard v2 (topology canvas, heatmap, log viewer panel) | v0.6 |
+| Bug testing, regression fixes, patch releases | v0.7 |
+| Feature meshing — cross-subsystem integration & gap fills | v0.8 |
+| Optimisation, profiling, final pre-1.0 hardening | v0.9 |
 | WireGuard-NT kernel driver (perf upgrade, requires admin) | v1.0 |
 | Signed installer with auto-update | v1.0 |
 | Linux port (cgroups v2, Unix domain sockets) | v2.0 |
@@ -118,6 +120,28 @@
 - [x] `veloce-run policy show / reload` CLI subcommands
 - [x] Bug fix: `pipe_security` TOKEN_USER buffer alignment (startup crash on x64)
 
+### v0.6.0 ✅ Released
+
+**Backend — Traffic Instrumentation**
+- [x] `veloce-ipc`: `TrafficQuery (0x80)`, `TrafficStatsResult (0x81)` message types; `TunnelTrafficMsg`, `HostTrafficMsg`, `TrafficStatsMsg` structs
+- [x] `veloce-mesh`: `Arc<AtomicU64>` `tx_bytes`/`rx_bytes` per `PeerConnection`; incremented in writer (post-encrypt) and reader (post-read) tasks; `traffic_snapshot()`; `MeshState::query_traffic_stats()`
+- [x] `veloce-net`: `Arc<AtomicU64>` `bytes_proxied` per `NetRecord`; incremented in SOCKS5 copy loop for `.vln` routes; `NetRegistry::traffic_snapshot()`; `veloce-ipc` added as dependency
+- [x] `veloce-core`: `Body::TrafficQuery` IPC handler
+- [x] `veloce-sdk`: `VeloceClient::query_traffic()` method
+- [x] Dashboard Tauri backend: `traffic_stats`, `policy_show`, `policy_reload_cmd` commands; 2-second background push of `"traffic-update"` event
+
+**Frontend — Svelte 5 + Canvas 2D Rewrite**
+- [x] Migrated from vanilla JS to **Svelte 5** (`mount()` API); `@sveltejs/vite-plugin-svelte` Vite plugin
+- [x] `stores.js` — 9 reactive stores; `topoPositions` persisted to `localStorage`
+- [x] `lib/canvas.js` — `drawCircle`, `drawRect`, `drawEdge`, `drawSparkline`, `trafficColor`, `bytesPerSec`
+- [x] `lib/tauri.js` — typed `invoke()` wrappers for all backend commands
+- [x] `App.svelte` — shell layout, global CSS, resource polling, event listeners
+- [x] `NodesTab.svelte` — inline sparklines (80×22 px) per row; click-to-expand detail panel with 120-point history graphs
+- [x] `TemplatesTab.svelte` — template CRUD table + save form
+- [x] `NetworkTab.svelte` — register/unregister host, mesh identity + peer connect, collapsible policy panel
+- [x] `LogsTab.svelte` — live log viewer with search, stream toggles, timestamp toggle, auto-scroll, 5 000-line cap
+- [x] `TopologyTab.svelte` — drag-and-drop topology canvas; edge width/colour by traffic; 60-cell heatmap; live counter tables
+
 ---
 
 ## 6. Technical Constraints
@@ -179,7 +203,10 @@
 | v0.3.0 (veloce-run CLI + AppContainer — Phase 1 complete) | ✅ Released |
 | v0.4.0 (Multi-Machine VeloceNet P2P mesh) | ✅ Released |
 | v0.5.0 (Policy Engine + STUN WAN mesh) | ✅ Released |
-| v0.6.0 (Dashboard v2 — topology canvas, heatmap, log viewer) | Q2 2026 |
+| v0.6.0 (Dashboard v2 — Svelte 5, Canvas 2D, traffic instrumentation) | ✅ Released |
+| v0.7.x (Bug testing — systematic regression & patch cycle) | Q2 2026 |
+| v0.8.0 (Feature meshing — end-to-end integration & gap fills) | Q3 2026 |
+| v0.9.0 (Optimisation, profiling, final pre-1.0 hardening) | Q3 2026 |
 | v1.0 (WireGuard-NT kernel driver + signed auto-update installer) | Q4 2026 |
 | v2.0 (Linux port + unified SDK bindings) | 2027 |
 
@@ -187,7 +214,7 @@
 
 ## 11. Forward Roadmap Detail
 
-### Phase 2 — Mesh & Automation (v0.5 – v0.6)
+### Phase 2 — Mesh, Automation & Dashboard v2 (v0.5 – v0.6) ✅ Complete
 
 **Policy Engine ✅ v0.5**
 - Tier 1 — Process RBAC: declarative TOML rules governing which applications may request which capabilities (`SpawnNodes`, `NetRegister`, etc.); enforced server-side before any action is taken
@@ -201,16 +228,48 @@
 - `connect_to_peer()` races all addresses with 250 ms stagger — LAN wins when on same network, WAN wins across NAT
 - No manual port forwarding required for typical home/office NAT (symmetric NAT still requires `:7474` port forward)
 
-**Dashboard v2 (v0.6)**
-- Drag-and-drop node wiring canvas — visually connect `.vln` services, see data flow
-- Live traffic heatmap — bytes/s per mesh tunnel and per `.vln` host
-- Historical resource graphs — CPU%, memory, restart counts over time
-- Full log viewer panel with search/filter, replacing the current streaming overlay
+**Dashboard v2 ✅ v0.6**
+- Svelte 5 + Canvas 2D rewrite — zero new JS runtime dependencies
+- Full backend traffic instrumentation: `Arc<AtomicU64>` byte counters on every Noise peer and every `.vln` hostname; pushed to frontend every 2 s via Tauri event
+- Drag-and-drop topology canvas — edge width and colour represent live traffic rate
+- 60-cell per-peer traffic heatmap (2-minute rolling window)
+- Inline CPU% sparklines per node row; click-to-expand 120-point history graphs
+- Logs tab with search/filter, stdout/stderr toggles, auto-scroll, 5 000-line cap
+- Collapsible Policy Engine panel with App Rules and Mesh ACL tables; one-click hot-reload
 
-### Phase 3 — Linux Engine Swap (v2.0)
+---
+
+### Phase 3 — Hardening Cycle (v0.7 – v0.9)
+
+This phase produces no new user-facing features. Its sole purpose is quality, correctness, and performance.
+
+**v0.7 — Bug Testing & Regression Fixes**
+- Systematic exercise of every subsystem introduced in v0.4–v0.6
+- Test areas: mesh edge cases (simultaneous connect races, peer disconnect during gossip, symmetric-NAT reconnect), policy enforcement under all denial paths, dashboard under real multi-peer load, IPC codec (malformed frames, oversized payloads, mid-message disconnects), SOCKS5/DNS concurrency and TTL expiry
+- Every confirmed bug fixed and shipped as a **v0.7.x patch release** immediately — nothing batched
+
+**v0.8 — Feature Meshing**
+- Ensure every subsystem that exists operates correctly _together_ at every integration seam
+- End-to-end flow validation: node spawn → `.vln` register → peer gossip → remote SOCKS5 → dashboard topology render
+- Policy enforcement verified across multi-hop mesh paths
+- Dashboard commands (`traffic_stats`, `policy_reload`) verified against a live multi-machine setup
+- SDK completeness audit — any missing convenience methods added
+- CLI flag consistency review
+
+**v0.9 — Optimisation & Final Pre-1.0 Hardening**
+- CPU and memory profiling under sustained load; hot paths optimised
+- IPC message throughput tuned (batch encoding, buffer sizing)
+- Mesh reconnect stability under network interruption and flapping
+- Dashboard canvas render loop profiled; overdraw and recompute eliminated
+- Final round of bugs discovered in v0.8 integration testing fixed
+- Documentation, inline comments, and public API surface reviewed for clarity and completeness
+
+---
+
+### Phase 4 — Linux Engine Swap (v2.0)
 
 - Replace named pipes → Unix domain sockets (same VELC framing, same SDK API)
-- Replace Job Objects → cgroups v2 (CPU quota + memory.max) + process groups for clean tree kill
+- Replace Job Objects → cgroups v2 (CPU quota + `memory.max`) + process groups for clean tree kill
 - Unprivileged user namespaces for rootless sandboxing (equivalent to AppContainer on Linux)
 - Swappable backend: `veloce-core` auto-detects OS at compile time and links the right driver module
 - Unified Python, Node.js, and Go SDK bindings via the existing C FFI layer
