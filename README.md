@@ -12,6 +12,8 @@ With v0.4, the mesh extends transparently across machines — two `veloce-core` 
 
 With v0.5, the mesh reaches across NAT and the internet automatically: STUN discovers each machine's WAN IP at startup, the join code is upgraded to a dual-address VM2 format, and a declarative TOML policy engine controls which applications may request which capabilities and which peer-gossiped hostnames are installed locally.
 
+With v0.6, the dashboard is rebuilt from scratch in **Svelte 5** with raw **Canvas 2D** rendering. Every Noise tunnel and every `.vln` hostname is now instrumented with live byte counters; the dashboard visualises traffic as an interactive drag-and-drop topology, a 60-cell heatmap per peer, and inline sparklines per node row. v0.7–v0.9 are dedicated entirely to hardening: bug testing, end-to-end quality verification, and optimisation before v1.0.
+
 Think of it as a stripped-down version of Kubernetes Service Mesh ideas, designed for desktop environments, developer tooling, and lightweight commercial applications rather than cloud infrastructure.
 
 ---
@@ -52,7 +54,7 @@ Think of it as a stripped-down version of Kubernetes Service Mesh ideas, designe
 | `veloce-net` | Userspace DNS resolver and SOCKS5 proxy for the `*.vln` namespace |
 | `veloce-mesh` | Noise_IK P2P mesh — encrypted tunnels, `.vln` gossip, STUN WAN discovery |
 | `veloce-sdk` | Async Rust client + C FFI layer for sideloaded apps |
-| `apps/dashboard` | Tauri 2 desktop GUI — nodes, templates, log viewer, resource meters, mesh UI |
+| `apps/dashboard` | Tauri 2 desktop GUI — Svelte 5 + Canvas 2D; nodes, templates, log viewer, resource sparklines, mesh UI, topology canvas, traffic heatmap |
 | `apps/installer` | Glassmorphic 5-step Tauri installer |
 | `apps/veloce-run` | CLI launcher — wraps any exe into the mesh with full flag set |
 
@@ -130,11 +132,14 @@ Think of it as a stripped-down version of Kubernetes Service Mesh ideas, designe
 - Capability negotiation: clients declare exactly which operations they need (`SpawnNodes`, `KillNodes`, `RegistryRead`, `NetRegister`, …) and Core enforces the grant
 - **Policy Engine**: declarative TOML RBAC enforced server-side — blocked capabilities return `PolicyDenied (11)` before any action is taken; mesh ACLs prevent untrusted peers from installing forwarders for sensitive hostnames
 
-### Dashboard
-- Tauri 2 desktop app (Windows, ships as a lightweight installer)
-- Dark-themed UI with live node table, per-node Kill button, resource meters, log viewer
-- Templates tab for saving and spawning named configurations
-- VeloceNet tab with hostname registration, mesh join-code input, and connected peers table
+### Dashboard (v0.6)
+- Tauri 2 desktop app (Windows, ships as a lightweight installer) — rebuilt in **Svelte 5** with **Canvas 2D** (zero new runtime JS dependencies)
+- **Nodes tab**: live node table with inline 80×22 px CPU% sparklines per row; click to expand a detail panel with 120-point CPU and memory history graphs
+- **Templates tab**: save and launch named node configurations with one click
+- **VeloceNet tab**: hostname registration/unregistration, mesh join-code display and copy, peer connect, connected peers table, collapsible Policy Engine panel with App Rules and Mesh ACL tables
+- **Logs tab**: live stdout/stderr viewer with search filter, stream toggles, timestamp toggle, auto-scroll, 5 000-line cap
+- **Topology tab**: drag-and-drop Canvas 2D topology canvas; edge width and colour indicate live traffic rate (green→red gradient); 60-cell per-peer traffic heatmap (2-minute window); live byte-counter tables for tunnels and `.vln` hosts
+- Traffic snapshots pushed from backend every 2 s via Tauri event (`"traffic-update"`) — no frontend polling
 - Auto-pings Core every 10 s to keep connection status accurate
 
 ### SDK
@@ -179,11 +184,50 @@ Think of it as a stripped-down version of Kubernetes Service Mesh ideas, designe
 | Multi-Machine VeloceNet (Noise_IK P2P mesh) | ✅ v0.4 |
 | Policy Engine (process RBAC + mesh ACLs) | ✅ v0.5 |
 | STUN WAN mesh + VM2 join codes | ✅ v0.5 |
-| Dashboard v2 (topology canvas, heatmap, log viewer) | 📋 v0.6 |
-| WireGuard-NT kernel driver (perf) | 📋 v1.0 |
+| Dashboard v2 (Svelte 5 + Canvas 2D; topology, heatmap, sparklines) | ✅ v0.6 |
+| Backend traffic instrumentation (per-tunnel + per-host byte counters) | ✅ v0.6 |
+| **Bug testing & regression fixes** | 🔨 v0.7 |
+| **Feature meshing — end-to-end subsystem integration & gap fills** | 📋 v0.8 |
+| **Optimisation, profiling, final pre-1.0 hardening** | 📋 v0.9 |
+| WireGuard-NT kernel driver (perf upgrade) | 📋 v1.0 |
 | Signed installer with auto-update | 📋 v1.0 |
 | Linux port (cgroups v2 + Unix sockets) | 📋 v2.0 |
 | Python / Node.js / Go SDK bindings | 📋 v2.0 |
+
+### v0.7 — Bug Testing & Regression Fixes
+
+v0.7 is a **quality-only** release cycle. No new features land. Every subsystem introduced in v0.4–v0.6 is systematically exercised:
+
+- Mesh edge cases — simultaneous connect races, peer disconnect during gossip, symmetric-NAT reconnect
+- Policy engine — capability enforcement under all denial paths, hot-reload race conditions
+- Dashboard — all five tabs under real load; traffic counters with multiple peers active
+- IPC codec — malformed frames, oversized payloads, mid-message disconnects
+- SOCKS5 / DNS — concurrent `.vln` resolution, TTL expiry, passthrough under load
+
+Individual fixes ship as **v0.7.x** patch releases. Nothing is batched — a confirmed bug is fixed and released immediately.
+
+### v0.8 — Feature Meshing
+
+v0.8 ensures every subsystem that _exists_ operates correctly _together_. Where gaps or rough edges are found at the integration seams, they are filled:
+
+- End-to-end flows: node spawn → `.vln` register → peer gossip → remote SOCKS5 → dashboard topology
+- Policy enforcement across multi-hop mesh paths
+- Dashboard commands (`policy_reload`, `traffic_stats`) verified against a live multi-machine setup
+- SDK completeness audit — any missing convenience methods added
+- CLI flag consistency review
+
+### v0.9 — Optimisation & Final Hardening
+
+v0.9 is the pre-1.0 stabilisation sprint:
+
+- CPU and memory profiling under sustained load; hot paths optimised
+- IPC message throughput tuned (batch encoding, buffer tuning)
+- Mesh reconnect stability under network interruption
+- Dashboard render performance — canvas draw loop profiled, overdraw eliminated
+- Final round of bug fixes discovered during v0.8 integration testing
+- Documentation, inline comments, and API surface reviewed for clarity
+
+After v0.9 ships stable, **v1.0** introduces the WireGuard-NT kernel driver for hardware-offloaded throughput and a signed installer with automatic update delivery.
 
 ---
 
