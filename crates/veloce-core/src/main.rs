@@ -14,6 +14,7 @@ mod registry;
 mod job;
 mod ipc_server;
 mod pipe_security;
+mod policy;
 mod service;
 mod state;
 

@@ -220,6 +220,10 @@ where
             // ── Node management ────────────────────────────────────────────
             SpawnNode(msg) => {
                 self.require_cap(Capability::SpawnNodes)?;
+                if !self.state.policy.check_capability(&self.app_name, "SpawnNodes") {
+                    return self.send_error(Some(cid), ErrorCode::PolicyDenied,
+                        format!("policy denies SpawnNodes for app '{}'", self.app_name)).await;
+                }
                 let node_id = Uuid::new_v4();
 
                 // Allocate registry slot
@@ -250,6 +254,10 @@ where
 
             KillNode(msg) => {
                 self.require_cap(Capability::KillNodes)?;
+                if !self.state.policy.check_capability(&self.app_name, "KillNodes") {
+                    return self.send_error(Some(cid), ErrorCode::PolicyDenied,
+                        format!("policy denies KillNodes for app '{}'", self.app_name)).await;
+                }
                 let handle = self.state.node_table().remove(msg.node_id);
                 match handle {
                     None => self.send_error(Some(cid), ErrorCode::NotFound,
@@ -306,6 +314,10 @@ where
             // ── VeloceNet ──────────────────────────────────────────────────
             NetRegisterHost(msg) => {
                 self.require_cap(Capability::NetRegister)?;
+                if !self.state.policy.check_capability(&self.app_name, "NetRegister") {
+                    return self.send_error(Some(cid), ErrorCode::PolicyDenied,
+                        format!("policy denies NetRegister for app '{}'", self.app_name)).await;
+                }
                 self.state.net_registry().register(
                     msg.hostname.clone(), msg.node_id, msg.local_port, msg.ttl_secs,
                 );
@@ -426,6 +438,29 @@ where
                     }
                 }
                 self.send_reply(cid, Body::Pong).await?;
+            }
+
+            // ── Policy engine ─────────────────────────────────────────────
+            Body::PolicyGetRules => {
+                let msg = self.state.policy.to_msg();
+                self.send_reply(cid, Body::PolicyRulesResult(msg)).await?;
+            }
+
+            Body::PolicyReload => {
+                match self.state.policy.reload() {
+                    Ok(()) => {
+                        let msg = self.state.policy.to_msg();
+                        self.send_reply(cid, Body::PolicyRulesResult(msg)).await?;
+                    }
+                    Err(e) => self.send_error(Some(cid), ErrorCode::InternalError,
+                        format!("policy reload: {e}")).await?,
+                }
+            }
+
+            // PolicyRulesResult is a server→client message; reject it from clients.
+            Body::PolicyRulesResult(_) => {
+                self.send_error(Some(cid), ErrorCode::InvalidMessage,
+                    "PolicyRulesResult is server-to-client only".into()).await?;
             }
 
             other => {

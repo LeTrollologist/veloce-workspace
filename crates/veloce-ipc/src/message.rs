@@ -95,6 +95,14 @@ pub enum MessageType {
     /// Core → Client (push): a peer went offline.
     MeshPeerGone        = 0x57,
 
+    // ── Policy engine ─────────────────────────────────────────
+    /// Client → Core: query the currently loaded policy rules.
+    PolicyGetRules    = 0x70,
+    /// Core → Client: active policy rules snapshot.
+    PolicyRulesResult = 0x71,
+    /// Client → Core: hot-reload policy from veloce-policy.toml.
+    PolicyReload      = 0x72,
+
     // ── Error ─────────────────────────────────────────────────
     Error           = 0xFF,
 }
@@ -124,6 +132,8 @@ impl TryFrom<u8> for MessageType {
             0x52 => MeshConnect,     0x53 => MeshConnectResult,
             0x54 => MeshPeerList,    0x55 => MeshPeerListResult,
             0x56 => MeshDisconnect,  0x57 => MeshPeerGone,
+            0x70 => PolicyGetRules,  0x71 => PolicyRulesResult,
+            0x72 => PolicyReload,
             0xFF => Error,
             other => return Err(other),
         })
@@ -223,6 +233,14 @@ pub enum Body {
     NetResolveResult(NetResolveResultMsg),
     NetHostList(Vec<NetHostEntry>),
 
+    // Policy engine
+    /// Query active policy rules (client → Core).
+    PolicyGetRules,
+    /// Active policy rules snapshot (Core → client).
+    PolicyRulesResult(PolicyRulesMsg),
+    /// Hot-reload policy from disk (client → Core). Returns PolicyRulesResult.
+    PolicyReload,
+
     // Mesh P2P
     /// Request this machine's mesh identity + peer list.
     MeshGetInfo,
@@ -278,6 +296,9 @@ impl Body {
             NetResolve{..}         => MessageType::NetResolve,
             NetResolveResult(_)    => MessageType::NetResolveResult,
             NetHostList(_)         => MessageType::NetHostList,
+            PolicyGetRules         => MessageType::PolicyGetRules,
+            PolicyRulesResult(_)   => MessageType::PolicyRulesResult,
+            PolicyReload           => MessageType::PolicyReload,
             MeshGetInfo            => MessageType::MeshGetInfo,
             MeshInfo(_)            => MessageType::MeshInfo,
             MeshConnect(_)         => MessageType::MeshConnect,
@@ -549,6 +570,39 @@ pub struct MeshPeerGoneMsg {
     pub peer_name: String,
 }
 
+// ── POLICY ENGINE MESSAGE TYPES ───────────────────────────────────────────────
+
+/// A single per-app RBAC rule.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PolicyRuleMsg {
+    /// App name this rule applies to. `"*"` matches any app.
+    pub app:   String,
+    /// Capabilities explicitly allowed. `None` means "not specified".
+    pub allow: Option<Vec<String>>,
+    /// Capabilities explicitly denied. `None` means "not specified".
+    pub deny:  Option<Vec<String>>,
+}
+
+/// A mesh gossip ACL entry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MeshAclMsg {
+    /// Hostname pattern (exact or `"*.suffix"`).
+    pub hostname:  String,
+    /// Restrict to gossip from this peer name. `None` = any peer.
+    pub from_peer: Option<String>,
+    /// `"allow"` or `"deny"`.
+    pub effect:    String,
+}
+
+/// Snapshot of the currently loaded policy.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PolicyRulesMsg {
+    /// Default effect when no rule matches: `"allow"` (default) or `"deny"`.
+    pub default_effect: String,
+    pub rules:     Vec<PolicyRuleMsg>,
+    pub mesh_acls: Vec<MeshAclMsg>,
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -565,4 +619,6 @@ pub enum ErrorCode {
     NetNameConflict   = 8,
     ProtocolMismatch  = 9,
     InternalError     = 10,
+    /// A policy rule denied the requested operation.
+    PolicyDenied      = 11,
 }
