@@ -38,9 +38,14 @@ pub async fn start(registry: Arc<NetRegistry>) -> Result<()> {
 
     let dns_port   = port_from_env("VLN_DNS_PORT",   DEFAULT_DNS_PORT);
     let socks_port = port_from_env("VLN_SOCKS_PORT", DEFAULT_SOCKS_PORT);
+    // VLN_DNS_BIND: interface the DNS server binds to.
+    // Default: 127.0.0.1 (localhost only).  Set to 0.0.0.0 for LAN-wide resolution.
+    let dns_bind = std::env::var("VLN_DNS_BIND")
+        .unwrap_or_else(|_| "127.0.0.1".to_string());
+    let dns_bind_log = dns_bind.clone(); // keep a copy for the log line below
 
     let dns_task = tokio::spawn(async move {
-        dns::serve(dns_registry, dns_port).await
+        dns::serve(dns_registry, &dns_bind, dns_port).await
     });
     let socks_task = tokio::spawn(async move {
         socks5::serve(socks_registry, socks_port).await
@@ -56,7 +61,7 @@ pub async fn start(registry: Arc<NetRegistry>) -> Result<()> {
         Ok::<(), anyhow::Error>(())
     });
 
-    tracing::info!("VeloceNet DNS    → 0.0.0.0:{dns_port}");
+    tracing::info!("VeloceNet DNS    → {dns_bind_log}:{dns_port}");
     tracing::info!("VeloceNet SOCKS5 → 127.0.0.1:{socks_port}");
     tracing::info!("VeloceNet GC     → every 60s");
 

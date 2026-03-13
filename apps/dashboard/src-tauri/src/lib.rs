@@ -89,6 +89,8 @@ async fn connect(
             Capability::RegistryWrite,
             Capability::NetRegister,
             Capability::NetResolve,
+            Capability::MeshManage,
+            Capability::PolicyAdmin,
         ],
     )
     .await

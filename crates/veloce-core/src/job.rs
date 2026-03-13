@@ -623,8 +623,38 @@ fn build_cmdline(exe: &str, args: &[String]) -> String {
 
 #[cfg(windows)]
 fn quote_arg(s: &str) -> String {
-    if s.contains(' ') || s.contains('"') {
-        format!("\"{}\"", s.replace('"', "\\\""))
+    // Follow the MSVC CommandLineToArgvW escaping rules:
+    // backslashes before a closing double-quote must themselves be escaped.
+    if s.chars().any(|c| c == ' ' || c == '"' || c == '\t') {
+        // Escape each backslash run that immediately precedes a quote or the end-of-string,
+        // then wrap the whole argument in double quotes.
+        let mut out = String::with_capacity(s.len() + 2);
+        out.push('"');
+        let bytes = s.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            // Count a run of backslashes.
+            let bs_start = i;
+            while i < bytes.len() && bytes[i] == b'\\' { i += 1; }
+            let bs_count = i - bs_start;
+            if i == bytes.len() {
+                // Backslashes at end of string precede the closing quote — double them.
+                for _ in 0..bs_count * 2 { out.push('\\'); }
+            } else if bytes[i] == b'"' {
+                // Backslashes before an embedded quote — double them, then escape the quote.
+                for _ in 0..bs_count * 2 { out.push('\\'); }
+                out.push('\\');
+                out.push('"');
+                i += 1;
+            } else {
+                // Ordinary backslashes — emit as-is.
+                for _ in 0..bs_count { out.push('\\'); }
+                out.push(bytes[i] as char);
+                i += 1;
+            }
+        }
+        out.push('"');
+        out
     } else {
         s.to_string()
     }

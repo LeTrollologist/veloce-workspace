@@ -5,7 +5,6 @@
 //! writer task; the application interacts with it through an mpsc channel.
 
 use std::{
-    net::SocketAddr,
     sync::{
         atomic::{AtomicU32, AtomicU64, Ordering},
         Arc,
@@ -13,7 +12,6 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use snow::TransportState;
 use tokio::{
@@ -27,7 +25,6 @@ use veloce_ipc::message::PeerInfoMsg;
 use veloce_net::registry::NetRegistry;
 
 use crate::forward;
-use crate::noise;
 
 /// Callback type used for mesh gossip ACL filtering.
 ///
@@ -214,6 +211,15 @@ impl PeerConnection {
                                 Err(e) => { tracing::warn!("noise decrypt: {e}"); break; }
                             }
                         };
+                        // Reject oversized plaintext before JSON parsing (N5).
+                        const MAX_PEER_MSG_BYTES: usize = 65_535;
+                        if plain.len() > MAX_PEER_MSG_BYTES {
+                            tracing::warn!(
+                                "peer {peer_id_r} sent oversized message ({} bytes) — dropping",
+                                plain.len()
+                            );
+                            continue;
+                        }
                         let msg: PeerMsg = match serde_json::from_slice(&plain) {
                             Ok(m) => m,
                             Err(e) => { tracing::warn!("peer {peer_id_r} msg decode: {e}"); continue; }
@@ -276,16 +282,58 @@ async fn handle_incoming(
             tracing::info!("peer {peer_id} identified as {machine_name} ({machine_id})");
         }
 
-        PeerMsg::RegistrySync { entries } => {
-            // Apply mesh ACL: filter out entries the policy disallows.
+        PeerMsg::RegistrySync { mut entries } => {
+            // Hard cap: never process more than 1 000 gossip entries per message (N5).
+            entries.truncate(1_000);
+
+            // Clock-skew guard: reject entries with timestamps more than 5 minutes in
+            // the future or more than 24 hours in the past (N4).
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            const SKEW_FUTURE_SECS: u64 = 300;   // 5 minutes
+            const SKEW_PAST_SECS:   u64 = 86_400; // 24 hours
+
             let entries: Vec<_> = entries
                 .into_iter()
                 .filter(|e| {
-                    acl_fn.as_ref().map(|f| f(&e.hostname, peer_name)).unwrap_or(true)
+                    if e.ts > now + SKEW_FUTURE_SECS {
+                        tracing::warn!(
+                            hostname = %e.hostname,
+                            entry_ts  = e.ts,
+                            local_now = now,
+                            "gossip entry timestamp too far in the future — discarding"
+                        );
+                        return false;
+                    }
+                    if e.ts + SKEW_PAST_SECS < now {
+                        tracing::warn!(
+                            hostname = %e.hostname,
+                            entry_ts  = e.ts,
+                            local_now = now,
+                            "gossip entry timestamp too far in the past — discarding"
+                        );
+                        return false;
+                    }
+                    true
+                })
+                // Apply mesh ACL: filter out entries the policy disallows.
+                .filter(|e| {
+                    let allowed = acl_fn.as_ref().map(|f| f(&e.hostname, peer_name)).unwrap_or(true);
+                    if !allowed {
+                        tracing::warn!(
+                            hostname = %e.hostname,
+                            peer = %peer_name,
+                            "gossip entry rejected by mesh ACL policy"
+                        );
+                    }
+                    allowed
                 })
                 .collect();
+
             tracing::debug!(
-                "peer {peer_id} gossiped {} entries (after ACL filter)",
+                "peer {peer_id} gossiped {} entries (after clock + ACL filter)",
                 entries.len()
             );
             let mut hosts = remote_hosts.write().await;
@@ -297,7 +345,7 @@ async fn handle_incoming(
                         *ex = entry.clone();
                         // Update the local forwarder for this host.
                         if let Err(e) = forward::refresh_forwarder(
-                            &entry.hostname, entry.port, peer_id, net_registry
+                            &entry.hostname, entry.port, peer_id, net_registry, reply_tx.clone()
                         ).await {
                             tracing::warn!("forwarder refresh for {}: {e}", entry.hostname);
                         }
@@ -305,7 +353,7 @@ async fn handle_incoming(
                 } else {
                     hosts.push(entry.clone());
                     if let Err(e) = forward::refresh_forwarder(
-                        &entry.hostname, entry.port, peer_id, net_registry
+                        &entry.hostname, entry.port, peer_id, net_registry, reply_tx.clone()
                     ).await {
                         tracing::warn!("forwarder create for {}: {e}", entry.hostname);
                     }
@@ -321,7 +369,16 @@ async fn handle_incoming(
             latency.store(round_trip_us / 1000, Ordering::Relaxed);
         }
 
-        // Proxy messages handled by forward.rs tasks — ignored here.
-        PeerMsg::ProxyOpen { .. } | PeerMsg::ProxyData { .. } | PeerMsg::ProxyClose { .. } => {}
+        PeerMsg::ProxyOpen { stream_id, hostname } => {
+            forward::handle_proxy_open(stream_id, &hostname, net_registry, reply_tx).await;
+        }
+
+        PeerMsg::ProxyData { stream_id, data } => {
+            forward::on_proxy_data(stream_id, data).await;
+        }
+
+        PeerMsg::ProxyClose { stream_id } => {
+            forward::on_proxy_close(stream_id).await;
+        }
     }
 }

@@ -170,7 +170,8 @@ async fn main() -> Result<()> {
 // ── Mesh subcommands ──────────────────────────────────────────────────────────
 
 async fn run_mesh(action: MeshAction) -> Result<()> {
-    let mut client = connect_client("veloce-run-mesh", vec![]).await?;
+    // MeshManage is required for join/leave; harmless to declare for identity/peers too.
+    let mut client = connect_client("veloce-run-mesh", vec![Capability::MeshManage]).await?;
     match action {
         MeshAction::Identity => {
             let info = client.mesh_info().await?;
@@ -220,7 +221,9 @@ async fn run_mesh(action: MeshAction) -> Result<()> {
 // ── Policy subcommands ────────────────────────────────────────────────────────
 
 async fn run_policy(action: PolicyAction) -> Result<()> {
-    let mut client = connect_client("veloce-run-policy", vec![]).await?;
+    // PolicyAdmin is required for `reload`; request it for `show` too so a single
+    // connect covers both without needing to know the action upfront.
+    let mut client = connect_client("veloce-run-policy", vec![Capability::PolicyAdmin]).await?;
     let rules = match action {
         PolicyAction::Show   => client.policy_get_rules().await?,
         PolicyAction::Reload => {

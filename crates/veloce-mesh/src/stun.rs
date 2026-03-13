@@ -77,7 +77,13 @@ async fn try_stun(server: &str) -> anyhow::Result<IpAddr> {
 
     // Wait up to 3 s for the Binding Response.
     let mut buf = [0u8; 512];
-    let (n, _from) = timeout(Duration::from_secs(3), sock.recv_from(&mut buf)).await??;
+    let (n, from) = timeout(Duration::from_secs(3), sock.recv_from(&mut buf)).await??;
+
+    // N8: Reject responses from unexpected sources.
+    anyhow::ensure!(
+        from == server_addr,
+        "STUN response from unexpected source {from} (expected {server_addr})"
+    );
 
     parse_xor_mapped_address(&buf[..n], &txn_id)
 }
@@ -90,6 +96,13 @@ fn parse_xor_mapped_address(data: &[u8], txn_id: &[u8; 12]) -> anyhow::Result<Ip
     anyhow::ensure!(
         msg_type == MSG_BINDING_RESPONSE,
         "unexpected STUN message type: 0x{msg_type:04X}"
+    );
+
+    // N9: Validate the RFC 5389 magic cookie (bytes 4–7 must equal 0x2112A442).
+    let magic = u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
+    anyhow::ensure!(
+        magic == MAGIC_COOKIE,
+        "STUN magic cookie mismatch: 0x{magic:08X} (expected 0x{MAGIC_COOKIE:08X})"
     );
 
     // Verify transaction ID (bytes 8–19).
