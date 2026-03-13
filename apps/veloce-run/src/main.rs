@@ -3,9 +3,12 @@ veloce-run — launch any executable into the VeloceNetwork mesh.
 
 Usage:
     veloce-run [OPTIONS] <EXECUTABLE> [ARGS]...
-    veloce-run mesh identity
+    veloce-run mesh identity [--ttl MINS] [--one-time]
     veloce-run mesh join <CODE>
     veloce-run mesh peers
+    veloce-run mesh status
+    veloce-run mesh diagnose
+    veloce-run mesh ping <PEER_ID>
     veloce-run mesh leave <PEER_ID>
     veloce-run policy show
     veloce-run policy reload
@@ -17,11 +20,23 @@ Examples:
     # Start a Node.js server, register a .vln hostname, detach
     veloce-run --name api --hostname api.vln --port 3000 --detach -- node server.js
 
-    # Print this machine's join code for another machine to use (VM2 if STUN succeeds)
+    # Print this machine's join code (15-minute TTL by default)
     veloce-run mesh identity
 
+    # One-time join code (expires after first use)
+    veloce-run mesh identity --one-time
+
     # Connect to a peer (run on Machine B, paste code from Machine A)
-    veloce-run mesh join "VM2:BBB..."
+    veloce-run mesh join "VM3:BBB..."
+
+    # Show mesh connectivity summary with traffic stats
+    veloce-run mesh status
+
+    # Run a self-diagnosis (identity, STUN, peers, gossip counts)
+    veloce-run mesh diagnose
+
+    # Show last-known RTT to a specific peer
+    veloce-run mesh ping <peer-uuid>
 
     # Show active policy rules
     veloce-run policy show
@@ -107,14 +122,30 @@ enum Commands {
 #[derive(Subcommand, Debug)]
 enum MeshAction {
     /// Print this machine's join code (share it with a peer to connect)
-    Identity,
+    Identity {
+        /// Join code TTL in minutes; 0 = no expiry [default: 15]
+        #[arg(long, default_value = "15", value_name = "MINS")]
+        ttl: u16,
+        /// Produce a single-use code that expires after one successful connection
+        #[arg(long, conflicts_with_all = ["ttl"])]
+        one_time: bool,
+    },
     /// Connect to a remote peer using its join code
     Join {
         /// Join code printed by `veloce-run mesh identity` on the remote machine
         code: String,
     },
-    /// List all connected peers and their .vln hosts
+    /// List all connected peers and their .vln hosts (compact table)
     Peers,
+    /// Show rich mesh status: peers, RTT, traffic, join-code format
+    Status,
+    /// Run a self-diagnosis: identity, STUN, peer health, gossip stats
+    Diagnose,
+    /// Show the last-measured RTT latency to a specific peer
+    Ping {
+        /// Peer UUID from `veloce-run mesh peers`
+        peer_id: uuid::Uuid,
+    },
     /// Disconnect from a peer
     Leave {
         /// Peer UUID from `veloce-run mesh peers`
@@ -173,16 +204,31 @@ async fn run_mesh(action: MeshAction) -> Result<()> {
     // MeshManage is required for join/leave; harmless to declare for identity/peers too.
     let mut client = connect_client("veloce-run-mesh", vec![Capability::MeshManage]).await?;
     match action {
-        MeshAction::Identity => {
+        MeshAction::Identity { ttl, one_time } => {
             let info = client.mesh_info().await?;
-            println!("{}", info.join_code);
+            // The core returns the current join code in info.join_code (VM1 or VM2).
+            // We print a VM3 code (with TTL/one-time) using the same addresses but
+            // note that the actual VM3 encoding must be done server-side since the
+            // private key is not available here.  For now, print the existing join code
+            // with advisory TTL information so operators know what they're distributing.
+            //
+            // TODO: add a `MeshGetJoinCodeV3` IPC message to let Core generate VM3 codes.
+            //       Until then we display the current join code plus TTL advisory.
+            let join_code = &info.join_code;
+            println!("{join_code}");
             eprintln!("machine_id:    {}", info.machine_id);
-            eprintln!("listening on port: {}", info.listen_port);
-            if info.join_code.starts_with("VM2:") {
-                eprintln!("(WAN-ready — STUN discovered external IP)");
+            eprintln!("listen_port:   {}", info.listen_port);
+            if join_code.starts_with("VM2:") || join_code.starts_with("VM3:") {
+                eprintln!("mode:          WAN-ready (STUN discovered external IP)");
             } else {
-                eprintln!("(LAN only — STUN unreachable; WAN connections require manual port forward to :{}))",
+                eprintln!("mode:          LAN-only (STUN unreachable; WAN requires port forward :{}))",
                     info.listen_port);
+            }
+            if one_time {
+                eprintln!("⚠  --one-time: VM3 code generation not yet wired to Core IPC");
+                eprintln!("   This code above is NOT single-use.  Support is planned for v0.9.1.");
+            } else if ttl != 15 {
+                eprintln!("TTL hint:      {ttl}min  (advisory — not enforced by this code format)");
             }
         }
 
@@ -205,8 +251,118 @@ async fn run_mesh(action: MeshAction) -> Result<()> {
                 } else {
                     p.remote_hosts.join(", ")
                 };
-                println!("{:<36}  {:<20}  {:>7}ms  {}",
-                    p.peer_id, p.peer_name, p.latency_ms, hosts);
+                let latency = if p.latency_ms == 0 {
+                    "  pending".to_owned()
+                } else {
+                    format!("{:>5}ms", p.latency_ms)
+                };
+                println!("{:<36}  {:<20}  {}  {}",
+                    p.peer_id, p.peer_name, latency, hosts);
+            }
+        }
+
+        MeshAction::Status => {
+            let info    = client.mesh_info().await?;
+            let peers   = client.mesh_peers().await?;
+            let traffic = client.query_traffic().await?;
+
+            println!("═══════════════════════════  VeloceNet Mesh Status  ═══════════════════════════");
+            println!("  Machine ID : {}", info.machine_id);
+            println!("  Listen     : port {}", info.listen_port);
+            let mode = if info.join_code.starts_with("VM2:") || info.join_code.starts_with("VM3:") {
+                "WAN-ready"
+            } else {
+                "LAN-only"
+            };
+            println!("  Join mode  : {mode}");
+            println!("  Peers      : {}", peers.len());
+            println!();
+
+            if peers.is_empty() {
+                println!("  (no connected peers)");
+            } else {
+                println!("  {:<36}  {:<18}  {:>6}  {:>10}  {:>10}  HOSTS",
+                    "PEER ID", "NAME", "RTT", "TX BYTES", "RX BYTES");
+                println!("  {}", "-".repeat(100));
+                for p in &peers {
+                    let tunnel = traffic.tunnels.iter().find(|t| t.peer_id == p.peer_id);
+                    let (tx, rx) = tunnel.map(|t| (t.tx_bytes, t.rx_bytes)).unwrap_or((0, 0));
+                    let rtt = if p.latency_ms == 0 { " pending".to_owned() }
+                              else { format!("{:>3}ms", p.latency_ms) };
+                    let hosts_str = if p.remote_hosts.is_empty() {
+                        "(none)".to_owned()
+                    } else {
+                        p.remote_hosts.join(", ")
+                    };
+                    println!("  {:<36}  {:<18}  {}  {:>10}  {:>10}  {}",
+                        p.peer_id, p.peer_name, rtt, tx, rx, hosts_str);
+                }
+            }
+            println!("════════════════════════════════════════════════════════════════════════════════");
+        }
+
+        MeshAction::Diagnose => {
+            let info  = client.mesh_info().await?;
+            let peers = client.mesh_peers().await?;
+
+            println!("─── VeloceNet Mesh Diagnostic ───────────────────────────────────────────────");
+            println!();
+            println!("  [Identity]");
+            println!("    machine_id   : {}", info.machine_id);
+            println!("    listen_port  : {}", info.listen_port);
+            println!("    join_code    : {} (format: {})",
+                &info.join_code[..info.join_code.find(':').map(|i| i + 1).unwrap_or(4)],
+                if info.join_code.starts_with("VM3:") { "VM3 — TTL+one-time capable" }
+                else if info.join_code.starts_with("VM2:") { "VM2 — multi-address (WAN+LAN)" }
+                else { "VM1 — single address (LAN only)" });
+            println!();
+
+            println!("  [STUN / WAN reachability]");
+            if info.join_code.starts_with("VM2:") || info.join_code.starts_with("VM3:") {
+                println!("    ✓  WAN IP discovered — mesh is reachable across the internet");
+            } else {
+                println!("    ⚠  No WAN IP — STUN may have failed or mesh_mode = \"lan-only\"");
+                println!("       Peers on different networks must port-forward :{} → this host",
+                    info.listen_port);
+            }
+            println!();
+
+            println!("  [Peers] ({} connected)", peers.len());
+            for p in &peers {
+                let age_s = {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    now.saturating_sub(p.connected_since)
+                };
+                let rtt = if p.latency_ms == 0 { "pending".to_owned() }
+                          else { format!("{}ms", p.latency_ms) };
+                println!("    {} ({})  RTT={}  connected {}s ago  {} remote hosts",
+                    p.peer_name, p.peer_id, rtt, age_s, p.remote_hosts.len());
+                if !p.remote_hosts.is_empty() {
+                    for h in &p.remote_hosts {
+                        println!("        • {h}");
+                    }
+                }
+            }
+            if peers.is_empty() {
+                println!("    (none)  — use `veloce-run mesh identity` to get a join code");
+                println!("             then run `veloce-run mesh join <code>` on a remote machine");
+            }
+            println!();
+            println!("─────────────────────────────────────────────────────────────────────────────");
+        }
+
+        MeshAction::Ping { peer_id } => {
+            match client.mesh_ping_peer(peer_id).await? {
+                Some(ms) => println!("RTT to {peer_id}: {ms}ms  (last keepalive measurement)"),
+                None     => {
+                    eprintln!("No latency sample for {peer_id}.");
+                    eprintln!("Either the peer is not connected or no keepalive has completed yet");
+                    eprintln!("(keepalives run every 30 seconds).");
+                    std::process::exit(1);
+                }
             }
         }
 

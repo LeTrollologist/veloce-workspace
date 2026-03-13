@@ -16,14 +16,14 @@ pub mod peer;
 pub mod stun;
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::Context;
-use tokio::{net::TcpListener, sync::RwLock};
+use tokio::{net::TcpListener, sync::{Mutex, RwLock}};
 use uuid::Uuid;
 
 use veloce_ipc::message::{
@@ -32,12 +32,27 @@ use veloce_ipc::message::{
 };
 use veloce_net::registry::NetRegistry;
 
+use parking_lot::Mutex as ParkingMutex;
+
 use identity::MachineIdentity;
-use peer::{AclFn, GossipEntry, PeerConnection, PeerMsg};
+use peer::{AclFn, GossipEntry, OwnerFn, PeerConnection, PeerMsg};
 
 pub const DEFAULT_MESH_PORT: u16 = 7474;
 
 // ── MeshState ─────────────────────────────────────────────────────────────────
+
+/// Controls WAN/LAN mode for STUN discovery.  Mirrors `policy::MeshMode` but
+/// lives in the mesh crate to avoid a cross-crate dependency on veloce-core.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub enum MeshMode {
+    /// Try STUN; fall back to LAN-only with a warning if all servers fail.
+    #[default]
+    Auto,
+    /// Skip STUN entirely — only LAN addresses appear in join codes.
+    LanOnly,
+    /// Require WAN IP via STUN; warn if unavailable but remain operational.
+    Wan,
+}
 
 /// The full mesh state stored inside `CoreState`.
 pub struct MeshState {
@@ -52,45 +67,73 @@ pub struct MeshState {
     /// `f(hostname, peer_name) -> bool` for each gossip entry; returning
     /// `false` prevents the entry from being installed locally.
     pub mesh_acl_fn: Option<AclFn>,
+    /// How often (seconds) to re-broadcast local hostnames to each peer.
+    pub gossip_interval_secs: u64,
+    /// Nonces from consumed VM3 one-time join codes.
+    ///
+    /// Once a one-time code is used, its 16-byte nonce is recorded here.
+    /// Any subsequent `connect_to_peer` call presenting the same nonce is
+    /// rejected with an error, preventing replay attacks.
+    used_nonces: Mutex<HashSet<[u8; 16]>>,
+    /// Maps each gossip hostname to the peer UUID that first advertised it.
+    ///
+    /// When a different peer later claims the same hostname, a warning is
+    /// logged.  Uses `parking_lot::Mutex` for use inside sync `OwnerFn`.
+    hostname_origins: Arc<ParkingMutex<HashMap<String, Uuid>>>,
 }
 
 impl MeshState {
     pub fn new(
-        identity:    MachineIdentity,
-        listen_port: u16,
-        net_registry: Arc<NetRegistry>,
-        mesh_acl_fn: Option<AclFn>,
+        identity:             MachineIdentity,
+        listen_port:          u16,
+        net_registry:         Arc<NetRegistry>,
+        mesh_acl_fn:          Option<AclFn>,
+        stun_servers:         Vec<String>,
+        mesh_mode:            MeshMode,
+        gossip_interval_secs: u64,
     ) -> Arc<Self> {
         // Build the initial VM1 join code using the best local LAN address.
-        let lan_ip  = get_local_ip().unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST));
+        let lan_ip   = get_local_ip().unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST));
         let lan_addr = SocketAddr::new(lan_ip, listen_port);
         let initial_code = identity.join_code(lan_addr);
         let join_code_cache = Arc::new(RwLock::new(initial_code));
 
-        // Capture values needed by the background STUN task.
-        let cache_clone = Arc::clone(&join_code_cache);
-        let pub_key     = identity.pub_key;
-
-        // Spawn background STUN discovery: upgrades the cache to a VM2 code
-        // that includes both the LAN address and the WAN address.
-        tokio::spawn(async move {
-            match stun::discover_external_ip().await {
-                Some(wan_ip) if wan_ip != lan_ip => {
-                    let wan_addr  = SocketAddr::new(wan_ip, listen_port);
-                    let vm2_code  = build_vm2_code(&pub_key, &[lan_addr, wan_addr]);
-                    *cache_clone.write().await = vm2_code;
-                    tracing::info!(
-                        "STUN WAN IP discovered: {wan_ip} — join code upgraded to VM2"
-                    );
+        // Spawn background STUN discovery unless LAN-only mode was requested.
+        if mesh_mode != MeshMode::LanOnly {
+            let cache_clone = Arc::clone(&join_code_cache);
+            let pub_key     = identity.pub_key;
+            let mode        = mesh_mode.clone();
+            tokio::spawn(async move {
+                match stun::discover_external_ip(&stun_servers).await {
+                    Some(wan_ip) if wan_ip != lan_ip => {
+                        let wan_addr  = SocketAddr::new(wan_ip, listen_port);
+                        let vm2_code  = build_vm2_code(&pub_key, &[lan_addr, wan_addr]);
+                        *cache_clone.write().await = vm2_code;
+                        tracing::info!(
+                            "STUN WAN IP discovered: {wan_ip} — join code upgraded to VM2"
+                        );
+                    }
+                    Some(wan_ip) => {
+                        tracing::debug!("STUN: WAN IP {wan_ip} same as LAN; keeping VM1 code");
+                    }
+                    None => {
+                        if mode == MeshMode::Wan {
+                            tracing::warn!(
+                                "STUN: all servers failed — mesh operating in LAN-only mode \
+                                 (WAN join codes unavailable; check firewall or set \
+                                 mesh_mode = \"lan-only\" in veloce-policy.toml to suppress)"
+                            );
+                        } else {
+                            tracing::debug!(
+                                "STUN: no WAN IP discovered; keeping VM1 code (LAN only)"
+                            );
+                        }
+                    }
                 }
-                Some(wan_ip) => {
-                    tracing::debug!("STUN: WAN IP {wan_ip} same as LAN; keeping VM1 code");
-                }
-                None => {
-                    tracing::debug!("STUN: no WAN IP discovered; keeping VM1 code (LAN only)");
-                }
-            }
-        });
+            });
+        } else {
+            tracing::info!("mesh: LAN-only mode — STUN discovery disabled");
+        }
 
         Arc::new(Self {
             identity,
@@ -99,6 +142,9 @@ impl MeshState {
             net_registry,
             join_code_cache,
             mesh_acl_fn,
+            gossip_interval_secs,
+            used_nonces: Mutex::new(HashSet::new()),
+            hostname_origins: Arc::new(ParkingMutex::new(HashMap::new())),
         })
     }
 
@@ -133,21 +179,79 @@ impl MeshState {
         self: &Arc<Self>,
         join_code: &str,
     ) -> anyhow::Result<MeshConnectResultMsg> {
+        // ── VM3 code validation (TTL + one-time nonce) ────────────────────────
+        let vm3_meta = if join_code.starts_with("VM3:") {
+            let meta = identity::MachineIdentity::decode_vm3(join_code)
+                .context("decode VM3 join code")?;
+
+            // Check TTL.
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            if meta.is_expired(now) {
+                anyhow::bail!(
+                    "join code expired (generated {}s ago, TTL was {}min)",
+                    now.saturating_sub(meta.created_at),
+                    meta.ttl_mins
+                );
+            }
+
+            // Check one-time nonce.
+            if meta.is_one_time() {
+                let mut used = self.used_nonces.lock().await;
+                if used.contains(&meta.nonce) {
+                    anyhow::bail!("one-time join code has already been used (nonce replay)");
+                }
+                // Record the nonce now; we'll remove it below if the handshake fails.
+                used.insert(meta.nonce);
+            }
+
+            Some(meta)
+        } else {
+            None
+        };
+
         let (their_pub, addrs) = MachineIdentity::decode_join_code_addrs(join_code)?;
 
-        let mut stream = connect_first(&addrs)
-            .await
-            .context("could not reach any address in the join code")?;
+        // Attempt TCP connect + Noise handshake.  On failure, roll back the
+        // one-time nonce so the caller can retry with a fresh code.
+        let connect_result: anyhow::Result<_> = async {
+            let mut stream = connect_first(&addrs)
+                .await
+                .context("could not reach any address in the join code")?;
+            let ts = noise::initiator_handshake(&mut stream, &self.identity.priv_key, &their_pub)
+                .await
+                .context("Noise_IK initiator handshake")?;
+            Ok((stream, ts))
+        }.await;
 
-        let ts = noise::initiator_handshake(&mut stream, &self.identity.priv_key, &their_pub)
-            .await
-            .context("Noise_IK initiator handshake")?;
+        let (stream, ts) = match connect_result {
+            Ok(pair) => pair,
+            Err(e) => {
+                // Release the one-time nonce so a fresh code isn't needed.
+                if let Some(ref meta) = vm3_meta {
+                    if meta.is_one_time() {
+                        self.used_nonces.lock().await.remove(&meta.nonce);
+                    }
+                }
+                return Err(e);
+            }
+        };
+
+        // Log VM3 code consumption after a successful handshake.
+        if let Some(ref meta) = vm3_meta {
+            if meta.is_one_time() {
+                tracing::info!("one-time join code consumed — nonce recorded, replay prevented");
+            }
+        }
 
         // Derive stable peer UUID from their public key.
         let peer_id = Uuid::new_v5(&Uuid::NAMESPACE_OID, &their_pub);
 
         let self_clone = Arc::clone(self);
-        let acl = self.mesh_acl_fn.clone();
+        let acl       = self.mesh_acl_fn.clone();
+        let owner_fn  = self.make_owner_fn();
         let conn = PeerConnection::start(
             peer_id,
             format!("peer-{}", &peer_id.simple().to_string()[..8]),
@@ -162,6 +266,8 @@ impl MeshState {
                 });
             },
             acl,
+            self.gossip_interval_secs,
+            Some(owner_fn),
         );
 
         // Send our Hello.
@@ -221,6 +327,36 @@ impl MeshState {
         TrafficStatsMsg { tunnels, hosts: host_stats, ts_ms }
     }
 
+    /// Build an `OwnerFn` closure that tracks which peer first advertised each
+    /// hostname and warns when a different peer claims the same one.
+    fn make_owner_fn(&self) -> OwnerFn {
+        let origins = Arc::clone(&self.hostname_origins);
+        Arc::new(move |hostname: &str, peer_id: Uuid, peer_name: &str| {
+            let mut map = origins.lock();
+            match map.entry(hostname.to_string()) {
+                std::collections::hash_map::Entry::Occupied(mut occ) => {
+                    if *occ.get() != peer_id {
+                        tracing::warn!(
+                            hostname = %hostname,
+                            original_peer = %occ.get(),
+                            claimant_peer  = %peer_id,
+                            claimant_name  = %peer_name,
+                            "gossip hostname ownership conflict — hostname was previously \
+                             advertised by a different peer; check for misconfiguration"
+                        );
+                        // Update the owner to the new claimant (LWW wins); log was warning.
+                        *occ.get_mut() = peer_id;
+                    }
+                    true
+                }
+                std::collections::hash_map::Entry::Vacant(vac) => {
+                    vac.insert(peer_id);
+                    true
+                }
+            }
+        })
+    }
+
     /// Build the gossip payload from our local NetRegistry.
     /// Skips entries registered by the mesh layer itself (port < 1024 would be
     /// suspicious; we identify ours by nil node_id).
@@ -267,7 +403,8 @@ pub async fn run_mesh_server(
                 Ok((their_pub, ts)) => {
                     let peer_id = Uuid::new_v5(&Uuid::NAMESPACE_OID, &their_pub);
                     let state_clone = Arc::clone(&state);
-                    let acl = state.mesh_acl_fn.clone();
+                    let acl       = state.mesh_acl_fn.clone();
+                    let owner_fn  = state.make_owner_fn();
                     let conn = PeerConnection::start(
                         peer_id,
                         format!("peer-{}", &peer_id.simple().to_string()[..8]),
@@ -281,6 +418,8 @@ pub async fn run_mesh_server(
                             });
                         },
                         acl,
+                        state.gossip_interval_secs,
+                        Some(owner_fn),
                     );
                     let _ = conn.tx.send(PeerMsg::Hello {
                         machine_name: state.identity.machine_name.clone(),

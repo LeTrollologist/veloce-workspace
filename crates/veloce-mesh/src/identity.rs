@@ -15,6 +15,46 @@ use rand::rngs::OsRng;
 use uuid::Uuid;
 use x25519_dalek::{PublicKey, StaticSecret};
 
+// ── VM3 join-code helpers ─────────────────────────────────────────────────────
+
+/// Bit-flag for `JoinCodeMeta::flags`: the code is single-use (one-time).
+///
+/// After the first successful `connect_to_peer` that consumes a VM3 code with
+/// this flag set, the nonce is recorded in `MeshState::used_nonces` and any
+/// replay attempt is rejected.
+pub const FLAG_ONE_TIME: u8 = 0x01;
+
+/// Decoded metadata from a VM3 join code.
+#[derive(Debug, Clone)]
+pub struct JoinCodeMeta {
+    /// Remote machine's x25519 public key (32 bytes).
+    pub pub_key:    [u8; 32],
+    /// Network addresses where the remote mesh server is listening.
+    pub addrs:      Vec<SocketAddr>,
+    /// Unix timestamp (seconds) when the code was generated.
+    pub created_at: u64,
+    /// Cryptographically-random nonce — used to detect one-time code replays.
+    pub nonce:      [u8; 16],
+    /// TTL in minutes.  0 means no expiry.
+    pub ttl_mins:   u16,
+    /// Behaviour flags — see `FLAG_ONE_TIME`.
+    pub flags:      u8,
+}
+
+impl JoinCodeMeta {
+    /// Returns `true` if the code has expired relative to `now_secs`.
+    pub fn is_expired(&self, now_secs: u64) -> bool {
+        if self.ttl_mins == 0 { return false; }
+        let expiry = self.created_at.saturating_add(self.ttl_mins as u64 * 60);
+        now_secs > expiry
+    }
+
+    /// Returns `true` if the `FLAG_ONE_TIME` bit is set.
+    pub fn is_one_time(&self) -> bool { self.flags & FLAG_ONE_TIME != 0 }
+}
+
+// ── MachineIdentity ───────────────────────────────────────────────────────────
+
 /// A machine's long-term mesh identity.
 ///
 /// Persisted as `veloce-identity.key` (64 bytes: private || public) inside the
@@ -174,6 +214,146 @@ impl MachineIdentity {
         format!("VM2:{}", URL_SAFE_NO_PAD.encode(&payload))
     }
 
+    /// Build a VM3 join code with an optional TTL and/or one-time restriction.
+    ///
+    /// VM3 extends VM2 with three additional fields:
+    /// `created_at[8 LE] + nonce[16] + ttl_mins[2 LE] + flags[1]`
+    ///
+    /// - `ttl_mins`:  0 = no expiry; 15 = 15-minute default; 60 = 1 hour; etc.
+    /// - `one_time`:  if `true`, the code may only be used once; the receiver
+    ///                records the nonce and rejects any replay.
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Default 15-minute code
+    /// let code = identity.join_code_v3(&[lan, wan], 15, false);
+    /// // One-time code with no expiry
+    /// let code = identity.join_code_v3(&[lan_addr], 0, true);
+    /// ```
+    pub fn join_code_v3(
+        &self,
+        addrs:    &[SocketAddr],
+        ttl_mins: u16,
+        one_time: bool,
+    ) -> String {
+        use rand::RngCore;
+
+        let created_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        let mut nonce = [0u8; 16];
+        rand::rngs::OsRng.fill_bytes(&mut nonce);
+
+        let flags: u8 = if one_time { FLAG_ONE_TIME } else { 0 };
+        let n = addrs.len().min(255) as u8;
+
+        // Capacity: pub_key(32) + n(1) + addrs(≤255×19) + created_at(8) + nonce(16) + ttl(2) + flags(1)
+        let mut payload: Vec<u8> = Vec::with_capacity(32 + 1 + addrs.len() * 19 + 27);
+        payload.extend_from_slice(&self.pub_key);
+        payload.push(n);
+        for addr in addrs.iter().take(n as usize) {
+            match addr.ip() {
+                std::net::IpAddr::V4(v4) => {
+                    payload.push(4u8);
+                    payload.extend_from_slice(&v4.octets());
+                }
+                std::net::IpAddr::V6(v6) => {
+                    payload.push(6u8);
+                    payload.extend_from_slice(&v6.octets());
+                }
+            }
+            payload.extend_from_slice(&addr.port().to_le_bytes());
+        }
+        payload.extend_from_slice(&created_at.to_le_bytes());
+        payload.extend_from_slice(&nonce);
+        payload.extend_from_slice(&ttl_mins.to_le_bytes());
+        payload.push(flags);
+
+        format!("VM3:{}", URL_SAFE_NO_PAD.encode(&payload))
+    }
+
+    /// Decode a VM3 join code, returning its full [`JoinCodeMeta`].
+    ///
+    /// Callers are responsible for:
+    /// 1. Checking [`JoinCodeMeta::is_expired`] against the current time.
+    /// 2. For one-time codes: checking and recording the nonce.
+    pub fn decode_vm3(code: &str) -> anyhow::Result<JoinCodeMeta> {
+        let b64 = code.strip_prefix("VM3:")
+            .context("join code must start with 'VM3:'")?;
+        let payload = URL_SAFE_NO_PAD.decode(b64)
+            .context("invalid base64 in VM3 join code")?;
+
+        // Minimum: pub_key(32) + n_addrs(1) + created_at(8) + nonce(16) + ttl(2) + flags(1) = 60
+        if payload.len() < 60 {
+            bail!("VM3 join code payload too short ({} bytes)", payload.len());
+        }
+
+        let mut pub_key = [0u8; 32];
+        pub_key.copy_from_slice(&payload[..32]);
+
+        let n_addrs = payload[32] as usize;
+        let mut pos = 33usize;
+        let mut addrs: Vec<SocketAddr> = Vec::with_capacity(n_addrs);
+
+        for i in 0..n_addrs {
+            if pos >= payload.len() {
+                bail!("VM3 join code truncated at addr #{i}");
+            }
+            let family = payload[pos];
+            pos += 1;
+            let addr = match family {
+                4 => {
+                    if pos + 6 > payload.len() {
+                        bail!("VM3 join code truncated (IPv4 addr #{i})");
+                    }
+                    let ip = std::net::Ipv4Addr::new(
+                        payload[pos], payload[pos+1], payload[pos+2], payload[pos+3],
+                    );
+                    let port = u16::from_le_bytes([payload[pos+4], payload[pos+5]]);
+                    pos += 6;
+                    SocketAddr::from((ip, port))
+                }
+                6 => {
+                    if pos + 18 > payload.len() {
+                        bail!("VM3 join code truncated (IPv6 addr #{i})");
+                    }
+                    let mut octets = [0u8; 16];
+                    octets.copy_from_slice(&payload[pos..pos+16]);
+                    let port = u16::from_le_bytes([payload[pos+16], payload[pos+17]]);
+                    pos += 18;
+                    SocketAddr::from((std::net::Ipv6Addr::from(octets), port))
+                }
+                _ => bail!("VM3 join code: unknown address family {family} at addr #{i}"),
+            };
+            addrs.push(addr);
+        }
+
+        // After addresses: created_at(8) + nonce(16) + ttl(2) + flags(1) = 27 bytes
+        if pos + 27 > payload.len() {
+            bail!(
+                "VM3 join code truncated: need {} more bytes after addresses, have {}",
+                27,
+                payload.len().saturating_sub(pos)
+            );
+        }
+
+        let created_at = u64::from_le_bytes(payload[pos..pos+8].try_into()?);
+        pos += 8;
+        let mut nonce = [0u8; 16];
+        nonce.copy_from_slice(&payload[pos..pos+16]);
+        pos += 16;
+        let ttl_mins = u16::from_le_bytes([payload[pos], payload[pos+1]]);
+        let flags = payload[pos + 2];
+
+        if addrs.is_empty() {
+            bail!("VM3 join code contains no addresses");
+        }
+
+        Ok(JoinCodeMeta { pub_key, addrs, created_at, nonce, ttl_mins, flags })
+    }
+
     /// Decode a join code that may be either VM1 (single address) or VM2
     /// (multiple addresses), returning the remote public key and all addresses.
     pub fn decode_join_code_addrs(code: &str) -> anyhow::Result<([u8; 32], Vec<SocketAddr>)> {
@@ -182,8 +362,15 @@ impl MachineIdentity {
             return Ok((pub_key, vec![addr]));
         }
 
+        // VM3 codes carry extra metadata (TTL, nonce, flags); strip it here —
+        // callers that need the metadata should use `decode_vm3` directly.
+        if code.starts_with("VM3:") {
+            let meta = Self::decode_vm3(code)?;
+            return Ok((meta.pub_key, meta.addrs));
+        }
+
         let b64 = code.strip_prefix("VM2:")
-            .context("join code must start with 'VM1:' or 'VM2:'")?;
+            .context("join code must start with 'VM1:', 'VM2:', or 'VM3:'")?;
         let payload = URL_SAFE_NO_PAD.decode(b64)
             .context("invalid base64 in VM2 join code")?;
 
@@ -339,5 +526,54 @@ mod tests {
     #[test]
     fn decode_addrs_bad_prefix_rejected() {
         assert!(MachineIdentity::decode_join_code_addrs("BAD:abc").is_err());
+    }
+
+    #[test]
+    fn vm3_round_trip_ttl_and_one_time() {
+        let mut pub_key = [0u8; 32];
+        for (i, b) in pub_key.iter_mut().enumerate() { *b = i as u8; }
+
+        let identity = MachineIdentity {
+            priv_key: [0u8; 32],
+            pub_key,
+            machine_id: uuid::Uuid::nil(),
+            machine_name: "test".to_string(),
+        };
+
+        let lan = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 1, 2, 3)), 7474);
+        let wan = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(1, 2, 3, 4)), 7474);
+
+        // 15-minute TTL, one-time flag
+        let code = identity.join_code_v3(&[lan, wan], 15, true);
+        assert!(code.starts_with("VM3:"), "expected VM3 prefix, got {code}");
+
+        let meta = MachineIdentity::decode_vm3(&code).unwrap();
+        assert_eq!(meta.pub_key,   pub_key);
+        assert_eq!(meta.addrs,     vec![lan, wan]);
+        assert_eq!(meta.ttl_mins,  15);
+        assert!(meta.is_one_time(), "FLAG_ONE_TIME should be set");
+        assert!(!meta.is_expired(meta.created_at + 1), "fresh code should not be expired");
+        assert!(meta.is_expired(meta.created_at + 15 * 60 + 1), "code should be expired after TTL");
+
+        // Verify decode_join_code_addrs also handles VM3
+        let (k, addrs) = MachineIdentity::decode_join_code_addrs(&code).unwrap();
+        assert_eq!(k, pub_key);
+        assert_eq!(addrs, vec![lan, wan]);
+    }
+
+    #[test]
+    fn vm3_no_expiry_never_expires() {
+        let identity = MachineIdentity {
+            priv_key: [0u8; 32],
+            pub_key:  [1u8; 32],
+            machine_id: uuid::Uuid::nil(),
+            machine_name: "test".to_string(),
+        };
+        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 7474);
+        let code = identity.join_code_v3(&[addr], 0, false);
+        let meta = MachineIdentity::decode_vm3(&code).unwrap();
+        // ttl_mins = 0 means no expiry
+        assert!(!meta.is_expired(meta.created_at + 365 * 24 * 3600));
+        assert!(!meta.is_one_time());
     }
 }

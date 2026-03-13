@@ -397,6 +397,19 @@ impl VeloceClient {
         }
     }
 
+    /// Return the last-measured round-trip latency (ms) to a connected peer.
+    ///
+    /// The latency is sampled by the 30-second background keepalive ping loop;
+    /// returns `None` if the peer UUID is not found or if no measurement has
+    /// been recorded yet (e.g. the peer connected very recently).
+    pub async fn mesh_ping_peer(&mut self, peer_id: Uuid) -> Result<Option<u32>> {
+        match self.request(Body::MeshPingPeer { peer_id }).await? {
+            Body::MeshPingResult { latency_ms, .. } => Ok(latency_ms),
+            Body::Error(e) => bail!("mesh_ping_peer: {}", e.message),
+            other => bail!("mesh_ping_peer: unexpected response {:?}", other.msg_type()),
+        }
+    }
+
     pub async fn ping(&mut self) -> Result<()> {
         match self.request(Body::Ping).await? {
             Body::Pong => Ok(()),
