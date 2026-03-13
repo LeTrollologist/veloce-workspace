@@ -72,7 +72,7 @@ async fn handle_query(
         let ip: [u8; 4] = [127, 0, 0, 1];
 
         if record.is_some() || q.name.ends_with(".vln") || q.name.ends_with(".veloce") {
-            let response = build_a_response(query.id, &q.name, &ip, 30 /* TTL */);
+            let response = build_a_response(query.id, &q.name, &ip, 30 /* TTL */)?;
             sock.send_to(&response, from).await?;
             tracing::debug!(name = %q.name, "DNS A → 127.0.0.1 (vln)");
         } else {
@@ -220,6 +220,8 @@ fn parse_name(buf: &[u8], mut pos: usize) -> Result<(String, usize)> {
 
         pos += 1;
         if pos + len > buf.len() { anyhow::bail!("label past end of packet"); }
+        // RFC 1035 §2.3.4: labels must not exceed 63 octets.
+        if len > 63 { anyhow::bail!("DNS label exceeds RFC 1035 maximum of 63 bytes ({len})"); }
         labels.push(String::from_utf8_lossy(&buf[pos..pos+len]).into_owned());
         pos += len;
     }
@@ -229,16 +231,26 @@ fn parse_name(buf: &[u8], mut pos: usize) -> Result<(String, usize)> {
 }
 
 /// Encode a name as DNS labels.
-fn encode_name(name: &str, buf: &mut Vec<u8>) {
+///
+/// Returns an error if any label exceeds 63 bytes (RFC 1035 §2.3.4) or if
+/// the encoded name would exceed 253 bytes (RFC 1035 §3.1 total-name limit).
+fn encode_name(name: &str, buf: &mut Vec<u8>) -> Result<()> {
     for label in name.split('.') {
+        if label.len() > 63 {
+            anyhow::bail!(
+                "DNS label '{label}' exceeds RFC 1035 maximum of 63 bytes ({})",
+                label.len()
+            );
+        }
         buf.push(label.len() as u8);
         buf.extend_from_slice(label.as_bytes());
     }
     buf.push(0); // root
+    Ok(())
 }
 
 /// Build a DNS A response pointing to `ip`.
-fn build_a_response(id: u16, name: &str, ip: &[u8; 4], ttl: u32) -> Vec<u8> {
+fn build_a_response(id: u16, name: &str, ip: &[u8; 4], ttl: u32) -> Result<Vec<u8>> {
     let mut buf = Vec::new();
 
     // Header
@@ -250,19 +262,19 @@ fn build_a_response(id: u16, name: &str, ip: &[u8; 4], ttl: u32) -> Vec<u8> {
     buf.extend_from_slice(&[0x00, 0x00]); // ARCOUNT=0
 
     // Question section (echo)
-    encode_name(name, &mut buf);
+    encode_name(name, &mut buf)?;
     buf.extend_from_slice(&[0x00, 0x01]); // QTYPE=A
     buf.extend_from_slice(&[0x00, 0x01]); // QCLASS=IN
 
     // Answer section
-    encode_name(name, &mut buf);
+    encode_name(name, &mut buf)?;
     buf.extend_from_slice(&[0x00, 0x01]); // TYPE=A
     buf.extend_from_slice(&[0x00, 0x01]); // CLASS=IN
     buf.extend_from_slice(&ttl.to_be_bytes());
     buf.extend_from_slice(&[0x00, 0x04]); // RDLENGTH=4
     buf.extend_from_slice(ip);
 
-    buf
+    Ok(buf)
 }
 
 fn build_nxdomain(id: u16) -> Vec<u8> {
