@@ -19,8 +19,8 @@ use crate::registry::NetRegistry;
 // ── SERVER ────────────────────────────────────────────────────────────────────
 
 pub async fn serve(registry: Arc<NetRegistry>, port: u16) -> Result<()> {
-    let sock = Arc::new(UdpSocket::bind(format!("0.0.0.0:{port}")).await?);
-    tracing::info!("DNS server listening on 0.0.0.0:{port}");
+    let sock = Arc::new(UdpSocket::bind(format!("127.0.0.1:{port}")).await?);
+    tracing::info!("DNS server listening on 127.0.0.1:{port}");
 
     let mut buf = vec![0u8; 512];
 
@@ -88,10 +88,15 @@ async fn forward_query(packet: &[u8], from: SocketAddr, sock: &UdpSocket) -> Res
     fwd.send_to(packet, upstream).await?;
 
     let mut resp_buf = vec![0u8; 512];
-    let (n, _) = tokio::time::timeout(
+    let (n, src) = tokio::time::timeout(
         std::time::Duration::from_secs(3),
         fwd.recv_from(&mut resp_buf),
     ).await??;
+
+    // Reject responses that don't come from the upstream we queried.
+    if src != upstream {
+        anyhow::bail!("DNS upstream response from unexpected source {src} (expected {upstream})");
+    }
 
     sock.send_to(&resp_buf[..n], from).await?;
     Ok(())

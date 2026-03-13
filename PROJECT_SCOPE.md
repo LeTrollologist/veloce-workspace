@@ -29,15 +29,15 @@
 
 ## 3. Scope Definition
 
-### In Scope (v0.1 – v0.6)
+### In Scope (v0.1 – v0.7)
 
 | Component | Features shipped |
 |---|---|
-| **veloce-core** | Background Windows service, SID ACL + OsRng PSK, Job Objects (CPU/memory/lifetime), mmap registry, health-loop, AppContainer kernel sandbox, MeshState, mesh TCP server (:7474), PolicyEngine (TOML RBAC + mesh ACLs, hot-reload); `TrafficQuery` IPC handler |
-| **veloce-net** | DNS :5354 for `*.vln`/`*.veloce`, SOCKS5 :1055, TTL GC; DNS compression DoS fix; `Arc<AtomicU64>` `bytes_proxied` per `NetRecord`; `NetRegistry::traffic_snapshot()` |
-| **veloce-ipc** | VELC framing, bincode encoding, message types 0x00–0x72 + `TrafficQuery (0x80)` / `TrafficStatsResult (0x81)`; `TunnelTrafficMsg`, `HostTrafficMsg`, `TrafficStatsMsg` |
+| **veloce-core** | Background Windows service, SID ACL + OsRng PSK, Job Objects (CPU/memory/lifetime), mmap registry, health-loop, AppContainer kernel sandbox, MeshState, mesh TCP server (:7474), PolicyEngine (TOML RBAC + mesh ACLs, hot-reload, kernel-verified `exe` field); `TrafficQuery` IPC handler; pre-auth state machine; server-authoritative capability grant; `VELOCE_SKIP_PSK` SYSTEM guard |
+| **veloce-net** | DNS :5354 for `*.vln`/`*.veloce` (localhost-bind, upstream validation); SOCKS5 :1055 (VLN-only scope); TTL GC; DNS compression DoS fix; `Arc<AtomicU64>` `bytes_proxied` per `NetRecord`; `NetRegistry::traffic_snapshot()` |
+| **veloce-ipc** | VELC framing, bincode encoding, message types 0x00–0x72 + `TrafficQuery (0x80)` / `TrafficStatsResult (0x81)`; `TunnelTrafficMsg`, `HostTrafficMsg`, `TrafficStatsMsg`; `PolicyRuleMsg.exe` optional field |
 | **veloce-sdk** | `VeloceClient` async Rust client, C FFI (`veloce_sdk.dll`), template methods, mesh methods, `policy_get_rules()`, `policy_reload()`, `query_traffic()` |
-| **veloce-mesh** | x25519 identity (Noise_IK_25519_ChaChaPoly_BLAKE2s), PeerConnection gossip (LWW CRDT), TCP forwarder, STUN WAN discovery, VM2 join codes, ACL callback; `Arc<AtomicU64>` `tx_bytes`/`rx_bytes` per `PeerConnection`; `MeshState::query_traffic_stats()` |
+| **veloce-mesh** | x25519 identity (Noise_IK_25519_ChaChaPoly_BLAKE2s), PeerConnection gossip (LWW CRDT), TCP forwarder, STUN WAN discovery, VM2 join codes, ACL callback; `Arc<AtomicU64>` `tx_bytes`/`rx_bytes` per `PeerConnection`; `MeshState::query_traffic_stats()`; 10-second handshake timeout |
 | **apps/dashboard** | Svelte 5 + Canvas 2D — nodes + sparklines + history graphs, templates, logs (search/filter/auto-scroll/5k-cap), VeloceNet + policy panel, topology canvas (drag-and-drop, heatmap, live traffic tables) |
 | **apps/installer** | Glassmorphic 5-step Tauri installer; service registration, PATH, registry |
 | **apps/veloce-run** | CLI launcher (`--name`, `--hostname`, `--cpu`, `--mem`, `--restarts`, `--watch`, `--detach`) + `mesh identity/join/peers/leave` + `policy show/reload` |
@@ -46,9 +46,8 @@
 
 | Feature | Target |
 |---|---|
-| Bug testing, regression fixes, patch releases | v0.7 |
-| Feature meshing — cross-subsystem integration & gap fills | v0.8 |
-| Optimisation, profiling, final pre-1.0 hardening | v0.9 |
+| Security Audit 2 of 3 — second structured audit cycle | v0.8 |
+| Security Audit 3 of 3 — final audit + optimisation & profiling | v0.9 |
 | WireGuard-NT kernel driver (perf upgrade, requires admin) | v1.0 |
 | Signed installer with auto-update | v1.0 |
 | Linux port (cgroups v2, Unix domain sockets) | v2.0 |
@@ -119,6 +118,26 @@
 - [x] SDK: `policy_get_rules()`, `policy_reload()` on `VeloceClient`
 - [x] `veloce-run policy show / reload` CLI subcommands
 - [x] Bug fix: `pipe_security` TOKEN_USER buffer alignment (startup crash on x64)
+
+### v0.7.0 ✅ Released
+
+**Security Audit 1 of 3 — IPC Hardening, Mesh Hardening, Network Scope Restriction**
+
+Nine findings (C1, C2, H1, H2, H3, H4, M1, M2, M3) identified and remediated. No new features.
+
+- [x] **C1** — `pipe_security`: `assert_client_is_owner` returns kernel-verified Win32 exe path via `QueryFullProcessImageNameW`; `PolicyRule.exe` field matched against verified path
+- [x] **C2** — `policy`: `compute_max_caps(exe_path)` grants server-authoritative capability set at handshake; per-handler `check_capability` calls removed
+- [x] **H1** — `ipc_server`: pre-auth state machine drops non-`Handshake` messages before authentication completes
+- [x] **H2** — `dns`: bind address changed from `0.0.0.0` to `127.0.0.1`
+- [x] **H3** — `dns`: `forward_query` validates reply source against upstream address; spoofed responses discarded
+- [x] **H4** — `noise`: `tokio::time::timeout(10s)` applied to both `initiator_handshake` and `responder_handshake` read steps
+- [x] **M1** — `socks5`: non-VLN `CONNECT` targets rejected with `REP_UNREACHABLE`; proxy scoped to `.vln`/`.veloce` only
+- [x] **M2** — `registry`: `assert!` size guards replaced with `anyhow::ensure!` for graceful error propagation
+- [x] **M3** — `ipc_server`: `VELOCE_SKIP_PSK=1` silently ignored when `server_sid == "S-1-5-18"` (SYSTEM account)
+- [x] `veloce-ipc`: `PolicyRuleMsg` gains `exe: Option<String>` with `#[serde(default)]`
+- [x] Workspace version bumped to `0.7.0`
+
+---
 
 ### v0.6.0 ✅ Released
 
@@ -204,9 +223,9 @@
 | v0.4.0 (Multi-Machine VeloceNet P2P mesh) | ✅ Released |
 | v0.5.0 (Policy Engine + STUN WAN mesh) | ✅ Released |
 | v0.6.0 (Dashboard v2 — Svelte 5, Canvas 2D, traffic instrumentation) | ✅ Released |
-| v0.7.x (Bug testing — systematic regression & patch cycle) | Q2 2026 |
-| v0.8.0 (Feature meshing — end-to-end integration & gap fills) | Q3 2026 |
-| v0.9.0 (Optimisation, profiling, final pre-1.0 hardening) | Q3 2026 |
+| v0.7.0 (Security Audit 1 of 3 — IPC, mesh, DNS/SOCKS5 hardening) | ✅ Released |
+| v0.8.0 (Security Audit 2 of 3) | Q2 2026 |
+| v0.9.0 (Security Audit 3 of 3 + optimisation & profiling) | Q3 2026 |
 | v1.0 (WireGuard-NT kernel driver + signed auto-update installer) | Q4 2026 |
 | v2.0 (Linux port + unified SDK bindings) | 2027 |
 
@@ -239,29 +258,26 @@
 
 ---
 
-### Phase 3 — Hardening Cycle (v0.7 – v0.9)
+### Phase 3 — Security Audit Cycle (v0.7 – v0.9) ✅ v0.7 Complete
 
-This phase produces no new user-facing features. Its sole purpose is quality, correctness, and performance.
+This phase produces no new user-facing features. Its sole purpose is security, correctness, and performance. Three sequential structured audits are planned, each producing targeted remediations with no feature work.
 
-**v0.7 — Bug Testing & Regression Fixes**
-- Systematic exercise of every subsystem introduced in v0.4–v0.6
-- Test areas: mesh edge cases (simultaneous connect races, peer disconnect during gossip, symmetric-NAT reconnect), policy enforcement under all denial paths, dashboard under real multi-peer load, IPC codec (malformed frames, oversized payloads, mid-message disconnects), SOCKS5/DNS concurrency and TTL expiry
-- Every confirmed bug fixed and shipped as a **v0.7.x patch release** immediately — nothing batched
+**v0.7 — Security Audit 1 of 3 ✅ Complete**
+- Audit scope: IPC security, mesh handshake, DNS/SOCKS5 network surface, policy engine identity model
+- Nine findings identified (C1, C2, H1, H2, H3, H4, M1, M2, M3) and fully remediated
+- See `RELEASE_NOTES_v0.7.0.md` for the complete finding-by-finding breakdown
 
-**v0.8 — Feature Meshing**
-- Ensure every subsystem that exists operates correctly _together_ at every integration seam
-- End-to-end flow validation: node spawn → `.vln` register → peer gossip → remote SOCKS5 → dashboard topology render
-- Policy enforcement verified across multi-hop mesh paths
-- Dashboard commands (`traffic_stats`, `policy_reload`) verified against a live multi-machine setup
-- SDK completeness audit — any missing convenience methods added
-- CLI flag consistency review
+**v0.8 — Security Audit 2 of 3**
+- Second structured audit; scope TBD after v0.7 findings review
+- Areas under consideration: mesh gossip integrity, Noise transport replay window, SOCKS5 auth options, dashboard Tauri IPC surface, installer privilege handling
+- All confirmed findings remediated and shipped as v0.8.x patch releases as discovered
 
-**v0.9 — Optimisation & Final Pre-1.0 Hardening**
+**v0.9 — Security Audit 3 of 3 + Optimisation**
+- Final pre-1.0 security audit; full-surface review incorporating lessons from audits 1 and 2
 - CPU and memory profiling under sustained load; hot paths optimised
 - IPC message throughput tuned (batch encoding, buffer sizing)
 - Mesh reconnect stability under network interruption and flapping
 - Dashboard canvas render loop profiled; overdraw and recompute eliminated
-- Final round of bugs discovered in v0.8 integration testing fixed
 - Documentation, inline comments, and public API surface reviewed for clarity and completeness
 
 ---

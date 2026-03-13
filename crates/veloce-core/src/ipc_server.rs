@@ -61,16 +61,20 @@ pub async fn run(state: Arc<CoreState>) -> Result<()> {
         pipe.connect().await.context("pipe connect")?;
 
         // ── ACL gate: reject any process not running as the server's user ──
-        if let Err(e) = pipe_security::assert_client_is_owner(&pipe, &server_sid) {
-            tracing::warn!("pipe ACL rejected connection: {e:#}");
-            // Dropping `pipe` here disconnects the client immediately.
-            continue;
-        }
+        let exe_path = match pipe_security::assert_client_is_owner(&pipe, &server_sid) {
+            Ok(path) => path,
+            Err(e) => {
+                tracing::warn!("pipe ACL rejected connection: {e:#}");
+                // Dropping `pipe` here disconnects the client immediately.
+                continue;
+            }
+        };
 
         let client_state = state.clone();
+        let sid_clone = server_sid.clone();
         tokio::spawn(async move {
             let (read, write) = tokio::io::split(pipe);
-            let mut session = ClientSession::new(read, write, client_state);
+            let mut session = ClientSession::new(read, write, client_state, exe_path, sid_clone);
             if let Err(e) = session.run().await {
                 tracing::warn!("client session error: {e:#}");
             }
@@ -91,6 +95,13 @@ struct ClientSession<R, W> {
     writer:       W,
     state:        Arc<CoreState>,
     client_id:    Option<Uuid>,
+    /// Kernel-verified Win32 image path of the connecting process.
+    /// Set once at accept time from `pipe_security::assert_client_is_owner`;
+    /// never overwritten by client-supplied data.
+    exe_path:     String,
+    /// String SID of the server process's user.  Used to enforce that
+    /// `VELOCE_SKIP_PSK` cannot be honoured when running as SYSTEM (S-1-5-18).
+    server_sid:   String,
     app_name:     String,
     capabilities: Vec<Capability>,
     read_buf:     BytesMut,
@@ -106,13 +117,15 @@ where
     R: AsyncReadExt + Unpin + Send,
     W: AsyncWriteExt + Unpin + Send,
 {
-    fn new(reader: R, writer: W, state: Arc<CoreState>) -> Self {
+    fn new(reader: R, writer: W, state: Arc<CoreState>, exe_path: String, server_sid: String) -> Self {
         let (push_tx, push_rx) = mpsc::channel(PUSH_CHAN_CAP);
         Self {
             reader,
             writer,
             state,
             client_id:    None,
+            exe_path,
+            server_sid,
             app_name:     String::new(),
             capabilities: vec![],
             read_buf:     BytesMut::with_capacity(16 * 1024),
@@ -137,6 +150,20 @@ where
                     loop {
                         match Codec::decode_safe(&mut self.read_buf) {
                             Ok(Some((_hdr, env))) => {
+                                // H1: pre-auth gate — only Handshake is allowed before
+                                // the session is established.  Drop the connection
+                                // immediately on any protocol violation.
+                                if self.client_id.is_none() && !matches!(env.body, Body::Handshake(_)) {
+                                    tracing::warn!(
+                                        exe  = %self.exe_path,
+                                        msg  = ?env.body.msg_type(),
+                                        "pre-auth protocol violation — dropping connection"
+                                    );
+                                    return Err(anyhow::anyhow!(
+                                        "pre-auth protocol violation: {:?} received before Handshake",
+                                        env.body.msg_type()
+                                    ));
+                                }
                                 if let Err(e) = self.handle(env).await {
                                     tracing::warn!("handler error: {e:#}");
                                     self.send_error(None, ErrorCode::InternalError, e.to_string()).await?;
@@ -178,8 +205,28 @@ where
                 }
 
                 // ── PSK gate ───────────────────────────────────────────────
-                // Skip in dev mode: set VELOCE_SKIP_PSK=1 in the environment.
-                let skip_psk = std::env::var("VELOCE_SKIP_PSK").as_deref() == Ok("1");
+                // VELOCE_SKIP_PSK=1 disables PSK auth in development.
+                // It is silently ignored when the server runs as SYSTEM (S-1-5-18)
+                // to prevent accidental exposure in production service deployments.
+                const SYSTEM_SID: &str = "S-1-5-18";
+                let skip_psk = if std::env::var("VELOCE_SKIP_PSK").as_deref() == Ok("1") {
+                    if self.server_sid == SYSTEM_SID {
+                        tracing::error!(
+                            "VELOCE_SKIP_PSK=1 is IGNORED — \
+                             PSK auth is mandatory when running as SYSTEM"
+                        );
+                        false
+                    } else {
+                        tracing::error!(
+                            exe = %self.exe_path,
+                            "VELOCE_SKIP_PSK=1 active — \
+                             PSK authentication DISABLED (dev mode only)"
+                        );
+                        true
+                    }
+                } else {
+                    false
+                };
                 if !skip_psk {
                     let ok = match hs.psk_hash {
                         Some(received) => received == *self.state.psk(),
@@ -193,22 +240,33 @@ where
                     }
                 }
 
+                // Server computes the maximum allowed capabilities from the
+                // kernel-verified exe path.  The client's declared request is
+                // intersected with this set — clients can still ask for less.
+                let max_caps = self.state.policy.compute_max_caps(&self.exe_path);
+                let granted: Vec<Capability> = hs.capabilities.iter()
+                    .filter(|c| max_caps.contains(c))
+                    .cloned()
+                    .collect();
+
                 let client_id = Uuid::new_v4();
                 self.client_id    = Some(client_id);
-                self.app_name     = hs.app_name.clone();
-                self.capabilities = hs.capabilities.clone();
+                self.app_name     = hs.app_name.clone();  // display/logging only
+                self.capabilities = granted.clone();
 
                 tracing::info!(
-                    app = %hs.app_name,
+                    exe  = %self.exe_path,
+                    app  = %hs.app_name,
                     sdk_version = %hs.sdk_version,
                     %client_id,
+                    ?granted,
                     "client handshake accepted"
                 );
 
                 self.send_reply(cid, HandshakeAck(HandshakeAckMsg {
                     client_id,
                     core_version:    env!("CARGO_PKG_VERSION").into(),
-                    granted:         hs.capabilities,
+                    granted,
                     core_started_at: chrono::Utc::now(),
                 })).await?;
             }
@@ -221,10 +279,6 @@ where
             // ── Node management ────────────────────────────────────────────
             SpawnNode(msg) => {
                 self.require_cap(Capability::SpawnNodes)?;
-                if !self.state.policy.check_capability(&self.app_name, "SpawnNodes") {
-                    return self.send_error(Some(cid), ErrorCode::PolicyDenied,
-                        format!("policy denies SpawnNodes for app '{}'", self.app_name)).await;
-                }
                 let node_id = Uuid::new_v4();
 
                 // Allocate registry slot
@@ -255,10 +309,6 @@ where
 
             KillNode(msg) => {
                 self.require_cap(Capability::KillNodes)?;
-                if !self.state.policy.check_capability(&self.app_name, "KillNodes") {
-                    return self.send_error(Some(cid), ErrorCode::PolicyDenied,
-                        format!("policy denies KillNodes for app '{}'", self.app_name)).await;
-                }
                 let handle = self.state.node_table().remove(msg.node_id);
                 match handle {
                     None => self.send_error(Some(cid), ErrorCode::NotFound,
@@ -315,10 +365,6 @@ where
             // ── VeloceNet ──────────────────────────────────────────────────
             NetRegisterHost(msg) => {
                 self.require_cap(Capability::NetRegister)?;
-                if !self.state.policy.check_capability(&self.app_name, "NetRegister") {
-                    return self.send_error(Some(cid), ErrorCode::PolicyDenied,
-                        format!("policy denies NetRegister for app '{}'", self.app_name)).await;
-                }
                 self.state.net_registry().register(
                     msg.hostname.clone(), msg.node_id, msg.local_port, msg.ttl_secs,
                 );

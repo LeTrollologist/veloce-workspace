@@ -49,8 +49,16 @@ pub struct PolicyConfig {
 /// Per-app capability RBAC rule.
 #[derive(Deserialize, Clone)]
 pub struct PolicyRule {
-    /// App name to match.  `"*"` matches any app.
-    pub app:   String,
+    /// Verified executable path pattern — matched against the kernel-resolved
+    /// Win32 image path of the connecting process.  Takes precedence over `app`
+    /// when present.  Supports `"*"` (any exe), exact basename (`"veloce-run.exe"`),
+    /// or full path globs (`"*.exe"`).
+    #[serde(default)]
+    pub exe:   Option<String>,
+    /// Legacy app-name pattern matched against the client-declared name (unverified).
+    /// Ignored when `exe` is present.  Kept for backward compatibility.
+    #[serde(default)]
+    pub app:   Option<String>,
     /// Capabilities explicitly allowed (whitelist).
     pub allow: Option<Vec<String>>,
     /// Capabilities explicitly denied (blacklist).
@@ -98,14 +106,26 @@ impl PolicyEngine {
         Ok(())
     }
 
-    /// Check whether `app` is allowed to use capability `cap`.
+    /// Check whether the process at `exe_path` is allowed to use capability `cap`.
     ///
-    /// Iterates rules in order; first match wins.  If no rule matches, the
-    /// `default_effect` decides.
-    pub fn check_capability(&self, app: &str, cap: &str) -> bool {
+    /// `exe_path` must be the kernel-verified Win32 image path — never a
+    /// client-declared string.  Iterates rules in order; first match wins.
+    /// Rules with an `exe` field are matched against the full path and its
+    /// basename; rules with only an `app` field use the legacy glob match.
+    pub fn check_capability(&self, exe_path: &str, cap: &str) -> bool {
         let cfg = self.config.read();
         for rule in &cfg.rules {
-            if !glob_match(&rule.app, app) { continue; }
+            let (pattern, verified) = match (&rule.exe, &rule.app) {
+                (Some(e), _) => (e.as_str(), true),
+                (None, Some(a)) => (a.as_str(), false),
+                (None, None) => continue,
+            };
+            let matched = if verified {
+                exe_glob_match(pattern, exe_path)
+            } else {
+                glob_match(pattern, exe_path)
+            };
+            if !matched { continue; }
             if let Some(allow) = &rule.allow {
                 return allow.iter().any(|c| c.eq_ignore_ascii_case(cap));
             }
@@ -115,6 +135,53 @@ impl PolicyEngine {
             // Rule matched but has neither allow nor deny — treat as allow
         }
         cfg.default_effect.eq_ignore_ascii_case("allow")
+    }
+
+    /// Compute the full set of capabilities this executable is permitted to hold.
+    ///
+    /// Called once at handshake time; the result is intersected with the
+    /// client's declared request so clients can still ask for a subset.
+    /// `exe_path` must be the kernel-verified Win32 image path.
+    pub fn compute_max_caps(&self, exe_path: &str) -> Vec<veloce_ipc::message::Capability> {
+        use veloce_ipc::message::Capability::*;
+        const ALL: &[veloce_ipc::message::Capability] =
+            &[SpawnNodes, KillNodes, RegistryRead, RegistryWrite, NetRegister, NetResolve];
+
+        let cfg = self.config.read();
+        for rule in &cfg.rules {
+            let (pattern, verified) = match (&rule.exe, &rule.app) {
+                (Some(e), _) => (e.as_str(), true),
+                (None, Some(a)) => (a.as_str(), false),
+                (None, None) => continue,
+            };
+            let matched = if verified {
+                exe_glob_match(pattern, exe_path)
+            } else {
+                glob_match(pattern, exe_path)
+            };
+            if !matched { continue; }
+
+            if let Some(allow) = &rule.allow {
+                return ALL.iter()
+                    .filter(|c| allow.iter().any(|a| a.eq_ignore_ascii_case(&format!("{c:?}"))))
+                    .cloned()
+                    .collect();
+            }
+            if let Some(deny) = &rule.deny {
+                return ALL.iter()
+                    .filter(|c| !deny.iter().any(|d| d.eq_ignore_ascii_case(&format!("{c:?}"))))
+                    .cloned()
+                    .collect();
+            }
+            // Rule matched with neither allow nor deny → full grant.
+            return ALL.to_vec();
+        }
+        // No rule matched — apply default effect.
+        if cfg.default_effect.eq_ignore_ascii_case("allow") {
+            ALL.to_vec()
+        } else {
+            vec![]
+        }
     }
 
     /// Check whether a gossip entry (`hostname`, from `peer`) is allowed through
@@ -137,7 +204,8 @@ impl PolicyEngine {
         PolicyRulesMsg {
             default_effect: cfg.default_effect.clone(),
             rules: cfg.rules.iter().map(|r| PolicyRuleMsg {
-                app:   r.app.clone(),
+                exe:   r.exe.clone(),
+                app:   r.app.clone().unwrap_or_default(),
                 allow: r.allow.clone(),
                 deny:  r.deny.clone(),
             }).collect(),
@@ -156,6 +224,16 @@ fn load_config(path: &PathBuf) -> anyhow::Result<PolicyConfig> {
     let content = std::fs::read_to_string(path)?;
     let cfg: PolicyConfig = toml::from_str(&content)?;
     Ok(cfg)
+}
+
+/// Match a policy `exe` pattern against a full Win32 image path.
+///
+/// Tries the full path first, then falls back to the basename component so
+/// that `"veloce-run.exe"` matches `"C:\...\veloce-run.exe"`.
+fn exe_glob_match(pattern: &str, exe_path: &str) -> bool {
+    if glob_match(pattern, exe_path) { return true; }
+    let name = exe_path.rsplit(['\\', '/']).next().unwrap_or(exe_path);
+    glob_match(pattern, name)
 }
 
 /// Simple glob matching supporting `"*"` (match any) and `"*.suffix"`.
@@ -223,6 +301,46 @@ mod tests {
         "#);
         assert!( e.check_capability("any-app", "RegistryRead"));
         assert!(!e.check_capability("any-app", "SpawnNodes"));
+    }
+
+    #[test]
+    fn exe_rule_blocks_spawn_by_basename() {
+        let e = engine_from_toml(r#"
+            default_effect = "deny"
+            [[rules]]
+            exe   = "untrusted-agent.exe"
+            allow = ["RegistryRead"]
+        "#);
+        // Full path — basename matches
+        assert!( e.check_capability(r"C:\Apps\untrusted-agent.exe", "RegistryRead"));
+        assert!(!e.check_capability(r"C:\Apps\untrusted-agent.exe", "SpawnNodes"));
+        // Different exe — no rule matches, default = deny
+        assert!(!e.check_capability(r"C:\Apps\trusted-tool.exe", "SpawnNodes"));
+    }
+
+    #[test]
+    fn compute_max_caps_deny_rule() {
+        use veloce_ipc::message::Capability::*;
+        let e = engine_from_toml(r#"
+            [[rules]]
+            exe  = "restricted.exe"
+            deny = ["SpawnNodes", "KillNodes"]
+        "#);
+        let caps = e.compute_max_caps(r"C:\bin\restricted.exe");
+        assert!(!caps.contains(&SpawnNodes));
+        assert!(!caps.contains(&KillNodes));
+        assert!( caps.contains(&RegistryRead));
+        assert!( caps.contains(&RegistryWrite));
+    }
+
+    #[test]
+    fn compute_max_caps_default_deny() {
+        use veloce_ipc::message::Capability::*;
+        let e = engine_from_toml(r#"
+            default_effect = "deny"
+        "#);
+        let caps = e.compute_max_caps(r"C:\bin\any.exe");
+        assert!(caps.is_empty(), "default-deny with no rules should grant nothing");
     }
 
     #[test]
