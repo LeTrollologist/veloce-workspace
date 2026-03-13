@@ -361,6 +361,10 @@ pub enum Capability {
     RegistryWrite,
     NetRegister,
     NetResolve,
+    /// Connect/disconnect mesh peers and manage the P2P overlay.
+    MeshManage,
+    /// Hot-reload the policy file from disk.
+    PolicyAdmin,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

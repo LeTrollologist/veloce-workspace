@@ -214,6 +214,15 @@ impl PeerConnection {
                                 Err(e) => { tracing::warn!("noise decrypt: {e}"); break; }
                             }
                         };
+                        // Reject oversized plaintext before JSON parsing (N5).
+                        const MAX_PEER_MSG_BYTES: usize = 65_535;
+                        if plain.len() > MAX_PEER_MSG_BYTES {
+                            tracing::warn!(
+                                "peer {peer_id_r} sent oversized message ({} bytes) — dropping",
+                                plain.len()
+                            );
+                            continue;
+                        }
                         let msg: PeerMsg = match serde_json::from_slice(&plain) {
                             Ok(m) => m,
                             Err(e) => { tracing::warn!("peer {peer_id_r} msg decode: {e}"); continue; }
@@ -276,16 +285,50 @@ async fn handle_incoming(
             tracing::info!("peer {peer_id} identified as {machine_name} ({machine_id})");
         }
 
-        PeerMsg::RegistrySync { entries } => {
-            // Apply mesh ACL: filter out entries the policy disallows.
+        PeerMsg::RegistrySync { mut entries } => {
+            // Hard cap: never process more than 1 000 gossip entries per message (N5).
+            entries.truncate(1_000);
+
+            // Clock-skew guard: reject entries with timestamps more than 5 minutes in
+            // the future or more than 24 hours in the past (N4).
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            const SKEW_FUTURE_SECS: u64 = 300;   // 5 minutes
+            const SKEW_PAST_SECS:   u64 = 86_400; // 24 hours
+
             let entries: Vec<_> = entries
                 .into_iter()
+                .filter(|e| {
+                    if e.ts > now + SKEW_FUTURE_SECS {
+                        tracing::warn!(
+                            hostname = %e.hostname,
+                            entry_ts  = e.ts,
+                            local_now = now,
+                            "gossip entry timestamp too far in the future — discarding"
+                        );
+                        return false;
+                    }
+                    if e.ts + SKEW_PAST_SECS < now {
+                        tracing::warn!(
+                            hostname = %e.hostname,
+                            entry_ts  = e.ts,
+                            local_now = now,
+                            "gossip entry timestamp too far in the past — discarding"
+                        );
+                        return false;
+                    }
+                    true
+                })
+                // Apply mesh ACL: filter out entries the policy disallows.
                 .filter(|e| {
                     acl_fn.as_ref().map(|f| f(&e.hostname, peer_name)).unwrap_or(true)
                 })
                 .collect();
+
             tracing::debug!(
-                "peer {peer_id} gossiped {} entries (after ACL filter)",
+                "peer {peer_id} gossiped {} entries (after clock + ACL filter)",
                 entries.len()
             );
             let mut hosts = remote_hosts.write().await;

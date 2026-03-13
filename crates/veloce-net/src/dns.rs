@@ -81,10 +81,17 @@ async fn handle_query(
     Ok(())
 }
 
-/// Forward query to system resolver (8.8.8.8:53 as fallback if no system resolver found).
+/// Forward query to system resolver (1.1.1.1:53 as fallback if no system resolver found).
 async fn forward_query(packet: &[u8], from: SocketAddr, sock: &UdpSocket) -> Result<()> {
-    let upstream = get_system_resolver().unwrap_or_else(|| "8.8.8.8:53".parse().unwrap());
-    let fwd = UdpSocket::bind("0.0.0.0:0").await?;
+    // Capture the transaction ID from the original query for response validation.
+    if packet.len() < 2 {
+        anyhow::bail!("DNS query too short to extract transaction ID");
+    }
+    let txn_id = [packet[0], packet[1]];
+
+    let upstream = get_system_resolver().unwrap_or_else(|| "1.1.1.1:53".parse().unwrap());
+    // Bind to loopback-only so the ephemeral port is not reachable from the LAN.
+    let fwd = UdpSocket::bind("127.0.0.1:0").await?;
     fwd.send_to(packet, upstream).await?;
 
     let mut resp_buf = vec![0u8; 512];
@@ -96,6 +103,10 @@ async fn forward_query(packet: &[u8], from: SocketAddr, sock: &UdpSocket) -> Res
     // Reject responses that don't come from the upstream we queried.
     if src != upstream {
         anyhow::bail!("DNS upstream response from unexpected source {src} (expected {upstream})");
+    }
+    // Reject responses whose transaction ID doesn't match the request (N3).
+    if n < 2 || resp_buf[0] != txn_id[0] || resp_buf[1] != txn_id[1] {
+        anyhow::bail!("DNS response transaction ID mismatch");
     }
 
     sock.send_to(&resp_buf[..n], from).await?;
@@ -148,7 +159,9 @@ impl DnsMessage {
             anyhow::bail!("DNS message too short");
         }
         let id        = u16::from_be_bytes([buf[0], buf[1]]);
-        let qdcount   = u16::from_be_bytes([buf[4], buf[5]]) as usize;
+        // Cap qdcount before allocation — standard DNS uses exactly 1 question;
+        // no legitimate client sends more than a handful (N6).
+        let qdcount   = (u16::from_be_bytes([buf[4], buf[5]]) as usize).min(5);
 
         let mut pos = 12usize;
         let mut questions = Vec::with_capacity(qdcount);

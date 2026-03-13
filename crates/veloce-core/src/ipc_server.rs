@@ -375,6 +375,7 @@ where
             }
 
             NetUnregisterHost { hostname } => {
+                self.require_cap(Capability::NetRegister)?;
                 self.state.net_registry().unregister(&hostname);
                 self.send_reply(cid, Body::Pong).await?; // ack
             }
@@ -460,6 +461,7 @@ where
             }
 
             Body::MeshConnect(MeshConnectMsg { join_code }) => {
+                self.require_cap(Capability::MeshManage)?;
                 let mesh = self.state.mesh.as_ref()
                     .ok_or_else(|| anyhow::anyhow!("mesh not initialised"))?;
                 match mesh.connect_to_peer(&join_code).await {
@@ -477,6 +479,7 @@ where
             }
 
             Body::MeshDisconnect(MeshDisconnectMsg { peer_id }) => {
+                self.require_cap(Capability::MeshManage)?;
                 if let Some(mesh) = &self.state.mesh {
                     if let Err(e) = mesh.disconnect(peer_id).await {
                         self.send_error(Some(cid), ErrorCode::NotFound,
@@ -494,6 +497,7 @@ where
             }
 
             Body::PolicyReload => {
+                self.require_cap(Capability::PolicyAdmin)?;
                 match self.state.policy.reload() {
                     Ok(()) => {
                         let msg = self.state.policy.to_msg();
