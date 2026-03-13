@@ -106,37 +106,6 @@ impl PolicyEngine {
         Ok(())
     }
 
-    /// Check whether the process at `exe_path` is allowed to use capability `cap`.
-    ///
-    /// `exe_path` must be the kernel-verified Win32 image path — never a
-    /// client-declared string.  Iterates rules in order; first match wins.
-    /// Rules with an `exe` field are matched against the full path and its
-    /// basename; rules with only an `app` field use the legacy glob match.
-    pub fn check_capability(&self, exe_path: &str, cap: &str) -> bool {
-        let cfg = self.config.read();
-        for rule in &cfg.rules {
-            let (pattern, verified) = match (&rule.exe, &rule.app) {
-                (Some(e), _) => (e.as_str(), true),
-                (None, Some(a)) => (a.as_str(), false),
-                (None, None) => continue,
-            };
-            let matched = if verified {
-                exe_glob_match(pattern, exe_path)
-            } else {
-                glob_match(pattern, exe_path)
-            };
-            if !matched { continue; }
-            if let Some(allow) = &rule.allow {
-                return allow.iter().any(|c| c.eq_ignore_ascii_case(cap));
-            }
-            if let Some(deny) = &rule.deny {
-                return !deny.iter().any(|c| c.eq_ignore_ascii_case(cap));
-            }
-            // Rule matched but has neither allow nor deny — treat as allow
-        }
-        cfg.default_effect.eq_ignore_ascii_case("allow")
-    }
-
     /// Compute the full set of capabilities this executable is permitted to hold.
     ///
     /// Called once at handshake time; the result is intersected with the
@@ -145,7 +114,8 @@ impl PolicyEngine {
     pub fn compute_max_caps(&self, exe_path: &str) -> Vec<veloce_ipc::message::Capability> {
         use veloce_ipc::message::Capability::*;
         const ALL: &[veloce_ipc::message::Capability] =
-            &[SpawnNodes, KillNodes, RegistryRead, RegistryWrite, NetRegister, NetResolve];
+            &[SpawnNodes, KillNodes, RegistryRead, RegistryWrite, NetRegister, NetResolve,
+              MeshManage, PolicyAdmin];
 
         let cfg = self.config.read();
         for rule in &cfg.rules {

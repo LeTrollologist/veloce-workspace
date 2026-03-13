@@ -5,7 +5,6 @@
 //! writer task; the application interacts with it through an mpsc channel.
 
 use std::{
-    net::SocketAddr,
     sync::{
         atomic::{AtomicU32, AtomicU64, Ordering},
         Arc,
@@ -13,7 +12,6 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use snow::TransportState;
 use tokio::{
@@ -27,7 +25,6 @@ use veloce_ipc::message::PeerInfoMsg;
 use veloce_net::registry::NetRegistry;
 
 use crate::forward;
-use crate::noise;
 
 /// Callback type used for mesh gossip ACL filtering.
 ///
@@ -323,7 +320,15 @@ async fn handle_incoming(
                 })
                 // Apply mesh ACL: filter out entries the policy disallows.
                 .filter(|e| {
-                    acl_fn.as_ref().map(|f| f(&e.hostname, peer_name)).unwrap_or(true)
+                    let allowed = acl_fn.as_ref().map(|f| f(&e.hostname, peer_name)).unwrap_or(true);
+                    if !allowed {
+                        tracing::warn!(
+                            hostname = %e.hostname,
+                            peer = %peer_name,
+                            "gossip entry rejected by mesh ACL policy"
+                        );
+                    }
+                    allowed
                 })
                 .collect();
 
@@ -340,7 +345,7 @@ async fn handle_incoming(
                         *ex = entry.clone();
                         // Update the local forwarder for this host.
                         if let Err(e) = forward::refresh_forwarder(
-                            &entry.hostname, entry.port, peer_id, net_registry
+                            &entry.hostname, entry.port, peer_id, net_registry, reply_tx.clone()
                         ).await {
                             tracing::warn!("forwarder refresh for {}: {e}", entry.hostname);
                         }
@@ -348,7 +353,7 @@ async fn handle_incoming(
                 } else {
                     hosts.push(entry.clone());
                     if let Err(e) = forward::refresh_forwarder(
-                        &entry.hostname, entry.port, peer_id, net_registry
+                        &entry.hostname, entry.port, peer_id, net_registry, reply_tx.clone()
                     ).await {
                         tracing::warn!("forwarder create for {}: {e}", entry.hostname);
                     }
@@ -364,7 +369,16 @@ async fn handle_incoming(
             latency.store(round_trip_us / 1000, Ordering::Relaxed);
         }
 
-        // Proxy messages handled by forward.rs tasks — ignored here.
-        PeerMsg::ProxyOpen { .. } | PeerMsg::ProxyData { .. } | PeerMsg::ProxyClose { .. } => {}
+        PeerMsg::ProxyOpen { stream_id, hostname } => {
+            forward::handle_proxy_open(stream_id, &hostname, net_registry, reply_tx).await;
+        }
+
+        PeerMsg::ProxyData { stream_id, data } => {
+            forward::on_proxy_data(stream_id, data).await;
+        }
+
+        PeerMsg::ProxyClose { stream_id } => {
+            forward::on_proxy_close(stream_id).await;
+        }
     }
 }

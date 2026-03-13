@@ -33,7 +33,7 @@ use veloce_ipc::{
 use crate::{
     job,
     pipe_security,
-    state::{CoreState, NodeSummary},
+    state::CoreState,
 };
 
 // ── SERVER ENTRY POINT ────────────────────────────────────────────────────────
@@ -110,6 +110,9 @@ struct ClientSession<R, W> {
     push_tx:      mpsc::Sender<Vec<u8>>,
     /// Receiver half — drained by the select! loop in `run()`.
     push_rx:      mpsc::Receiver<Vec<u8>>,
+    /// Node IDs spawned with `auto_kill = true` by this session.
+    /// On session exit these nodes are terminated automatically.
+    auto_kill_nodes: Vec<Uuid>,
 }
 
 impl<R, W> ClientSession<R, W>
@@ -131,10 +134,35 @@ where
             read_buf:     BytesMut::with_capacity(16 * 1024),
             push_tx,
             push_rx,
+            auto_kill_nodes: vec![],
         }
     }
 
     async fn run(&mut self) -> Result<()> {
+        let result = self.run_impl().await;
+        self.cleanup_auto_kill().await;
+        result
+    }
+
+    async fn cleanup_auto_kill(&mut self) {
+        for node_id in std::mem::take(&mut self.auto_kill_nodes) {
+            let handle = self.state.node_table().remove(node_id);
+            if let Some(h) = handle {
+                let slot = h.slot_idx;
+                if let Err(e) = job::terminate_node(&h, 1) {
+                    tracing::warn!(%node_id, "auto-kill terminate error: {e}");
+                }
+                let _ = self.state.registry().set_node_status(
+                    slot,
+                    crate::registry::NodeStatus::Stopped,
+                    1,
+                );
+                tracing::info!(app = %self.app_name, %node_id, "auto-killed node on client disconnect");
+            }
+        }
+    }
+
+    async fn run_impl(&mut self) -> Result<()> {
         let mut buf = [0u8; 8192];
         loop {
             tokio::select! {
@@ -296,6 +324,10 @@ where
                 let event_tx  = handle.event_tx.clone();
 
                 self.state.registry().set_node_pid(slot, pid)?;
+                // Track nodes with auto_kill for cleanup on session exit.
+                if msg.auto_kill {
+                    self.auto_kill_nodes.push(node_id);
+                }
                 self.state.node_table().insert(handle);
 
                 let spawned_at = chrono::Utc::now();
@@ -310,6 +342,8 @@ where
             KillNode(msg) => {
                 self.require_cap(Capability::KillNodes)?;
                 let handle = self.state.node_table().remove(msg.node_id);
+                // Remove from auto-kill list so we don't double-terminate.
+                self.auto_kill_nodes.retain(|&id| id != msg.node_id);
                 match handle {
                     None => self.send_error(Some(cid), ErrorCode::NotFound,
                         format!("node {} not found", msg.node_id)).await?,
@@ -331,16 +365,22 @@ where
             }
 
             QueryNodes => {
-                let nodes: Vec<NodeInfo> = self.state.node_table()
-                    .list_live()
+                let nodes: Vec<NodeInfo> = self.state.registry()
+                    .list_nodes()
                     .into_iter()
-                    .map(|s| NodeInfo {
-                        node_id:    s.node_id,
-                        app_name:   s.app_name,
-                        pid:        s.pid,
-                        status:     IpcNodeStatus::Running,
+                    .map(|e| NodeInfo {
+                        node_id:    e.node_id,
+                        app_name:   e.app_name,
+                        pid:        e.pid,
+                        status:     match e.status {
+                            crate::registry::NodeStatus::Running  => IpcNodeStatus::Running,
+                            crate::registry::NodeStatus::Stopping => IpcNodeStatus::Stopping,
+                            crate::registry::NodeStatus::Stopped  => IpcNodeStatus::Stopped,
+                            crate::registry::NodeStatus::Crashed  => IpcNodeStatus::Crashed { exit_code: e.exit_code },
+                            crate::registry::NodeStatus::Empty    => IpcNodeStatus::Running,
+                        },
                         spawned_at: chrono::Utc::now(),
-                        node_pipe:  s.pipe_path,
+                        node_pipe:  e.pipe_path,
                     })
                     .collect();
                 self.send_reply(cid, NodeList(NodeListMsg { nodes })).await?;
@@ -500,6 +540,21 @@ where
                 self.require_cap(Capability::PolicyAdmin)?;
                 match self.state.policy.reload() {
                     Ok(()) => {
+                        // Re-evaluate this session's capabilities under the new policy.
+                        // Capabilities can only shrink (intersection with new max_caps).
+                        // Other active sessions will be re-evaluated on their next
+                        // require_cap call if the policy changes; they should reconnect
+                        // to receive an expanded grant.
+                        let max_caps = self.state.policy.compute_max_caps(&self.exe_path);
+                        self.capabilities = self.capabilities.iter()
+                            .filter(|c| max_caps.contains(c))
+                            .cloned()
+                            .collect();
+                        tracing::info!(
+                            app = %self.app_name,
+                            caps = ?self.capabilities,
+                            "session capabilities re-evaluated after policy reload"
+                        );
                         let msg = self.state.policy.to_msg();
                         self.send_reply(cid, Body::PolicyRulesResult(msg)).await?;
                     }
