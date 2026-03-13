@@ -14,7 +14,11 @@ With v0.5, the mesh reaches across NAT and the internet automatically: STUN disc
 
 With v0.6, the dashboard is rebuilt from scratch in **Svelte 5** with raw **Canvas 2D** rendering. Every Noise tunnel and every `.vln` hostname is now instrumented with live byte counters; the dashboard visualises traffic as an interactive drag-and-drop topology, a 60-cell heatmap per peer, and inline sparklines per node row.
 
-With v0.7, the first of three structured security audits lands: nine findings (two critical, three high, three medium) are remediated across IPC, DNS, mesh, and SOCKS5 — no new features, all hardening. v0.8 and v0.9 continue the audit cycle; v1.0 introduces the WireGuard-NT kernel driver.
+With v0.7, the first of three structured security audits lands: nine findings (two critical, three high, three medium) are remediated across IPC, DNS, mesh, and SOCKS5 — no new features, all hardening.
+
+With v0.8, the second audit closes seven more findings: missing capability checks on four IPC handlers, a command-line argument injection in the node spawner, DNS transaction-ID spoofing, gossip timestamp manipulation, peer message size exhaustion, DNS allocation amplification, and a DNS forward socket interface leak.
+
+With v0.9, the third and final pre-1.0 audit lands alongside a set of mesh improvements: **VM3 join codes** with per-code TTL and one-time-use enforcement; **gossip ownership tracking** that prevents a peer from quietly overwriting hostnames it did not originate; a **periodic gossip re-sync ticker** (60 s) for resilience after transient disconnects; and three new `veloce-run mesh` diagnostic subcommands (`status`, `diagnose`, `ping`). The platform is now audited, hardened, and feature-complete ahead of v1.0.
 
 Think of it as a stripped-down version of Kubernetes Service Mesh ideas, designed for desktop environments, developer tooling, and lightweight commercial applications rather than cloud infrastructure.
 
@@ -106,7 +110,14 @@ Think of it as a stripped-down version of Kubernetes Service Mesh ideas, designe
 - Zero-friction wrapper: `veloce-run -- myapp.exe` registers the process as a mesh node instantly
 - Full flag set: `--name`, `--hostname`, `--port`, `--cpu`, `--mem`, `--restarts`, `--watch`, `--detach`
 - `--watch` streams live stdout/stderr to the terminal; `--detach` prints the node ID and exits
-- `mesh` subcommand group for P2P mesh management (see Multi-Machine section below)
+- `mesh` subcommand group for P2P mesh management:
+  - `mesh identity [--ttl <mins>] [--one-time]` — print join code (VM2 or VM3)
+  - `mesh join <code>` — connect to a peer via join code
+  - `mesh peers` — list connected peers
+  - `mesh leave <peer-id>` — disconnect a peer
+  - `mesh status` — connected peers with latency and remote host count
+  - `mesh diagnose` — connectivity health report (listen port, WAN address, peer states)
+  - `mesh ping <peer-id>` — measure round-trip latency to a peer
 
 ### Multi-Machine VeloceNet (v0.4+)
 - Two machines share a **join code** (one command each) to establish an encrypted P2P tunnel
@@ -116,6 +127,7 @@ Think of it as a stripped-down version of Kubernetes Service Mesh ideas, designe
 - Transparent TCP forwarder: traffic to a remote `.vln` host is silently tunnelled through the Noise channel
 - Peer identities derived from x25519 static keys; persisted across restarts as `veloce-identity.key`
 - **v0.5 — STUN WAN Mesh**: at startup, VeloceCore probes a STUN server to discover the machine's external IP; the join code is upgraded to **VM2** format (dual LAN + WAN addresses); `connect_to_peer()` races all addresses with a 250 ms stagger so NAT traversal is automatic
+- **v0.9 — VM3 Join Codes**: the `--ttl <minutes>` flag issues a code that expires automatically; `--one-time` issues a code that is invalidated after the first successful use — one-time nonces are tracked in a replay blacklist on the receiving side
 
 ### Policy Engine (v0.5+)
 - Declarative **TOML policy file** (`veloce-policy.toml`) — absent = allow-all, fully backward compatible
@@ -148,6 +160,20 @@ Think of it as a stripped-down version of Kubernetes Service Mesh ideas, designe
 - **SOCKS5 VLN-only scope** (M1): the SOCKS5 proxy rejects `CONNECT` requests to any destination outside `.vln` / `.veloce` with `REP_UNREACHABLE`.
 - **Registry size validation** (M2): oversized registry keys and values return `InvalidMessage` to the client instead of panicking the service.
 - **`VELOCE_SKIP_PSK` production guard** (M3): `VELOCE_SKIP_PSK=1` is silently ignored and logged at `error` level when the service runs as the SYSTEM account (`S-1-5-18`).
+
+#### Security Audit 2 — v0.8 (7 findings remediated)
+- **Missing IPC capability checks** (N1): `NetUnregisterHost`, `MeshConnect`, `MeshDisconnect`, and `PolicyReload` were open to any authenticated client. Two new capability variants (`MeshManage`, `PolicyAdmin`) were added; all four handlers now call `require_cap`.
+- **Command-line argument injection** (N2): `quote_arg` did not escape trailing backslashes per MSVC `CommandLineToArgvW` rules. A node path ending in `\` could inject extra arguments into the spawned process command line.
+- **DNS transaction-ID spoofing** (N3): `forward_query` now validates that the upstream DNS response transaction ID matches the outgoing query before forwarding, preventing local cache poisoning.
+- **Gossip LWW timestamp manipulation** (N4): peer-supplied gossip timestamps are validated against the local clock (±5 minute window). A peer setting `ts = u64::MAX` can no longer permanently win all future LWW comparisons and hijack any `.vln` hostname.
+- **Peer JSON message size cap** (N5): a `MAX_PEER_MSG_BYTES` guard is checked before `serde_json::from_slice`; `RegistrySync` entry lists are truncated to 1,000 entries per message.
+- **DNS `qdcount` allocation amplification** (N6): `Vec::with_capacity(qdcount)` is capped at 5, preventing repeated large heap allocations from crafted local DNS packets.
+- **DNS forward socket interface leak** (N7): the ephemeral UDP socket used for upstream forwarding is now bound to `127.0.0.1:0` instead of `0.0.0.0:0`.
+
+#### Security Audit 3 + Mesh Hardening — v0.9
+- **VM3 join codes with TTL and one-time enforcement** (S1): join codes carry a creation timestamp, a TTL in minutes, and a one-time-use bit. Expired codes are rejected at connect time; one-time nonces are recorded in a `HashSet` blacklist — replay attempts are rejected even if the code is still within its TTL window.
+- **Gossip ownership tracking** (S2): `MeshState` maintains a per-hostname origin map. If a peer tries to gossip a hostname it did not originally register, the entry is discarded and logged at `warn` level, preventing silent hostname squatting by a connected peer.
+- **Periodic gossip re-sync** (O1): every 60 seconds each `PeerConnection` re-broadcasts its full local `NetRegistry` to its peer, ensuring hostname state converges automatically after transient failures without waiting for the next organic gossip event.
 
 ### Dashboard (v0.6)
 - Tauri 2 desktop app (Windows, ships as a lightweight installer) — rebuilt in **Svelte 5** with **Canvas 2D** (zero new runtime JS dependencies)
@@ -204,10 +230,11 @@ Think of it as a stripped-down version of Kubernetes Service Mesh ideas, designe
 | Dashboard v2 (Svelte 5 + Canvas 2D; topology, heatmap, sparklines) | ✅ v0.6 |
 | Backend traffic instrumentation (per-tunnel + per-host byte counters) | ✅ v0.6 |
 | **Security Audit 1 of 3** — IPC hardening, mesh hardening, DNS/SOCKS5 scope restriction | ✅ v0.7 |
-| **Security Audit 2 of 3** — second structured audit cycle | 🔨 v0.8 |
-| **Security Audit 3 of 3** — final pre-1.0 audit; optimisation & profiling | 📋 v0.9 |
+| **Security Audit 2 of 3** — IPC capability enforcement, arg injection fix, DNS/gossip hardening | ✅ v0.8 |
+| **Security Audit 3 of 3** — VM3 join codes, gossip ownership, re-sync, mesh diagnostic CLI | ✅ v0.9 |
 | WireGuard-NT kernel driver (perf upgrade) | 📋 v1.0 |
-| Signed installer with auto-update | 📋 v1.0 |
+| NRPT `.vln` routing (system-wide DNS without `VELOCE_DNS`) | 📋 v1.0 |
+| Signed installer with auto-update (winget/scoop) | 📋 v1.0 |
 | Linux port (cgroups v2 + Unix sockets) | 📋 v2.0 |
 | Python / Node.js / Go SDK bindings | 📋 v2.0 |
 
@@ -226,27 +253,49 @@ Nine findings were identified and resolved:
 - **M2** — Registry oversized-input panics converted to graceful `InvalidMessage` errors
 - **M3** — `VELOCE_SKIP_PSK=1` blocked when service runs as SYSTEM account
 
-### v0.8 — Security Audit 2 of 3
+### v0.8 — Security Audit 2 of 3 ✅
 
-v0.8 is the second structured security audit of the codebase. The audit scope will be
-determined after the findings from v0.7 are reviewed. Areas under consideration include:
-mesh gossip integrity, Noise transport-mode replay window, SOCKS5 authentication options,
-dashboard Tauri IPC surface, and installer privilege handling.
+v0.8 is the second structured security audit. Seven findings (N1–N7) identified and resolved:
 
-### v0.9 — Security Audit 3 of 3 + Optimisation
+- **N1** — Missing `require_cap` gates on `NetUnregisterHost`, `MeshConnect`, `MeshDisconnect`, `PolicyReload`; new `MeshManage` and `PolicyAdmin` capabilities added
+- **N2** — `quote_arg` now escapes trailing backslashes per MSVC `CommandLineToArgvW` spec — argument injection fixed
+- **N3** — `forward_query` validates DNS response transaction ID against the outgoing query
+- **N4** — Gossip LWW timestamps validated against local clock (±5 min skew window); future-dated entries discarded
+- **N5** — `MAX_PEER_MSG_BYTES` guard before JSON deserialization; `RegistrySync` entry list capped at 1,000
+- **N6** — `Vec::with_capacity(qdcount)` capped at 5 to prevent DNS allocation amplification
+- **N7** — DNS forward socket bound to `127.0.0.1:0` instead of `0.0.0.0:0`
 
-v0.9 is the final security audit before v1.0, combined with the performance and stability
-sprint:
+### v0.9 — Security Audit 3 of 3 + Mesh Improvements ✅
 
-- Third structured security audit — full-surface review incorporating lessons from audits 1 and 2
-- CPU and memory profiling under sustained load; hot paths optimised
-- IPC message throughput tuned (batch encoding, buffer sizing)
-- Mesh reconnect stability under network interruption
-- Dashboard canvas render loop profiled; overdraw eliminated
-- Documentation, inline comments, and API surface reviewed for completeness
+v0.9 is the third and final structured audit before v1.0, combined with targeted mesh
+improvements that close gaps identified during the audit cycle:
+
+- **VM3 join codes** — new join code format adds creation timestamp, TTL (minutes), and one-time-use flag; expired codes rejected; one-time nonces tracked in a replay blacklist
+- **Gossip ownership tracking** — each gossiped hostname is bound to the peer that first registered it; ownership conflicts are logged at `warn` and the new entry is discarded
+- **Periodic gossip re-sync** — every 60 s each peer re-broadcasts its full local `NetRegistry`, ensuring convergence after transient failures without waiting for organic gossip
+- **New `veloce-run mesh` subcommands** — `mesh status` (connected peers + latency), `mesh diagnose` (connectivity health report), `mesh ping <peer-id>` (latency round-trip)
+- **`MeshPingPeer` / `MeshPingResult` IPC messages** (0x58 / 0x59) — SDK-accessible ping round-trip for peer latency measurement
 
 After v0.9 ships stable, **v1.0** introduces the WireGuard-NT kernel driver for
 hardware-offloaded throughput and a signed installer with automatic update delivery.
+
+### Future Features — Deferred to v1.0 or Later
+
+The following items were evaluated and explicitly deferred. They are not in scope for any
+patch release prior to v1.0.
+
+| Item | Reason Deferred |
+|------|-----------------|
+| NRPT `.vln` routing (system-wide DNS) | Requires UAC elevation; scoped to installer track |
+| WireGuard-NT kernel driver | Major platform work, explicitly v1.0 |
+| Bincode frame versioning / migration | Requires protocol versioning framework; breaking change |
+| Dashboard force layout + minimap | Frontend-only; can ship independently |
+| `/metrics` Prometheus endpoint | New infra dependency; better as a separate crate |
+| Integration test suite (mesh recovery) | Build infra work; long tail |
+| `veloce-examples` repo + `veloce-compose.toml` | Documentation/tooling, not core |
+| C FFI / Python SDK improvements | SDK scope, separate track |
+| winget / scoop installer package | v1.0 release track |
+| `--perf-mode` raw socket bypass | Risky footgun; deferred until profiling confirms need |
 
 ---
 
@@ -303,12 +352,16 @@ veloce-run --watch -- ping -t 127.0.0.1
 ### Connect two machines via P2P mesh (v0.4+)
 
 ```powershell
-# Machine A — print the join code
+# Machine A — print the join code (VM2 by default; VM3 with TTL or one-time flag)
 veloce-run mesh identity
 # VM2:BBBB...==                       ← VM2 if internet available (LAN + WAN)
 # machine_id: xxxxxxxx-...
 # listening on port: 7474
 # wan: 203.0.113.45  (via stun.l.google.com)
+
+# Optionally issue a time-limited or one-time-use VM3 code
+veloce-run mesh identity --ttl 30              # expires in 30 minutes
+veloce-run mesh identity --ttl 60 --one-time   # single-use, expires in 1 hour
 
 # Machine B — connect using the join code from Machine A (works across NAT)
 veloce-run mesh join "VM2:BBBB...=="
@@ -316,6 +369,10 @@ veloce-run mesh join "VM2:BBBB...=="
 
 # Verify both sides see each other
 veloce-run mesh peers
+
+# Check latency and connection health
+veloce-run mesh status
+veloce-run mesh ping abc-123...
 
 # Machine A registers a service
 veloce-run --hostname api.vln --port 8080 --detach -- node server.js

@@ -29,30 +29,36 @@
 
 ## 3. Scope Definition
 
-### In Scope (v0.1 – v0.7)
+### In Scope (v0.1 – v0.9)
 
 | Component | Features shipped |
 |---|---|
-| **veloce-core** | Background Windows service, SID ACL + OsRng PSK, Job Objects (CPU/memory/lifetime), mmap registry, health-loop, AppContainer kernel sandbox, MeshState, mesh TCP server (:7474), PolicyEngine (TOML RBAC + mesh ACLs, hot-reload, kernel-verified `exe` field); `TrafficQuery` IPC handler; pre-auth state machine; server-authoritative capability grant; `VELOCE_SKIP_PSK` SYSTEM guard |
-| **veloce-net** | DNS :5354 for `*.vln`/`*.veloce` (localhost-bind, upstream validation); SOCKS5 :1055 (VLN-only scope); TTL GC; DNS compression DoS fix; `Arc<AtomicU64>` `bytes_proxied` per `NetRecord`; `NetRegistry::traffic_snapshot()` |
-| **veloce-ipc** | VELC framing, bincode encoding, message types 0x00–0x72 + `TrafficQuery (0x80)` / `TrafficStatsResult (0x81)`; `TunnelTrafficMsg`, `HostTrafficMsg`, `TrafficStatsMsg`; `PolicyRuleMsg.exe` optional field |
-| **veloce-sdk** | `VeloceClient` async Rust client, C FFI (`veloce_sdk.dll`), template methods, mesh methods, `policy_get_rules()`, `policy_reload()`, `query_traffic()` |
-| **veloce-mesh** | x25519 identity (Noise_IK_25519_ChaChaPoly_BLAKE2s), PeerConnection gossip (LWW CRDT), TCP forwarder, STUN WAN discovery, VM2 join codes, ACL callback; `Arc<AtomicU64>` `tx_bytes`/`rx_bytes` per `PeerConnection`; `MeshState::query_traffic_stats()`; 10-second handshake timeout |
+| **veloce-core** | Background Windows service, SID ACL + OsRng PSK, Job Objects (CPU/memory/lifetime), mmap registry, health-loop, AppContainer kernel sandbox, MeshState, mesh TCP server (:7474), PolicyEngine (TOML RBAC + mesh ACLs, hot-reload, kernel-verified `exe` field); `TrafficQuery` IPC handler; pre-auth state machine; server-authoritative capability grant; `VELOCE_SKIP_PSK` SYSTEM guard; `MeshManage`/`PolicyAdmin` capabilities; `require_cap` on all sensitive handlers; `quote_arg` backslash escaping |
+| **veloce-net** | DNS :5354 for `*.vln`/`*.veloce` (localhost-bind, upstream source + transaction-ID validation, `qdcount` cap); SOCKS5 :1055 (VLN-only scope); TTL GC; DNS compression DoS fix; `Arc<AtomicU64>` `bytes_proxied` per `NetRecord`; `NetRegistry::traffic_snapshot()`; DNS forward socket loopback-bound |
+| **veloce-ipc** | VELC framing, bincode encoding, message types 0x00–0x72 + `TrafficQuery (0x80)` / `TrafficStatsResult (0x81)` + `MeshPingPeer (0x58)` / `MeshPingResult (0x59)`; `TunnelTrafficMsg`, `HostTrafficMsg`, `TrafficStatsMsg`; `PolicyRuleMsg.exe` optional field |
+| **veloce-sdk** | `VeloceClient` async Rust client, C FFI (`veloce_sdk.dll`), template methods, mesh methods, `policy_get_rules()`, `policy_reload()`, `query_traffic()`, `mesh_ping_peer()` |
+| **veloce-mesh** | x25519 identity (Noise_IK_25519_ChaChaPoly_BLAKE2s), PeerConnection gossip (LWW CRDT + clock-skew guard + per-peer size cap + periodic re-sync), TCP forwarder, STUN WAN discovery, VM2 join codes, VM3 join codes (TTL + one-time nonce blacklist), gossip ownership tracking, ACL callback; `Arc<AtomicU64>` `tx_bytes`/`rx_bytes` + `Arc<AtomicU32>` `latency_ms` per `PeerConnection`; `MeshState::query_traffic_stats()`; 10-second handshake timeout |
 | **apps/dashboard** | Svelte 5 + Canvas 2D — nodes + sparklines + history graphs, templates, logs (search/filter/auto-scroll/5k-cap), VeloceNet + policy panel, topology canvas (drag-and-drop, heatmap, live traffic tables) |
 | **apps/installer** | Glassmorphic 5-step Tauri installer; service registration, PATH, registry |
-| **apps/veloce-run** | CLI launcher (`--name`, `--hostname`, `--cpu`, `--mem`, `--restarts`, `--watch`, `--detach`) + `mesh identity/join/peers/leave` + `policy show/reload` |
+| **apps/veloce-run** | CLI launcher (`--name`, `--hostname`, `--cpu`, `--mem`, `--restarts`, `--watch`, `--detach`) + `mesh identity/join/peers/leave/status/diagnose/ping` + `policy show/reload` |
 
-### Out of Scope (Future Releases)
+### Out of Scope — Deferred to v1.0 or Later
 
-| Feature | Target |
-|---|---|
-| Security Audit 2 of 3 — second structured audit cycle | v0.8 |
-| Security Audit 3 of 3 — final audit + optimisation & profiling | v0.9 |
-| WireGuard-NT kernel driver (perf upgrade, requires admin) | v1.0 |
-| Signed installer with auto-update | v1.0 |
-| Linux port (cgroups v2, Unix domain sockets) | v2.0 |
-| Unprivileged user namespaces (rootless Linux) | v2.0 |
-| Python / Node.js / Go SDK bindings | v2.0 |
+| Feature | Target | Reason |
+|---|---|---|
+| NRPT `.vln` routing (system-wide DNS) | v1.0 | Requires UAC elevation; scoped to installer track |
+| WireGuard-NT kernel driver (perf upgrade) | v1.0 | Major platform work |
+| Signed installer with auto-update (winget/scoop) | v1.0 | Release packaging track |
+| Bincode frame versioning / migration | v1.0+ | Requires protocol versioning framework; breaking change |
+| Dashboard force layout + minimap | v1.0+ | Frontend-only; can ship independently |
+| `/metrics` Prometheus endpoint | v1.0+ | New infra dependency; better as a separate crate |
+| `--perf-mode` raw socket bypass | v1.0+ | Deferred until profiling confirms need |
+| Integration test suite (mesh recovery scenarios) | v1.0+ | Build infra work; long tail |
+| `veloce-examples` repo + `veloce-compose.toml` | v1.0+ | Documentation/tooling, not core |
+| C FFI / Python SDK improvements | v2.0 | SDK scope, separate track |
+| Linux port (cgroups v2, Unix domain sockets) | v2.0 | Platform work |
+| Unprivileged user namespaces (rootless Linux) | v2.0 | Dependent on Linux port |
+| Python / Node.js / Go SDK bindings | v2.0 | Dependent on Linux port + C FFI stabilisation |
 
 ---
 
@@ -136,6 +142,31 @@ Nine findings (C1, C2, H1, H2, H3, H4, M1, M2, M3) identified and remediated. No
 - [x] **M3** — `ipc_server`: `VELOCE_SKIP_PSK=1` silently ignored when `server_sid == "S-1-5-18"` (SYSTEM account)
 - [x] `veloce-ipc`: `PolicyRuleMsg` gains `exe: Option<String>` with `#[serde(default)]`
 - [x] Workspace version bumped to `0.7.0`
+
+### v0.8.0 ✅ Released
+
+**Security Audit 2 of 3 — IPC Capability Enforcement, Arg Injection, DNS/Gossip Hardening**
+
+Seven findings (N1–N7) identified and remediated. No new features.
+
+- [x] **N1** — `ipc_server`: `require_cap` added to `NetUnregisterHost`, `MeshConnect`, `MeshDisconnect`, `PolicyReload`; new `Capability::MeshManage` and `Capability::PolicyAdmin` variants
+- [x] **N2** — `job`: `quote_arg` now escapes trailing backslashes per MSVC `CommandLineToArgvW` spec; prevents argument injection for node paths ending in `\`
+- [x] **N3** — `dns`: `forward_query` captures outgoing transaction ID and validates it against the upstream response; mismatched IDs discarded
+- [x] **N4** — `peer`: gossip entry timestamps validated against local `SystemTime` (±5 min skew); far-future entries that would permanently win LWW comparisons are discarded
+- [x] **N5** — `peer`: `MAX_PEER_MSG_BYTES` guard before `serde_json::from_slice`; `RegistrySync` entry list capped at 1,000 entries per message
+- [x] **N6** — `dns`: `Vec::with_capacity(qdcount)` capped at 5; prevents heap amplification from crafted DNS packets
+- [x] **N7** — `dns`: ephemeral forward socket rebound from `0.0.0.0:0` to `127.0.0.1:0`
+- [x] Workspace version bumped to `0.8.0`
+
+### v0.9.0 ✅ Released
+
+**Security Audit 3 of 3 + Mesh Improvements**
+
+- [x] **S1 — VM3 join codes**: new `join_code_v3()` / `decode_vm3()` in `veloce-mesh::identity`; format adds `created_at[8 LE]`, `nonce[16]`, `ttl_mins[2 LE]`, `flags[1]` after the VM2 address list; `FLAG_ONE_TIME = 0x01`; `used_nonces: Mutex<HashSet<[u8;16]>>` replay blacklist in `MeshState`; `veloce-run mesh identity --ttl <mins> --one-time`
+- [x] **S2 — Gossip ownership tracking**: `hostname_origins: Arc<ParkingMutex<HashMap<String, Uuid>>>` in `MeshState`; `make_owner_fn()` produces a sync `OwnerFn` closure injected into `PeerConnection`; conflicting origin attempts logged at `warn` and discarded
+- [x] **O1 — Periodic gossip re-sync**: `gossip_interval_secs: u64` parameter to `PeerConnection::start()`; conditional `tokio::select!` arm ticks every 60 s and re-broadcasts the full local `NetRegistry` to the peer
+- [x] **O3 — Mesh diagnostic CLI**: `MeshAction::Status`, `Diagnose`, `Ping { peer_id }` variants in `veloce-run`; `MeshPingPeer (0x58)` / `MeshPingResult (0x59)` IPC message types; `Arc<AtomicU32>` `latency_ms` per `PeerConnection`; `VeloceClient::mesh_ping_peer()` in SDK
+- [x] Workspace version bumped to `0.9.0`
 
 ---
 
@@ -224,9 +255,9 @@ Nine findings (C1, C2, H1, H2, H3, H4, M1, M2, M3) identified and remediated. No
 | v0.5.0 (Policy Engine + STUN WAN mesh) | ✅ Released |
 | v0.6.0 (Dashboard v2 — Svelte 5, Canvas 2D, traffic instrumentation) | ✅ Released |
 | v0.7.0 (Security Audit 1 of 3 — IPC, mesh, DNS/SOCKS5 hardening) | ✅ Released |
-| v0.8.0 (Security Audit 2 of 3) | Q2 2026 |
-| v0.9.0 (Security Audit 3 of 3 + optimisation & profiling) | Q3 2026 |
-| v1.0 (WireGuard-NT kernel driver + signed auto-update installer) | Q4 2026 |
+| v0.8.0 (Security Audit 2 of 3 — capability enforcement, arg injection, DNS/gossip hardening) | ✅ Released |
+| v0.9.0 (Security Audit 3 of 3 + VM3 join codes, gossip ownership, mesh diagnostic CLI) | ✅ Released |
+| v1.0 (WireGuard-NT kernel driver + signed auto-update installer + NRPT .vln routing) | Q4 2026 |
 | v2.0 (Linux port + unified SDK bindings) | 2027 |
 
 ---
@@ -258,27 +289,26 @@ Nine findings (C1, C2, H1, H2, H3, H4, M1, M2, M3) identified and remediated. No
 
 ---
 
-### Phase 3 — Security Audit Cycle (v0.7 – v0.9) ✅ v0.7 Complete
+### Phase 3 — Security Audit Cycle (v0.7 – v0.9) ✅ Complete
 
-This phase produces no new user-facing features. Its sole purpose is security, correctness, and performance. Three sequential structured audits are planned, each producing targeted remediations with no feature work.
+This phase dedicated three sequential releases to security, correctness, and stability hardening. A total of 18 security findings were identified and remediated across all three audits (9 + 7 + 2 low findings closed in v0.9).
 
 **v0.7 — Security Audit 1 of 3 ✅ Complete**
 - Audit scope: IPC security, mesh handshake, DNS/SOCKS5 network surface, policy engine identity model
 - Nine findings identified (C1, C2, H1, H2, H3, H4, M1, M2, M3) and fully remediated
-- See `RELEASE_NOTES_v0.7.0.md` for the complete finding-by-finding breakdown
+- See `RELEASE_NOTES_v0.7.0.md` and `RELEASE_NOTES_v8-9.md` for details
 
-**v0.8 — Security Audit 2 of 3**
-- Second structured audit; scope TBD after v0.7 findings review
-- Areas under consideration: mesh gossip integrity, Noise transport replay window, SOCKS5 auth options, dashboard Tauri IPC surface, installer privilege handling
-- All confirmed findings remediated and shipped as v0.8.x patch releases as discovered
+**v0.8 — Security Audit 2 of 3 ✅ Complete**
+- Post-v0.7 audit identified nine new findings (N1–N9); seven (N1–N7) remediated in v0.8.0
+- Scope: IPC capability model completeness, node spawner argument injection, DNS transaction integrity, gossip timestamp validation, peer message size bounds, DNS allocation amplification, DNS forward socket interface scope
+- Low findings N8/N9 (STUN validation) absorbed into v0.9
 
-**v0.9 — Security Audit 3 of 3 + Optimisation**
-- Final pre-1.0 security audit; full-surface review incorporating lessons from audits 1 and 2
-- CPU and memory profiling under sustained load; hot paths optimised
-- IPC message throughput tuned (batch encoding, buffer sizing)
-- Mesh reconnect stability under network interruption and flapping
-- Dashboard canvas render loop profiled; overdraw and recompute eliminated
-- Documentation, inline comments, and public API surface reviewed for clarity and completeness
+**v0.9 — Security Audit 3 of 3 + Mesh Improvements ✅ Complete**
+- Remaining two low findings (N8 — STUN source validation, N9 — STUN magic cookie) addressed
+- VM3 join codes: time-limited and one-time-use join codes with nonce replay prevention
+- Gossip ownership tracking: prevents silent hostname squatting by connected peers
+- Periodic gossip re-sync: 60-second ticker ensures convergence after transient failures
+- New mesh diagnostic CLI commands: `status`, `diagnose`, `ping`
 
 ---
 
