@@ -379,7 +379,7 @@ where
                             crate::registry::NodeStatus::Crashed  => IpcNodeStatus::Crashed { exit_code: e.exit_code },
                             crate::registry::NodeStatus::Empty    => IpcNodeStatus::Running,
                         },
-                        spawned_at: chrono::Utc::now(),
+                        spawned_at: e.spawned_at,
                         node_pipe:  e.pipe_path,
                     })
                     .collect();

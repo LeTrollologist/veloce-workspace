@@ -177,12 +177,16 @@ impl PeerConnection {
             ping_ticker.tick().await; // skip the immediate tick
             // Track the peer's real name once we receive their Hello.
             let mut current_peer_name = initial_peer_name;
+            // Track the most recent in-flight ping for RTT measurement.
+            // At most one ping is in flight at a time (30 s interval).
+            let mut last_ping: Option<(u32, std::time::Instant)> = None;
 
             loop {
                 tokio::select! {
                     // Keepalive ping
                     _ = ping_ticker.tick() => {
                         ping_seq = ping_seq.wrapping_add(1);
+                        last_ping = Some((ping_seq, std::time::Instant::now()));
                         let _ = tx_ping.send(PeerMsg::Ping { seq: ping_seq }).await;
                     }
 
@@ -228,9 +232,22 @@ impl PeerConnection {
                         if let PeerMsg::Hello { ref machine_name, .. } = msg {
                             current_peer_name = machine_name.clone();
                         }
+                        // Compute RTT for Pong messages using the send timestamp.
+                        // The wire round_trip_us field is always 0 (filled by responder
+                        // who doesn't know the initiator's send time), so we measure it
+                        // locally here instead.
+                        if let PeerMsg::Pong { seq, .. } = &msg {
+                            if let Some((sent_seq, sent_at)) = last_ping.take() {
+                                if *seq == sent_seq {
+                                    let rtt_us = sent_at.elapsed().as_micros()
+                                        .min(u32::MAX as u128) as u32;
+                                    latency.store(rtt_us / 1000, Ordering::Relaxed);
+                                }
+                            }
+                        }
                         handle_incoming(
                             msg, peer_id_r, &current_peer_name,
-                            &remote_h, &net_reg, &tx_ping, &latency, &acl_fn,
+                            &remote_h, &net_reg, &tx_ping, &acl_fn,
                         ).await;
                     }
                 }
@@ -274,7 +291,6 @@ async fn handle_incoming(
     remote_hosts: &Arc<RwLock<Vec<GossipEntry>>>,
     net_registry: &Arc<NetRegistry>,
     reply_tx: &mpsc::Sender<PeerMsg>,
-    latency: &Arc<AtomicU32>,
     acl_fn: &Option<AclFn>,
 ) {
     match msg {
@@ -365,9 +381,9 @@ async fn handle_incoming(
             let _ = reply_tx.send(PeerMsg::Pong { seq, round_trip_us: 0 }).await;
         }
 
-        PeerMsg::Pong { round_trip_us, .. } => {
-            latency.store(round_trip_us / 1000, Ordering::Relaxed);
-        }
+        // RTT is measured in the reader task from the Ping send timestamp.
+        // The wire round_trip_us field is always 0; nothing to do here.
+        PeerMsg::Pong { .. } => {}
 
         PeerMsg::ProxyOpen { stream_id, hostname } => {
             forward::handle_proxy_open(stream_id, &hostname, net_registry, reply_tx).await;

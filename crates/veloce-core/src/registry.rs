@@ -42,6 +42,7 @@ use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use uuid::Uuid;
+use chrono::Utc;
 
 // ── CONSTANTS ─────────────────────────────────────────────────────────────────
 
@@ -64,12 +65,16 @@ mod hdr {
 
 /// Byte offsets within a 256-byte node slot
 mod slot {
-    pub const NODE_ID:   usize = 0;   // 16 bytes (UUID)
-    pub const STATUS:    usize = 16;  // 1 byte
-    pub const PID:       usize = 20;  // 4 bytes
-    pub const EXIT_CODE: usize = 24;  // 4 bytes
-    pub const APP_NAME:  usize = 32;  // 64 bytes
-    pub const PIPE_PATH: usize = 96;  // 160 bytes
+    pub const NODE_ID:    usize = 0;   // 16 bytes (UUID)
+    pub const STATUS:     usize = 16;  // 1 byte
+    // 17–19: reserved (3 bytes)
+    pub const PID:        usize = 20;  // 4 bytes
+    pub const EXIT_CODE:  usize = 24;  // 4 bytes
+    /// Unix epoch seconds (u32 LE) recorded when the slot is allocated.
+    /// Formerly reserved bytes 28–31; u32 covers 1970–2106.
+    pub const SPAWNED_AT: usize = 28;  // 4 bytes
+    pub const APP_NAME:   usize = 32;  // 64 bytes
+    pub const PIPE_PATH:  usize = 96;  // 160 bytes
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -153,11 +158,18 @@ impl Registry {
         let slot_idx = find_empty_slot(&g.mmap)
             .context("registry node table full")?;
 
+        let spawned_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as u32;
+
         write_slot(&mut g.mmap, slot_idx, |buf| {
             // node_id
             buf[slot::NODE_ID..slot::NODE_ID+16].copy_from_slice(node_id.as_bytes());
             // status = Running
             buf[slot::STATUS] = NodeStatus::Running as u8;
+            // spawn timestamp
+            write_u32_in(buf, slot::SPAWNED_AT, spawned_at);
             // app_name (truncated to 63 bytes + null)
             write_str_field(&mut buf[slot::APP_NAME..slot::APP_NAME+64], app_name);
             // pipe_path (truncated to 159 bytes + null)
@@ -215,11 +227,16 @@ impl Registry {
             if status_byte == NodeStatus::Empty as u8 { continue; }
             let status = NodeStatus::try_from(status_byte).unwrap_or(NodeStatus::Empty);
             let node_id = Uuid::from_bytes(buf[slot::NODE_ID..slot::NODE_ID+16].try_into().unwrap());
-            let pid      = u32::from_le_bytes(buf[slot::PID..slot::PID+4].try_into().unwrap());
+            let pid       = u32::from_le_bytes(buf[slot::PID..slot::PID+4].try_into().unwrap());
             let exit_code = u32::from_le_bytes(buf[slot::EXIT_CODE..slot::EXIT_CODE+4].try_into().unwrap());
-            let app_name = read_str_field(&buf[slot::APP_NAME..slot::APP_NAME+64]);
+            let spawned_at_secs = u32::from_le_bytes(
+                buf[slot::SPAWNED_AT..slot::SPAWNED_AT+4].try_into().unwrap()
+            );
+            let spawned_at = chrono::DateTime::from_timestamp(spawned_at_secs as i64, 0)
+                .unwrap_or_else(chrono::Utc::now);
+            let app_name  = read_str_field(&buf[slot::APP_NAME..slot::APP_NAME+64]);
             let pipe_path = read_str_field(&buf[slot::PIPE_PATH..slot::PIPE_PATH+160]);
-            out.push(NodeEntry { slot_idx: i, node_id, status, pid, exit_code, app_name, pipe_path });
+            out.push(NodeEntry { slot_idx: i, node_id, status, pid, exit_code, spawned_at, app_name, pipe_path });
         }
         out
     }
@@ -362,11 +379,13 @@ fn kv_write(mmap: &mut MmapMut, key: &[u8], value: &[u8]) -> Result<()> {
 
 #[derive(Debug, Clone)]
 pub struct NodeEntry {
-    pub slot_idx:  usize,
-    pub node_id:   Uuid,
-    pub status:    NodeStatus,
-    pub pid:       u32,
-    pub exit_code: u32,
-    pub app_name:  String,
-    pub pipe_path: String,
+    pub slot_idx:   usize,
+    pub node_id:    Uuid,
+    pub status:     NodeStatus,
+    pub pid:        u32,
+    pub exit_code:  u32,
+    /// Wall-clock time when the node slot was allocated (persisted across restarts).
+    pub spawned_at: chrono::DateTime<chrono::Utc>,
+    pub app_name:   String,
+    pub pipe_path:  String,
 }
