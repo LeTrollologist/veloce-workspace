@@ -27,12 +27,31 @@ use windows::Win32::{
         Pipes::GetNamedPipeClientProcessId,
         Threading::{
             GetCurrentProcess, OpenProcess, OpenProcessToken,
-            PROCESS_QUERY_LIMITED_INFORMATION,
+            QueryFullProcessImageNameW,
+            PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
         },
     },
 };
 
 // ── helpers ──────────────────────────────────────────────────────────────────
+
+/// Resolve the full Win32 image path of `proc` (e.g. `C:\...\veloce-run.exe`).
+///
+/// # Safety
+/// `proc` must be a valid process handle with at least
+/// `PROCESS_QUERY_LIMITED_INFORMATION` access.
+unsafe fn query_process_exe(proc: HANDLE) -> Result<String> {
+    let mut buf = [0u16; 32768];
+    let mut len = buf.len() as u32;
+    QueryFullProcessImageNameW(
+        proc,
+        PROCESS_NAME_WIN32,
+        windows::core::PWSTR(buf.as_mut_ptr()),
+        &mut len,
+    )
+    .context("QueryFullProcessImageNameW")?;
+    Ok(String::from_utf16_lossy(&buf[..len as usize]))
+}
 
 /// Extract the string SID of the token's user (e.g. `"S-1-5-21-…-1001"`).
 ///
@@ -97,12 +116,17 @@ pub fn server_user_sid() -> Result<String> {
 /// Verify that the process connected to `pipe` is running under the same user
 /// account as the server.
 ///
-/// Returns `Ok(())` if the SIDs match, `Err` otherwise.
-/// The caller should **drop** the pipe on error — this disconnects the client.
+/// Returns `Ok(exe_path)` — the kernel-verified full Win32 image path of the
+/// client process — if the SIDs match.  Returns `Err` otherwise; the caller
+/// should **drop** the pipe, which disconnects the client.
+///
+/// The exe path is obtained from the kernel via `QueryFullProcessImageNameW`
+/// while the process handle is open, before any client-supplied data is read.
+/// It is safe to use as a trust anchor for policy decisions.
 pub fn assert_client_is_owner<H: AsRawHandle>(
     pipe: &H,
     server_sid: &str,
-) -> Result<()> {
+) -> Result<String> {
     unsafe {
         // 1. Get the client process ID directly from the pipe endpoint.
         let pipe_handle = HANDLE(pipe.as_raw_handle() as isize);
@@ -114,13 +138,18 @@ pub fn assert_client_is_owner<H: AsRawHandle>(
         let proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, client_pid)
             .context("OpenProcess(client)")?;
 
-        // 3. Open its primary token.
+        // 3. Resolve the exe path while the handle is still open.
+        //    Fail closed: if we can't read the image name, reject the connection.
+        let exe_path = query_process_exe(proc)
+            .context("could not resolve client exe path — rejecting connection")?;
+
+        // 4. Open its primary token.
         let mut token = HANDLE::default();
         let token_result = OpenProcessToken(proc, TOKEN_QUERY, &mut token);
         CloseHandle(proc).ok();
         token_result.context("OpenProcessToken(client)")?;
 
-        // 4. Extract and compare SIDs.
+        // 5. Extract and compare SIDs.
         let client_sid = sid_string_from_token(token)?;
         CloseHandle(token).ok();
 
@@ -131,6 +160,6 @@ pub fn assert_client_is_owner<H: AsRawHandle>(
             );
         }
 
-        Ok(())
+        Ok(exe_path)
     }
 }

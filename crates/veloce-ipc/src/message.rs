@@ -590,6 +590,9 @@ pub struct MeshPeerGoneMsg {
 /// A single per-app RBAC rule.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PolicyRuleMsg {
+    /// Verified executable path pattern (takes precedence over `app` when set).
+    #[serde(default)]
+    pub exe:   Option<String>,
     /// App name this rule applies to. `"*"` matches any app.
     pub app:   String,
     /// Capabilities explicitly allowed. `None` means "not specified".

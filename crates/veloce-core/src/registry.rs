@@ -318,8 +318,8 @@ fn kv_scan<T>(mmap: &MmapMut, mut f: impl FnMut(&[u8], &[u8]) -> Option<T>) -> O
 }
 
 fn kv_write(mmap: &mut MmapMut, key: &[u8], value: &[u8]) -> Result<()> {
-    assert!(key.len() <= u16::MAX as usize);
-    assert!(value.len() <= u32::MAX as usize);
+    anyhow::ensure!(key.len() <= u16::MAX as usize, "registry key too large ({} bytes)", key.len());
+    anyhow::ensure!(value.len() <= u32::MAX as usize, "registry value too large ({} bytes)", value.len());
 
     let kv_start = HEADER_SIZE + NODE_SLOT_SIZE * MAX_NODES;
     let region   = &mmap[kv_start..kv_start + KV_REGION_SIZE];

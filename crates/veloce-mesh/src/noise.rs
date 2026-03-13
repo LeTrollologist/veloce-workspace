@@ -59,7 +59,10 @@ pub async fn initiator_handshake(
     write_frame(stream, &buf[..n]).await?;
 
     // ← msg2 (responder → initiator, ephemeral + static + payload)
-    let msg2 = read_frame(stream).await?;
+    let msg2 = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        read_frame(stream),
+    ).await.context("noise initiator handshake timed out")??;
     hs.read_message(&msg2, &mut buf)?;
 
     // Handshake complete — move to transport mode.
@@ -81,7 +84,10 @@ pub async fn responder_handshake(
         .build_responder()?;
 
     // ← msg1
-    let msg1 = read_frame(stream).await?;
+    let msg1 = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        read_frame(stream),
+    ).await.context("noise responder handshake timed out")??;
     let mut buf = vec![0u8; MAX_MSG];
     hs.read_message(&msg1, &mut buf)?;
 

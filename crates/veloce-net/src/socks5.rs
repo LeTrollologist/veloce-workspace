@@ -109,7 +109,11 @@ async fn handle_connection(
                 }
             }
         } else {
-            (format!("{target_host}:{target_port}"), None)
+            // Non-VLN destinations are not permitted — this proxy is scoped to
+            // the private VeloceNet TLDs (.vln / .veloce) only.
+            tracing::warn!(hostname = %target_host, "SOCKS5: non-VLN destination rejected");
+            send_reply(&mut stream, REP_UNREACHABLE, Ipv4Addr::UNSPECIFIED, 0).await?;
+            bail!("SOCKS5: non-VLN hostname not allowed: {target_host}");
         };
 
     // ── Step 4: Connect to target ─────────────────────────────────────────────
