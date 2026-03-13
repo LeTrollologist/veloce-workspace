@@ -18,9 +18,15 @@ use crate::registry::NetRegistry;
 
 // ── SERVER ────────────────────────────────────────────────────────────────────
 
-pub async fn serve(registry: Arc<NetRegistry>, port: u16) -> Result<()> {
-    let sock = Arc::new(UdpSocket::bind(format!("127.0.0.1:{port}")).await?);
-    tracing::info!("DNS server listening on 127.0.0.1:{port}");
+/// Start the VeloceNet DNS server.
+///
+/// `bind_addr` controls which interface the UDP socket is bound to.
+/// The default (`127.0.0.1`) restricts the server to local processes only, which is
+/// the correct setting for most deployments.  Set `VLN_DNS_BIND=0.0.0.0` if you
+/// intentionally want LAN-wide `.vln` resolution (e.g., shared home-network resolver).
+pub async fn serve(registry: Arc<NetRegistry>, bind_addr: &str, port: u16) -> Result<()> {
+    let sock = Arc::new(UdpSocket::bind(format!("{bind_addr}:{port}")).await?);
+    tracing::info!("DNS server listening on {bind_addr}:{port}");
 
     let mut buf = vec![0u8; 512];
 
