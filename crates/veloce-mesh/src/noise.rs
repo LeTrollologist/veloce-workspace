@@ -43,7 +43,24 @@ pub async fn read_frame(stream: &mut TcpStream) -> anyhow::Result<Vec<u8>> {
 /// `their_pub`   — the responder's x25519 public key (from the join code)
 ///
 /// Returns a ready `TransportState` on success.
+/// Maximum wall-clock time for either side to complete the full Noise_IK
+/// two-message handshake exchange.  A single per-message timeout (the old
+/// scheme) allowed two sequential 10 s windows — up to 20 s per connection —
+/// which made slow-peer resource exhaustion trivially easy.  This single
+/// deadline covers write_frame, the network round-trip, AND read_frame.
+const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 pub async fn initiator_handshake(
+    stream: &mut TcpStream,
+    our_static: &[u8; 32],
+    their_pub:  &[u8; 32],
+) -> anyhow::Result<TransportState> {
+    tokio::time::timeout(HANDSHAKE_TIMEOUT, initiator_handshake_inner(stream, our_static, their_pub))
+        .await
+        .context("Noise initiator handshake timed out")?
+}
+
+async fn initiator_handshake_inner(
     stream: &mut TcpStream,
     our_static: &[u8; 32],
     their_pub:  &[u8; 32],
@@ -59,10 +76,7 @@ pub async fn initiator_handshake(
     write_frame(stream, &buf[..n]).await?;
 
     // ← msg2 (responder → initiator, ephemeral + static + payload)
-    let msg2 = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        read_frame(stream),
-    ).await.context("noise initiator handshake timed out")??;
+    let msg2 = read_frame(stream).await?;
     hs.read_message(&msg2, &mut buf)?;
 
     // Handshake complete — move to transport mode.
@@ -79,15 +93,21 @@ pub async fn responder_handshake(
     stream: &mut TcpStream,
     our_static: &[u8; 32],
 ) -> anyhow::Result<([u8; 32], TransportState)> {
+    tokio::time::timeout(HANDSHAKE_TIMEOUT, responder_handshake_inner(stream, our_static))
+        .await
+        .context("Noise responder handshake timed out")?
+}
+
+async fn responder_handshake_inner(
+    stream: &mut TcpStream,
+    our_static: &[u8; 32],
+) -> anyhow::Result<([u8; 32], TransportState)> {
     let mut hs = Builder::new(NOISE_PATTERN.parse()?)
         .local_private_key(our_static)
         .build_responder()?;
 
     // ← msg1
-    let msg1 = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        read_frame(stream),
-    ).await.context("noise responder handshake timed out")??;
+    let msg1 = read_frame(stream).await?;
     let mut buf = vec![0u8; MAX_MSG];
     hs.read_message(&msg1, &mut buf)?;
 

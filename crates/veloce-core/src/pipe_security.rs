@@ -116,9 +116,9 @@ pub fn server_user_sid() -> Result<String> {
 /// Verify that the process connected to `pipe` is running under the same user
 /// account as the server.
 ///
-/// Returns `Ok(exe_path)` — the kernel-verified full Win32 image path of the
-/// client process — if the SIDs match.  Returns `Err` otherwise; the caller
-/// should **drop** the pipe, which disconnects the client.
+/// Returns `Ok((exe_path, client_pid))` — the kernel-verified full Win32 image
+/// path and PID of the client process — if the SIDs match.  Returns `Err`
+/// otherwise; the caller should **drop** the pipe, which disconnects the client.
 ///
 /// The exe path is obtained from the kernel via `QueryFullProcessImageNameW`
 /// while the process handle is open, before any client-supplied data is read.
@@ -126,7 +126,7 @@ pub fn server_user_sid() -> Result<String> {
 pub fn assert_client_is_owner<H: AsRawHandle>(
     pipe: &H,
     server_sid: &str,
-) -> Result<String> {
+) -> Result<(String, u32)> {
     unsafe {
         // 1. Get the client process ID directly from the pipe endpoint.
         let pipe_handle = HANDLE(pipe.as_raw_handle() as isize);
@@ -160,6 +160,6 @@ pub fn assert_client_is_owner<H: AsRawHandle>(
             );
         }
 
-        Ok(exe_path)
+        Ok((exe_path, client_pid))
     }
 }

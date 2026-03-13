@@ -94,6 +94,10 @@ pub enum MessageType {
     MeshDisconnect      = 0x56,
     /// Core → Client (push): a peer went offline.
     MeshPeerGone        = 0x57,
+    /// Client → Core: return the last-measured round-trip latency to a specific peer.
+    MeshPingPeer        = 0x58,
+    /// Core → Client: RTT result — `None` if peer UUID is not found.
+    MeshPingResult      = 0x59,
 
     // ── Policy engine ─────────────────────────────────────────
     /// Client → Core: query the currently loaded policy rules.
@@ -138,6 +142,7 @@ impl TryFrom<u8> for MessageType {
             0x52 => MeshConnect,     0x53 => MeshConnectResult,
             0x54 => MeshPeerList,    0x55 => MeshPeerListResult,
             0x56 => MeshDisconnect,  0x57 => MeshPeerGone,
+            0x58 => MeshPingPeer,    0x59 => MeshPingResult,
             0x70 => PolicyGetRules,  0x71 => PolicyRulesResult,
             0x72 => PolicyReload,
             0x80 => TrafficQuery,    0x81 => TrafficStatsResult,
@@ -271,6 +276,11 @@ pub enum Body {
     MeshDisconnect(MeshDisconnectMsg),
     /// Push: a peer went offline.
     MeshPeerGone(MeshPeerGoneMsg),
+    /// Request last-measured RTT latency to a specific peer (client → Core).
+    MeshPingPeer { peer_id: Uuid },
+    /// RTT measurement result (Core → client).  `latency_ms` is `None` if the
+    /// peer UUID was not found or no latency sample has been recorded yet.
+    MeshPingResult { peer_id: Uuid, latency_ms: Option<u32> },
 
     // Error
     Error(ErrorMsg),
@@ -322,6 +332,8 @@ impl Body {
             MeshPeerListResult(_)  => MessageType::MeshPeerListResult,
             MeshDisconnect(_)      => MessageType::MeshDisconnect,
             MeshPeerGone(_)        => MessageType::MeshPeerGone,
+            MeshPingPeer { .. }    => MessageType::MeshPingPeer,
+            MeshPingResult { .. }  => MessageType::MeshPingResult,
             Error(_)               => MessageType::Error,
         }
     }

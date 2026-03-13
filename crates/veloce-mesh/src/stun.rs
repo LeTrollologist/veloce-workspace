@@ -14,7 +14,8 @@ use tokio::{
     time::{timeout, Duration},
 };
 
-const STUN_SERVERS: &[&str] = &[
+/// Built-in fallback list used when the caller supplies no servers.
+const DEFAULT_STUN_SERVERS: &[&str] = &[
     "stun.l.google.com:19302",
     "stun.cloudflare.com:3478",
 ];
@@ -32,12 +33,19 @@ const ATTR_XOR_MAPPED_ADDRESS: u16 = 0x0020;
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-/// Discover the machine's external IP address by querying public STUN servers.
+/// Discover the machine's external IP address by querying STUN servers.
 ///
-/// Tries each server in order; returns `None` if all fail (e.g. offline,
-/// firewall blocks UDP, or all servers timeout).
-pub async fn discover_external_ip() -> Option<IpAddr> {
-    for server in STUN_SERVERS {
+/// `servers` is the operator-configured list from `veloce-policy.toml`.  If
+/// empty, falls back to the built-in default list.  Tries each server in order;
+/// returns `None` if all fail (e.g. offline, firewall blocks UDP, or timeout).
+pub async fn discover_external_ip(servers: &[String]) -> Option<IpAddr> {
+    let list: Vec<&str> = if servers.is_empty() {
+        DEFAULT_STUN_SERVERS.to_vec()
+    } else {
+        servers.iter().map(String::as_str).collect()
+    };
+
+    for server in list {
         match try_stun(server).await {
             Ok(ip) => {
                 tracing::debug!("STUN discovery via {server}: external IP = {ip}");

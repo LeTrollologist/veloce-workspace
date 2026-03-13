@@ -229,6 +229,14 @@ pub async fn spawn_node(
             .context("CreatePipe stderr")?;
     }
 
+    // L2 fix: wrap write handles in SafeHandle immediately.
+    // They close automatically when this function returns, on both success and
+    // failure paths. The child inherits duplicated write handles via
+    // bInheritHandles=TRUE; the parent's copies are no longer needed once
+    // CreateProcessW returns.
+    let stdout_write_h = SafeHandle(stdout_write);
+    let stderr_write_h = SafeHandle(stderr_write);
+
     // ── CreateProcess ────────────────────────────────────────────────────────
     let cmdline   = build_cmdline(&msg.executable, &msg.args);
     let cmdline_w: Vec<u16> = OsStr::new(&cmdline).encode_wide().chain(Some(0)).collect();
@@ -311,8 +319,8 @@ pub async fn spawn_node(
                             std::mem::size_of::<STARTUPINFOW>() as u32
                         },
             dwFlags:    STARTF_USESTDHANDLES,
-            hStdOutput: stdout_write,
-            hStdError:  stderr_write,
+            hStdOutput: stdout_write_h.0,
+            hStdError:  stderr_write_h.0,
             ..Default::default()
         },
         lpAttributeList: if msg.use_appcontainer && !_attr_buf.is_empty() {
@@ -329,7 +337,9 @@ pub async fn spawn_node(
         CREATE_UNICODE_ENVIRONMENT
     };
 
-    unsafe {
+    // Capture CreateProcessW result without ? so we can always clean up
+    // AppContainer resources (L1 fix) before propagating any error.
+    let create_result = unsafe {
         CreateProcessW(
             PCWSTR::null(),
             windows::core::PWSTR(cmdline_w.as_ptr() as *mut u16),
@@ -341,17 +351,13 @@ pub async fn spawn_node(
             PCWSTR::null(),
             &si_ex.StartupInfo,
             &mut pi,
-        ).context("CreateProcess")?;
-    }
-
-    let pid = pi.dwProcessId;
-    let proc_handle = SafeHandle(pi.hProcess);
-    unsafe { let _ = CloseHandle(pi.hThread); }
+        )
+    };
 
     // ── AppContainer cleanup ─────────────────────────────────────────────────
-    // The attribute list and profile are only needed during CreateProcessW.
-    // Once the process is running, the kernel holds the SID internally and the
-    // profile record can be safely removed.
+    // L1 fix: runs unconditionally on both success AND failure paths.
+    // The attribute list and profile are only needed during CreateProcessW;
+    // once the call returns (regardless of outcome) they must be released.
     if msg.use_appcontainer {
         if !_attr_buf.is_empty() {
             unsafe {
@@ -373,12 +379,25 @@ pub async fn spawn_node(
         }
     }
 
-    // Close the write ends in the parent — the child owns them now.
-    // Keeping them open would prevent ReadFile from returning EOF.
-    unsafe {
-        let _ = CloseHandle(stdout_write);
-        let _ = CloseHandle(stderr_write);
-    }
+    // L1+L2 fix: now propagate the error.
+    // stdout_write_h / stderr_write_h (SafeHandle) close automatically here on
+    // failure. On success they remain in scope and close when spawn_node returns.
+    // stdout_read / stderr_read must be explicitly closed on the error path
+    // because they are passed as raw handles to spawn_log_reader on success.
+    create_result.context("CreateProcess").map_err(|e| {
+        unsafe {
+            let _ = CloseHandle(stdout_read);
+            let _ = CloseHandle(stderr_read);
+        }
+        e
+    })?;
+
+    let pid = pi.dwProcessId;
+    let proc_handle = SafeHandle(pi.hProcess);
+    unsafe { let _ = CloseHandle(pi.hThread); }
+
+    // stdout_write_h and stderr_write_h (SafeHandle) will close when spawn_node
+    // returns — the parent no longer needs its copies of the write ends.
 
     // ── Assign to Job Object ─────────────────────────────────────────────────
     unsafe {

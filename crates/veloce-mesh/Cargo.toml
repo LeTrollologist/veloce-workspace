@@ -11,7 +11,8 @@ serde      = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 anyhow     = { workspace = true }
 tracing    = { workspace = true }
-rand       = "0.8"
+rand         = "0.8"
+parking_lot  = { workspace = true }
 uuid       = { workspace = true, features = ["v4", "v5"] }
 
 # Noise_IK — same cryptographic pattern as WireGuard

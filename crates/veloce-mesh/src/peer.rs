@@ -32,6 +32,15 @@ use crate::forward;
 /// installed in the local forwarding table.
 pub type AclFn = Arc<dyn Fn(&str, &str) -> bool + Send + Sync>;
 
+/// Callback type used for gossip hostname ownership tracking.
+///
+/// Called for each gossip entry that passes ACL before it is installed.
+/// `f(hostname, peer_id, peer_name)` → `true` means the entry is allowed.
+///
+/// The function should record the first peer to claim each hostname and warn
+/// (or deny) when a different peer later claims the same hostname.
+pub type OwnerFn = Arc<dyn Fn(&str, uuid::Uuid, &str) -> bool + Send + Sync>;
+
 // ── Wire messages ──────────────────────────────────────────────────────────────
 
 /// Messages exchanged over the Noise transport channel between two peers.
@@ -96,6 +105,11 @@ impl PeerConnection {
         net_registry: Arc<NetRegistry>,
         on_disconnect: impl FnOnce(Uuid) + Send + 'static,
         acl_fn:       Option<AclFn>,
+        // How often (seconds) to re-broadcast local hostnames to this peer.
+        // Set to 0 to disable periodic re-sync.
+        gossip_interval_secs: u64,
+        // Optional ownership check — called for each gossip entry after ACL.
+        owner_fn:     Option<OwnerFn>,
     ) -> Arc<Self> {
         let (tx, rx) = mpsc::channel::<PeerMsg>(256);
         let latency  = Arc::new(AtomicU32::new(0));
@@ -169,21 +183,63 @@ impl PeerConnection {
         let net_reg           = net_registry.clone();
         let tx_ping           = tx.clone();
         let rx_bytes_r        = rx_bytes.clone();
+        let owner_fn_r        = owner_fn;
         tokio::spawn(async move {
             use tokio::io::AsyncReadExt;
             let mut read_half = read_half;
             let mut ping_seq: u32 = 0;
             let mut ping_ticker = interval(Duration::from_secs(30));
             ping_ticker.tick().await; // skip the immediate tick
+            // Gossip re-sync ticker: re-broadcast our local hostnames every
+            // gossip_interval_secs.  When disabled (0) we use a once-per-day
+            // fallback period but guard the arm with `if gossip_interval_secs > 0`
+            // so it never actually fires.
+            let effective_gossip_secs = if gossip_interval_secs > 0 {
+                gossip_interval_secs
+            } else {
+                86_400  // 1 day — effectively never fires because of the `if` guard below
+            };
+            let mut gossip_ticker = interval(Duration::from_secs(effective_gossip_secs));
+            gossip_ticker.tick().await; // skip the immediate tick
             // Track the peer's real name once we receive their Hello.
             let mut current_peer_name = initial_peer_name;
+            // Track the most recent in-flight ping for RTT measurement.
+            // At most one ping is in flight at a time (30 s interval).
+            let mut last_ping: Option<(u32, std::time::Instant)> = None;
 
             loop {
                 tokio::select! {
                     // Keepalive ping
                     _ = ping_ticker.tick() => {
                         ping_seq = ping_seq.wrapping_add(1);
+                        last_ping = Some((ping_seq, std::time::Instant::now()));
                         let _ = tx_ping.send(PeerMsg::Ping { seq: ping_seq }).await;
+                    }
+
+                    // Periodic gossip re-sync: push our full local hostname list to
+                    // the peer so it can pick up any registrations it may have missed.
+                    _ = gossip_ticker.tick(), if gossip_interval_secs > 0 => {
+                        let ts = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
+                        let entries: Vec<GossipEntry> = net_reg
+                            .list()
+                            .into_iter()
+                            .filter(|(_, rec)| rec.node_id != Uuid::nil())
+                            .map(|(hostname, rec)| GossipEntry {
+                                hostname,
+                                port: rec.local_port,
+                                ts,
+                            })
+                            .collect();
+                        if !entries.is_empty() {
+                            tracing::debug!(
+                                "peer {peer_id_r}: gossip re-sync ({} local hostnames)",
+                                entries.len()
+                            );
+                            let _ = tx_ping.send(PeerMsg::RegistrySync { entries }).await;
+                        }
                     }
 
                     // Inbound frame
@@ -228,9 +284,22 @@ impl PeerConnection {
                         if let PeerMsg::Hello { ref machine_name, .. } = msg {
                             current_peer_name = machine_name.clone();
                         }
+                        // Compute RTT for Pong messages using the send timestamp.
+                        // The wire round_trip_us field is always 0 (filled by responder
+                        // who doesn't know the initiator's send time), so we measure it
+                        // locally here instead.
+                        if let PeerMsg::Pong { seq, .. } = &msg {
+                            if let Some((sent_seq, sent_at)) = last_ping.take() {
+                                if *seq == sent_seq {
+                                    let rtt_us = sent_at.elapsed().as_micros()
+                                        .min(u32::MAX as u128) as u32;
+                                    latency.store(rtt_us / 1000, Ordering::Relaxed);
+                                }
+                            }
+                        }
                         handle_incoming(
                             msg, peer_id_r, &current_peer_name,
-                            &remote_h, &net_reg, &tx_ping, &latency, &acl_fn,
+                            &remote_h, &net_reg, &tx_ping, &acl_fn, &owner_fn_r,
                         ).await;
                     }
                 }
@@ -274,8 +343,8 @@ async fn handle_incoming(
     remote_hosts: &Arc<RwLock<Vec<GossipEntry>>>,
     net_registry: &Arc<NetRegistry>,
     reply_tx: &mpsc::Sender<PeerMsg>,
-    latency: &Arc<AtomicU32>,
     acl_fn: &Option<AclFn>,
+    owner_fn: &Option<OwnerFn>,
 ) {
     match msg {
         PeerMsg::Hello { machine_name, machine_id } => {
@@ -330,6 +399,11 @@ async fn handle_incoming(
                     }
                     allowed
                 })
+                // Ownership check: warn (and optionally reject) if this
+                // hostname was previously advertised by a different peer.
+                .filter(|e| {
+                    owner_fn.as_ref().map(|f| f(&e.hostname, peer_id, peer_name)).unwrap_or(true)
+                })
                 .collect();
 
             tracing::debug!(
@@ -365,9 +439,9 @@ async fn handle_incoming(
             let _ = reply_tx.send(PeerMsg::Pong { seq, round_trip_us: 0 }).await;
         }
 
-        PeerMsg::Pong { round_trip_us, .. } => {
-            latency.store(round_trip_us / 1000, Ordering::Relaxed);
-        }
+        // RTT is measured in the reader task from the Ping send timestamp.
+        // The wire round_trip_us field is always 0; nothing to do here.
+        PeerMsg::Pong { .. } => {}
 
         PeerMsg::ProxyOpen { stream_id, hostname } => {
             forward::handle_proxy_open(stream_id, &hostname, net_registry, reply_tx).await;

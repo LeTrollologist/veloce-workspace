@@ -34,8 +34,30 @@ use veloce_ipc::message::{MeshAclMsg, PolicyRuleMsg, PolicyRulesMsg};
 // ── Config types (TOML-deserialized) ─────────────────────────────────────────
 
 fn default_allow() -> String { "allow".to_string() }
+fn default_stun_servers() -> Vec<String> {
+    vec![
+        "stun.l.google.com:19302".to_string(),
+        "stun.cloudflare.com:3478".to_string(),
+    ]
+}
+fn default_gossip_interval() -> u64 { 60 }
 
-#[derive(Deserialize, Default, Clone)]
+/// Controls how the mesh layer handles WAN reachability.
+#[derive(Deserialize, Clone, Debug, PartialEq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum MeshMode {
+    /// Try STUN for WAN IP discovery; fall back to LAN-only with a warning
+    /// if all STUN servers fail (default).
+    #[default]
+    Auto,
+    /// Skip STUN entirely — only advertise LAN addresses in join codes.
+    LanOnly,
+    /// Require a reachable WAN IP via STUN; log a warning if unavailable but
+    /// still operate in LAN-only mode rather than refusing to start.
+    Wan,
+}
+
+#[derive(Deserialize, Clone)]
 pub struct PolicyConfig {
     /// Effect to apply when no rule matches: `"allow"` (default) or `"deny"`.
     #[serde(default = "default_allow")]
@@ -44,6 +66,49 @@ pub struct PolicyConfig {
     pub rules:    Vec<PolicyRule>,
     #[serde(default)]
     pub mesh_acl: Vec<MeshAcl>,
+
+    /// STUN servers to use for WAN IP discovery.
+    ///
+    /// ```toml
+    /// stun_servers = ["stun.l.google.com:19302", "stun.example.corp:3478"]
+    /// ```
+    ///
+    /// Falls back to the built-in list if not set.
+    #[serde(default = "default_stun_servers")]
+    pub stun_servers: Vec<String>,
+
+    /// Controls WAN/LAN mesh mode.
+    ///
+    /// ```toml
+    /// mesh_mode = "auto"     # default: try STUN, fall back to LAN
+    /// mesh_mode = "lan-only" # skip STUN entirely
+    /// mesh_mode = "wan"      # require WAN IP (warn if unavailable)
+    /// ```
+    #[serde(default)]
+    pub mesh_mode: MeshMode,
+
+    /// How often (in seconds) to re-broadcast the full local hostname list to
+    /// each connected peer.  Default: 60 s.  Set to 0 to disable periodic
+    /// re-sync (not recommended — stale peers will miss late registrations).
+    ///
+    /// ```toml
+    /// gossip_interval_secs = 60
+    /// ```
+    #[serde(default = "default_gossip_interval")]
+    pub gossip_interval_secs: u64,
+}
+
+impl Default for PolicyConfig {
+    fn default() -> Self {
+        Self {
+            default_effect:       default_allow(),
+            rules:                vec![],
+            mesh_acl:             vec![],
+            stun_servers:         default_stun_servers(),
+            mesh_mode:            MeshMode::default(),
+            gossip_interval_secs: default_gossip_interval(),
+        }
+    }
 }
 
 /// Per-app capability RBAC rule.
@@ -97,13 +162,45 @@ impl PolicyEngine {
         Arc::new(Self { path, config: RwLock::new(config) })
     }
 
-    /// Re-read the policy file from disk.  If the file has been deleted, reverts
-    /// to the permissive default.
+    /// Read-lock the current `PolicyConfig`.
+    ///
+    /// The returned guard holds the `RwLock` for its lifetime; drop it promptly
+    /// to avoid blocking writers.
+    pub fn config(&self) -> parking_lot::RwLockReadGuard<'_, PolicyConfig> {
+        self.config.read()
+    }
+
+    /// Re-read the policy file from disk.
+    ///
+    /// On parse failure the **previous** configuration is kept intact — the
+    /// system never regresses to the permissive default mid-flight because of
+    /// a typo in a live file.  The error is logged at ERROR level so operators
+    /// see the failure immediately.
     pub fn reload(&self) -> anyhow::Result<()> {
-        let config = load_config(&self.path).unwrap_or_else(|_| PolicyConfig::default());
-        *self.config.write() = config;
-        tracing::info!("policy reloaded from {}", self.path.display());
+        match load_config(&self.path) {
+            Ok(config) => {
+                *self.config.write() = config;
+                tracing::info!("policy reloaded from {}", self.path.display());
+            }
+            Err(e) => {
+                tracing::error!(
+                    path = %self.path.display(),
+                    error = %e,
+                    "policy reload failed — keeping previous configuration"
+                );
+            }
+        }
         Ok(())
+    }
+
+    /// Check whether `exe_path` is allowed to use the named capability.
+    ///
+    /// Convenience wrapper around [`compute_max_caps`] for single-capability
+    /// checks — primarily used in tests.
+    pub fn check_capability(&self, exe_path: &str, cap_name: &str) -> bool {
+        self.compute_max_caps(exe_path)
+            .iter()
+            .any(|c| format!("{c:?}").eq_ignore_ascii_case(cap_name))
     }
 
     /// Compute the full set of capabilities this executable is permitted to hold.

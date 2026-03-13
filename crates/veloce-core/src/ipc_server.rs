@@ -61,8 +61,8 @@ pub async fn run(state: Arc<CoreState>) -> Result<()> {
         pipe.connect().await.context("pipe connect")?;
 
         // ── ACL gate: reject any process not running as the server's user ──
-        let exe_path = match pipe_security::assert_client_is_owner(&pipe, &server_sid) {
-            Ok(path) => path,
+        let (exe_path, client_pid) = match pipe_security::assert_client_is_owner(&pipe, &server_sid) {
+            Ok(pair) => pair,
             Err(e) => {
                 tracing::warn!("pipe ACL rejected connection: {e:#}");
                 // Dropping `pipe` here disconnects the client immediately.
@@ -74,7 +74,7 @@ pub async fn run(state: Arc<CoreState>) -> Result<()> {
         let sid_clone = server_sid.clone();
         tokio::spawn(async move {
             let (read, write) = tokio::io::split(pipe);
-            let mut session = ClientSession::new(read, write, client_state, exe_path, sid_clone);
+            let mut session = ClientSession::new(read, write, client_state, exe_path, client_pid, sid_clone);
             if let Err(e) = session.run().await {
                 tracing::warn!("client session error: {e:#}");
             }
@@ -99,6 +99,9 @@ struct ClientSession<R, W> {
     /// Set once at accept time from `pipe_security::assert_client_is_owner`;
     /// never overwritten by client-supplied data.
     exe_path:     String,
+    /// PID of the connecting process, extracted from the named pipe endpoint
+    /// at accept time.  Used in denied-capability audit log entries.
+    client_pid:   u32,
     /// String SID of the server process's user.  Used to enforce that
     /// `VELOCE_SKIP_PSK` cannot be honoured when running as SYSTEM (S-1-5-18).
     server_sid:   String,
@@ -120,7 +123,14 @@ where
     R: AsyncReadExt + Unpin + Send,
     W: AsyncWriteExt + Unpin + Send,
 {
-    fn new(reader: R, writer: W, state: Arc<CoreState>, exe_path: String, server_sid: String) -> Self {
+    fn new(
+        reader:     R,
+        writer:     W,
+        state:      Arc<CoreState>,
+        exe_path:   String,
+        client_pid: u32,
+        server_sid: String,
+    ) -> Self {
         let (push_tx, push_rx) = mpsc::channel(PUSH_CHAN_CAP);
         Self {
             reader,
@@ -128,6 +138,7 @@ where
             state,
             client_id:    None,
             exe_path,
+            client_pid,
             server_sid,
             app_name:     String::new(),
             capabilities: vec![],
@@ -379,7 +390,7 @@ where
                             crate::registry::NodeStatus::Crashed  => IpcNodeStatus::Crashed { exit_code: e.exit_code },
                             crate::registry::NodeStatus::Empty    => IpcNodeStatus::Running,
                         },
-                        spawned_at: chrono::Utc::now(),
+                        spawned_at: e.spawned_at,
                         node_pipe:  e.pipe_path,
                     })
                     .collect();
@@ -530,6 +541,20 @@ where
                 self.send_reply(cid, Body::Pong).await?;
             }
 
+            Body::MeshPingPeer { peer_id } => {
+                let latency_ms = self.state.mesh.as_ref().and_then(|m| {
+                    m.peers.blocking_read()
+                        .get(&peer_id)
+                        .map(|p| {
+                            let ms = p.latency_ms.load(std::sync::atomic::Ordering::Relaxed);
+                            // 0 means no sample recorded yet
+                            if ms == 0 { None } else { Some(ms) }
+                        })
+                        .flatten()
+                });
+                self.send_reply(cid, Body::MeshPingResult { peer_id, latency_ms }).await?;
+            }
+
             // ── Policy engine ─────────────────────────────────────────────
             Body::PolicyGetRules => {
                 let msg = self.state.policy.to_msg();
@@ -598,6 +623,13 @@ where
 
     fn require_cap(&self, cap: Capability) -> Result<()> {
         if self.capabilities.contains(&cap) { return Ok(()); }
+        tracing::warn!(
+            app  = %self.app_name,
+            exe  = %self.exe_path,
+            pid  = self.client_pid,
+            ?cap,
+            "unauthorized capability request"
+        );
         bail!("unauthorized: missing capability {:?}", cap);
     }
 

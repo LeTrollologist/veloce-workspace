@@ -97,28 +97,12 @@ impl Codec {
     ///
     /// Returns `Ok(None)` if more data is needed (keep buffering).
     /// Advances `src` past the consumed bytes on success.
+    ///
+    /// Delegates to [`decode_safe`] — always use this function, never call
+    /// `FrameHeader::decode` directly, as it advances the buffer before the
+    /// payload has been checked.
     pub fn decode(src: &mut BytesMut) -> Result<Option<(FrameHeader, Envelope)>, IpcError> {
-        // We need to peek at the header without consuming, then consume everything at once.
-        // Clone a small slice for inspection.
-        let header = match FrameHeader::decode(src)? {
-            Some(h) => h,
-            None    => return Ok(None),
-        };
-
-        let payload_len = header.payload_len as usize;
-        if src.len() < payload_len {
-            // Re-prepend header bytes? No — we already consumed them from src.
-            // We handle this by checking header BEFORE advancing in FrameHeader::decode.
-            // But we already advanced. To handle this correctly we need a two-phase approach.
-            // See note below — we use a peeking decode to avoid this.
-            return Ok(None);
-        }
-
-        let payload = src.split_to(payload_len);
-        let envelope: Envelope = bincode::deserialize(&payload)
-            .map_err(|e| IpcError::DecodeFailed(e.to_string()))?;
-
-        Ok(Some((header, envelope)))
+        Self::decode_safe(src)
     }
 
     /// Safe two-phase decode: peek, then consume.

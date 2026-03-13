@@ -47,18 +47,35 @@ impl CoreState {
         // Load the policy engine (permissive if file absent).
         let policy = PolicyEngine::load_or_default(dir.join("veloce-policy.toml"));
 
-        // Build mesh identity and state, wiring the policy ACL callback.
+        // Build mesh identity and state, wiring the policy ACL callback and
+        // passing the operator-configured STUN / mesh-mode / gossip settings.
         let mesh = match veloce_mesh::identity::MachineIdentity::load_or_create(&dir) {
             Ok(id) => {
-                let policy_acl = Arc::clone(&policy);
+                let policy_acl  = Arc::clone(&policy);
                 let acl_fn: veloce_mesh::peer::AclFn = Arc::new(move |hostname, peer| {
                     policy_acl.check_mesh_acl(hostname, peer)
                 });
+                // Snapshot policy values needed by the mesh layer.
+                let (stun_servers, mesh_mode, gossip_secs) = {
+                    let cfg = policy.config();
+                    (
+                        cfg.stun_servers.clone(),
+                        match cfg.mesh_mode {
+                            crate::policy::MeshMode::Auto    => veloce_mesh::MeshMode::Auto,
+                            crate::policy::MeshMode::LanOnly => veloce_mesh::MeshMode::LanOnly,
+                            crate::policy::MeshMode::Wan     => veloce_mesh::MeshMode::Wan,
+                        },
+                        cfg.gossip_interval_secs,
+                    )
+                };
                 Some(MeshState::new(
                     id,
                     DEFAULT_MESH_PORT,
                     Arc::clone(&net_registry),
                     Some(acl_fn),
+                    stun_servers,
+                    mesh_mode,
+                    gossip_secs,
                 ))
             }
             Err(e) => {
