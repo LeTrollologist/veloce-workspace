@@ -262,6 +262,11 @@ impl Registry {
     }
 }
 
+/// KV tombstone sentinel: a key_len of 0xFFFF marks a dead/relocated entry.
+/// The subsequent val_len field encodes the total byte span of the dead key+value
+/// data, so scanners can skip over it without parsing the stale content.
+const KV_TOMBSTONE: u16 = 0xFFFF;
+
 // ── PRIVATE HELPERS ───────────────────────────────────────────────────────────
 
 fn init_header(mmap: &mut MmapMut) {
@@ -311,8 +316,10 @@ fn read_str_field(src: &[u8]) -> String {
     String::from_utf8_lossy(&src[..end]).into_owned()
 }
 
-/// Scan the KV region; call `f(key, value)` for each entry.
+/// Scan the KV region; call `f(key, value)` for each live entry.
 /// Returns the first `Some` result from `f`.
+///
+/// Tombstoned entries (`key_len == KV_TOMBSTONE`) are skipped transparently.
 fn kv_scan<T>(mmap: &MmapMut, mut f: impl FnMut(&[u8], &[u8]) -> Option<T>) -> Option<T> {
     let kv_start = HEADER_SIZE + NODE_SLOT_SIZE * MAX_NODES;
     let region   = &mmap[kv_start..kv_start + KV_REGION_SIZE];
@@ -320,9 +327,15 @@ fn kv_scan<T>(mmap: &MmapMut, mut f: impl FnMut(&[u8], &[u8]) -> Option<T>) -> O
 
     loop {
         if pos + 6 > region.len() { break; }
-        let key_len = u16::from_le_bytes(region[pos..pos+2].try_into().unwrap()) as usize;
-        if key_len == 0 { break; }
+        let key_len_raw = u16::from_le_bytes(region[pos..pos+2].try_into().unwrap());
+        if key_len_raw == 0 { break; } // end-of-list sentinel
         let val_len = u32::from_le_bytes(region[pos+2..pos+6].try_into().unwrap()) as usize;
+        if key_len_raw == KV_TOMBSTONE {
+            // Dead/relocated entry: val_len encodes the byte span of stale key+value; skip it.
+            pos += 6 + val_len;
+            continue;
+        }
+        let key_len = key_len_raw as usize;
         let key_end = pos + 6 + key_len;
         let val_end = key_end + val_len;
         if val_end > region.len() { break; }
@@ -334,43 +347,79 @@ fn kv_scan<T>(mmap: &MmapMut, mut f: impl FnMut(&[u8], &[u8]) -> Option<T>) -> O
     None
 }
 
+/// Write a key-value pair using a tombstone + append strategy.
+///
+/// If the key already exists it is tombstoned (marked dead in-place) and the
+/// new entry is appended at the end of the list.  This correctly handles both
+/// same-size and grow-in-place cases — the old code could silently overflow
+/// into the next entry's header bytes when the new value was larger.
+///
+/// # Tombstone format
+/// `[KV_TOMBSTONE: u16 LE][dead_span: u32 LE][original key+value bytes (dead)]`
+///
+/// `dead_span = old_key_len + old_val_len`; the 6-byte tombstone header sits on
+/// top of the original entry header, so the tombstone covers the same total
+/// extent as the original entry.
 fn kv_write(mmap: &mut MmapMut, key: &[u8], value: &[u8]) -> Result<()> {
-    anyhow::ensure!(key.len() <= u16::MAX as usize, "registry key too large ({} bytes)", key.len());
+    // 0xFFFF is reserved as the tombstone sentinel; real key lengths must fit below it.
+    anyhow::ensure!(
+        key.len() < KV_TOMBSTONE as usize,
+        "registry key too large ({} bytes)", key.len()
+    );
     anyhow::ensure!(value.len() <= u32::MAX as usize, "registry value too large ({} bytes)", value.len());
 
     let kv_start = HEADER_SIZE + NODE_SLOT_SIZE * MAX_NODES;
-    let region   = &mmap[kv_start..kv_start + KV_REGION_SIZE];
 
-    // Find where to write (scan to end, overwrite matching key or append)
-    let mut write_pos: Option<usize> = None;
-    let mut cursor = 0usize;
-    loop {
-        if cursor + 6 > region.len() { break; }
-        let kl = u16::from_le_bytes(region[cursor..cursor+2].try_into().unwrap()) as usize;
-        if kl == 0 { write_pos = Some(cursor); break; }
-        let vl = u32::from_le_bytes(region[cursor+2..cursor+6].try_into().unwrap()) as usize;
-        let key_start = cursor + 6;
-        let val_end   = key_start + kl + vl;
-        if &region[key_start..key_start+kl] == key {
-            write_pos = Some(cursor); break;
+    // --- Phase 1: scan to find the existing entry (if any) and end-of-list. ---
+    // We always need end_pos for the append; we always need existing for tombstone.
+    // Do NOT stop at the first key match — keep scanning to find end_pos.
+    let mut existing: Option<(usize, usize, usize)> = None; // (pos, old_key_len, old_val_len)
+    let mut end_pos:  Option<usize>                 = None;
+    {
+        let region  = &mmap[kv_start..kv_start + KV_REGION_SIZE];
+        let mut cur = 0usize;
+        loop {
+            if cur + 6 > region.len() { break; }
+            let kl_raw = u16::from_le_bytes(region[cur..cur+2].try_into().unwrap());
+            if kl_raw == 0 { end_pos = Some(cur); break; }
+            let vl = u32::from_le_bytes(region[cur+2..cur+6].try_into().unwrap()) as usize;
+            if kl_raw == KV_TOMBSTONE {
+                cur += 6 + vl;
+                continue;
+            }
+            let kl        = kl_raw as usize;
+            let key_start = cur + 6;
+            let entry_end = key_start + kl + vl;
+            if entry_end > region.len() { break; }
+            if kl == key.len() && &region[key_start..key_start + kl] == key {
+                existing = Some((cur, kl, vl));
+                // Continue scanning — we still need end_pos for the append step.
+            }
+            cur = entry_end;
         }
-        cursor = val_end;
     }
 
-    let pos = write_pos.context("KV region full")?;
-    let entry_len = 6 + key.len() + value.len();
-    if pos + entry_len + 2 > KV_REGION_SIZE {
+    // --- Phase 2: tombstone the existing entry (if any). ---
+    if let Some((pos, old_kl, old_vl)) = existing {
+        let dead_span = (old_kl + old_vl) as u32;
+        let r = &mut mmap[kv_start..kv_start + KV_REGION_SIZE];
+        r[pos..pos+2].copy_from_slice(&KV_TOMBSTONE.to_le_bytes());
+        r[pos+2..pos+6].copy_from_slice(&dead_span.to_le_bytes());
+        // Bytes [pos+6 .. pos+6+dead_span] retain stale data; the tombstone header covers them.
+    }
+
+    // --- Phase 3: append the new entry at end-of-list. ---
+    let end = end_pos.context("KV region full")?;
+    let new_entry_len = 6 + key.len() + value.len();
+    if end + new_entry_len + 2 > KV_REGION_SIZE {
         bail!("KV region overflow");
     }
-
-    let region_mut = &mut mmap[kv_start..kv_start + KV_REGION_SIZE];
-    region_mut[pos..pos+2].copy_from_slice(&(key.len() as u16).to_le_bytes());
-    region_mut[pos+2..pos+6].copy_from_slice(&(value.len() as u32).to_le_bytes());
-    region_mut[pos+6..pos+6+key.len()].copy_from_slice(key);
-    region_mut[pos+6+key.len()..pos+6+key.len()+value.len()].copy_from_slice(value);
-    // Null-terminate entry list (key_len = 0)
-    let end = pos + entry_len;
-    region_mut[end..end+2].fill(0);
+    let r = &mut mmap[kv_start..kv_start + KV_REGION_SIZE];
+    r[end..end+2].copy_from_slice(&(key.len() as u16).to_le_bytes());
+    r[end+2..end+6].copy_from_slice(&(value.len() as u32).to_le_bytes());
+    r[end+6..end+6+key.len()].copy_from_slice(key);
+    r[end+6+key.len()..end+new_entry_len].copy_from_slice(value);
+    r[end+new_entry_len..end+new_entry_len+2].fill(0); // null-terminate the list
 
     Ok(())
 }
