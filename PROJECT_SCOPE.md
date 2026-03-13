@@ -47,7 +47,7 @@
 | Feature | Target | Reason |
 |---|---|---|
 | NRPT `.vln` routing (system-wide DNS) | v1.0 | Requires UAC elevation; scoped to installer track |
-| WireGuard-NT kernel driver (perf upgrade) | v1.0 | Major platform work |
+| WireGuard-NT kernel driver (optional perf backend) | v1.0 | One-time admin elevation required for driver install; userspace Noise_IK path remains fully functional without it — zero-admin promise is preserved |
 | Signed installer with auto-update (winget/scoop) | v1.0 | Release packaging track |
 | Bincode frame versioning / migration | v1.0+ | Requires protocol versioning framework; breaking change |
 | Dashboard force layout + minimap | v1.0+ | Frontend-only; can ship independently |
@@ -200,7 +200,7 @@ Seven findings (N1–N7) identified and remediated. No new features.
 |------------|-------------|
 | Platform | Windows 10/11 (x86-64) primary; Linux deferred to v2.0 |
 | Runtime | Rust stable + `x86_64-pc-windows-msvc` target |
-| Dependencies | No kernel drivers, no TAP adapters, no admin required (beyond service install) |
+| Dependencies | No kernel drivers, no TAP adapters, no admin required (beyond service install); WireGuard-NT is an opt-in v1.0 perf backend that requires a one-time driver install — the userspace Noise_IK path is always available without it |
 | Max payload | 4 MiB per IPC message |
 | Network ports | DNS :5354, SOCKS5 :1055, Mesh TCP :7474 (all configurable) |
 | Encryption | Noise_IK_25519_ChaChaPoly_BLAKE2s (same algorithm as WireGuard) |
@@ -257,7 +257,7 @@ Seven findings (N1–N7) identified and remediated. No new features.
 | v0.7.0 (Security Audit 1 of 3 — IPC, mesh, DNS/SOCKS5 hardening) | ✅ Released |
 | v0.8.0 (Security Audit 2 of 3 — capability enforcement, arg injection, DNS/gossip hardening) | ✅ Released |
 | v0.9.0 (Security Audit 3 of 3 + VM3 join codes, gossip ownership, mesh diagnostic CLI) | ✅ Released |
-| v1.0 (WireGuard-NT kernel driver + signed auto-update installer + NRPT .vln routing) | Q4 2026 |
+| v1.0 (NRPT .vln routing + signed auto-update installer + optional WireGuard-NT perf backend) | Q4 2026 |
 | v2.0 (Linux port + unified SDK bindings) | 2027 |
 
 ---
