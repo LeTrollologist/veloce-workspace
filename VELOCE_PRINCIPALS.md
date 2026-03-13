@@ -1,12 +1,3 @@
-
-
-
-Here is a rewritten and polished version of the VeloceNetwork Manifesto. 
-
-I moved the **Vision** to the very top, as a manifesto is most impactful when it starts with *why* the project exists before diving into the *what* and the *how*. I also tightened the phrasing to make it punchier and read more like a modern, high-impact developer tool statement.
-
-***
-
 # 🎯 VeloceNetwork Manifesto
 
 ### 🌍 Our Vision
