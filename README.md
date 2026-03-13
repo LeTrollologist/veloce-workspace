@@ -12,7 +12,9 @@ With v0.4, the mesh extends transparently across machines — two `veloce-core` 
 
 With v0.5, the mesh reaches across NAT and the internet automatically: STUN discovers each machine's WAN IP at startup, the join code is upgraded to a dual-address VM2 format, and a declarative TOML policy engine controls which applications may request which capabilities and which peer-gossiped hostnames are installed locally.
 
-With v0.6, the dashboard is rebuilt from scratch in **Svelte 5** with raw **Canvas 2D** rendering. Every Noise tunnel and every `.vln` hostname is now instrumented with live byte counters; the dashboard visualises traffic as an interactive drag-and-drop topology, a 60-cell heatmap per peer, and inline sparklines per node row. v0.7–v0.9 are dedicated entirely to hardening: bug testing, end-to-end quality verification, and optimisation before v1.0.
+With v0.6, the dashboard is rebuilt from scratch in **Svelte 5** with raw **Canvas 2D** rendering. Every Noise tunnel and every `.vln` hostname is now instrumented with live byte counters; the dashboard visualises traffic as an interactive drag-and-drop topology, a 60-cell heatmap per peer, and inline sparklines per node row.
+
+With v0.7, the first of three structured security audits lands: nine findings (two critical, three high, three medium) are remediated across IPC, DNS, mesh, and SOCKS5 — no new features, all hardening. v0.8 and v0.9 continue the audit cycle; v1.0 introduces the WireGuard-NT kernel driver.
 
 Think of it as a stripped-down version of Kubernetes Service Mesh ideas, designed for desktop environments, developer tooling, and lightweight commercial applications rather than cloud infrastructure.
 
@@ -72,7 +74,7 @@ Think of it as a stripped-down version of Kubernetes Service Mesh ideas, designe
 ### VeloceNet — Private `.vln` Namespace
 - Register any hostname like `myapp.vln` and map it to a node's local TCP port
 - Built-in **DNS server** (UDP :5354) that resolves `*.vln` / `*.veloce` queries internally and forwards everything else to the system resolver
-- Built-in **SOCKS5 proxy** (:1055) that routes `.vln` traffic locally — no kernel modules, no TAP adapters, no admin required
+- Built-in **SOCKS5 proxy** (:1055) that routes `.vln` / `.veloce` traffic locally — scoped to the private TLD only; no kernel modules, no TAP adapters, no admin required
 - TTL-based registration expiry with automatic garbage collection
 - Apps set `VELOCE_DNS` and `VELOCE_SOCKS` environment variables and get transparent `.vln` routing
 
@@ -115,22 +117,37 @@ Think of it as a stripped-down version of Kubernetes Service Mesh ideas, designe
 - Peer identities derived from x25519 static keys; persisted across restarts as `veloce-identity.key`
 - **v0.5 — STUN WAN Mesh**: at startup, VeloceCore probes a STUN server to discover the machine's external IP; the join code is upgraded to **VM2** format (dual LAN + WAN addresses); `connect_to_peer()` races all addresses with a 250 ms stagger so NAT traversal is automatic
 
-### Policy Engine (v0.5)
+### Policy Engine (v0.5+)
 - Declarative **TOML policy file** (`veloce-policy.toml`) — absent = allow-all, fully backward compatible
 - **Tier 1 — Process RBAC**: per-app `allow`/`deny` lists for capabilities (`SpawnNodes`, `KillNodes`, `NetRegister`, …)
+  - `exe` field: matched against the **kernel-verified Win32 image path** — cannot be spoofed by the client process
+  - `app` field: legacy glob match against the client-declared name — kept for backward compatibility
 - **Tier 2 — Mesh ACLs**: filter which peer-gossiped `.vln` hostnames are installed as local forwarders, optionally scoped by source peer
-- Glob patterns: `"*"` (any) and `"*.suffix"` supported in both app names and hostnames
+- Glob patterns: `"*"` (any) and `"*.suffix"` supported in both exe names/paths and hostnames
 - Hot-reloadable at runtime via `veloce-run policy reload` — no service restart required
 - `veloce-run policy show` prints a formatted table of all active rules
 
 ### Security
+
+#### Foundational (v0.1–v0.5)
 - **SID-based pipe ACL**: the named pipe is restricted to the owning Windows user at the kernel level — cross-user connections are rejected before any data is read
 - **OsRng PSK**: VeloceCore generates a fresh 32-byte random key (full 256-bit entropy) at every startup; invalidates connections from prior sessions automatically
 - **Noise_IK authentication**: mesh peers mutually authenticate via static x25519 key pairs — no certificates, no CA
 - **DNS compression loop protection**: hand-rolled DNS parser enforces max 10 pointer jumps (DoS fix)
 - **Identity key file ACL**: `veloce-identity.key` is set read-only and owner-only at creation
-- Capability negotiation: clients declare exactly which operations they need (`SpawnNodes`, `KillNodes`, `RegistryRead`, `NetRegister`, …) and Core enforces the grant
+- **Capability negotiation**: clients declare exactly which operations they need (`SpawnNodes`, `KillNodes`, `RegistryRead`, `NetRegister`, …) and Core enforces the grant
 - **Policy Engine**: declarative TOML RBAC enforced server-side — blocked capabilities return `PolicyDenied (11)` before any action is taken; mesh ACLs prevent untrusted peers from installing forwarders for sensitive hostnames
+
+#### Security Audit 1 — v0.7 (9 findings remediated)
+- **Kernel-verified exe-path RBAC** (C1): `assert_client_is_owner` now returns the Win32 image path resolved via `QueryFullProcessImageNameW` while the process handle is open. Policy rules keyed on `exe` use this path — clients cannot spoof their identity via a declared `app_name`.
+- **Server-authoritative capability grant** (C2): `PolicyEngine::compute_max_caps(exe_path)` computes the full allowed capability set at handshake time. Client requests are intersected with the server grant — no per-handler re-checks required.
+- **Pre-authentication state machine** (H1): non-`Handshake` messages received before the client completes authentication immediately drop the connection with no error response.
+- **DNS localhost-only bind** (H2): the DNS server (`:5354`) now binds exclusively to `127.0.0.1` rather than `0.0.0.0`.
+- **DNS upstream response validation** (H3): `forward_query` validates that DNS replies come from the configured upstream address; spoofed replies from unexpected sources are discarded.
+- **Noise handshake timeout** (H4): both `initiator_handshake` and `responder_handshake` apply a 10-second `tokio::time::timeout` to all read steps — stalled TCP connections no longer hold Tokio task slots indefinitely.
+- **SOCKS5 VLN-only scope** (M1): the SOCKS5 proxy rejects `CONNECT` requests to any destination outside `.vln` / `.veloce` with `REP_UNREACHABLE`.
+- **Registry size validation** (M2): oversized registry keys and values return `InvalidMessage` to the client instead of panicking the service.
+- **`VELOCE_SKIP_PSK` production guard** (M3): `VELOCE_SKIP_PSK=1` is silently ignored and logged at `error` level when the service runs as the SYSTEM account (`S-1-5-18`).
 
 ### Dashboard (v0.6)
 - Tauri 2 desktop app (Windows, ships as a lightweight installer) — rebuilt in **Svelte 5** with **Canvas 2D** (zero new runtime JS dependencies)
@@ -186,48 +203,50 @@ Think of it as a stripped-down version of Kubernetes Service Mesh ideas, designe
 | STUN WAN mesh + VM2 join codes | ✅ v0.5 |
 | Dashboard v2 (Svelte 5 + Canvas 2D; topology, heatmap, sparklines) | ✅ v0.6 |
 | Backend traffic instrumentation (per-tunnel + per-host byte counters) | ✅ v0.6 |
-| **Bug testing & regression fixes** | 🔨 v0.7 |
-| **Feature meshing — end-to-end subsystem integration & gap fills** | 📋 v0.8 |
-| **Optimisation, profiling, final pre-1.0 hardening** | 📋 v0.9 |
+| **Security Audit 1 of 3** — IPC hardening, mesh hardening, DNS/SOCKS5 scope restriction | ✅ v0.7 |
+| **Security Audit 2 of 3** — second structured audit cycle | 🔨 v0.8 |
+| **Security Audit 3 of 3** — final pre-1.0 audit; optimisation & profiling | 📋 v0.9 |
 | WireGuard-NT kernel driver (perf upgrade) | 📋 v1.0 |
 | Signed installer with auto-update | 📋 v1.0 |
 | Linux port (cgroups v2 + Unix sockets) | 📋 v2.0 |
 | Python / Node.js / Go SDK bindings | 📋 v2.0 |
 
-### v0.7 — Bug Testing & Regression Fixes
+### v0.7 — Security Audit 1 of 3 ✅
 
-v0.7 is a **quality-only** release cycle. No new features land. Every subsystem introduced in v0.4–v0.6 is systematically exercised:
+v0.7 is the first of three dedicated security audit releases. No new user-facing features land.
+Nine findings were identified and resolved:
 
-- Mesh edge cases — simultaneous connect races, peer disconnect during gossip, symmetric-NAT reconnect
-- Policy engine — capability enforcement under all denial paths, hot-reload race conditions
-- Dashboard — all five tabs under real load; traffic counters with multiple peers active
-- IPC codec — malformed frames, oversized payloads, mid-message disconnects
-- SOCKS5 / DNS — concurrent `.vln` resolution, TTL expiry, passthrough under load
+- **C1** — Kernel-verified exe-path RBAC replaces client-declared app name in policy engine
+- **C2** — Server-authoritative capability grant computed once at handshake; per-handler re-checks removed
+- **H1** — Pre-auth state machine: non-Handshake messages before auth drop the connection immediately
+- **H2** — DNS server bound to `127.0.0.1` only (was `0.0.0.0`)
+- **H3** — DNS upstream response source validated; spoofed replies discarded
+- **H4** — Noise handshake 10-second read timeout on both initiator and responder sides
+- **M1** — SOCKS5 proxy scoped to `.vln` / `.veloce` destinations only
+- **M2** — Registry oversized-input panics converted to graceful `InvalidMessage` errors
+- **M3** — `VELOCE_SKIP_PSK=1` blocked when service runs as SYSTEM account
 
-Individual fixes ship as **v0.7.x** patch releases. Nothing is batched — a confirmed bug is fixed and released immediately.
+### v0.8 — Security Audit 2 of 3
 
-### v0.8 — Feature Meshing
+v0.8 is the second structured security audit of the codebase. The audit scope will be
+determined after the findings from v0.7 are reviewed. Areas under consideration include:
+mesh gossip integrity, Noise transport-mode replay window, SOCKS5 authentication options,
+dashboard Tauri IPC surface, and installer privilege handling.
 
-v0.8 ensures every subsystem that _exists_ operates correctly _together_. Where gaps or rough edges are found at the integration seams, they are filled:
+### v0.9 — Security Audit 3 of 3 + Optimisation
 
-- End-to-end flows: node spawn → `.vln` register → peer gossip → remote SOCKS5 → dashboard topology
-- Policy enforcement across multi-hop mesh paths
-- Dashboard commands (`policy_reload`, `traffic_stats`) verified against a live multi-machine setup
-- SDK completeness audit — any missing convenience methods added
-- CLI flag consistency review
+v0.9 is the final security audit before v1.0, combined with the performance and stability
+sprint:
 
-### v0.9 — Optimisation & Final Hardening
-
-v0.9 is the pre-1.0 stabilisation sprint:
-
+- Third structured security audit — full-surface review incorporating lessons from audits 1 and 2
 - CPU and memory profiling under sustained load; hot paths optimised
-- IPC message throughput tuned (batch encoding, buffer tuning)
+- IPC message throughput tuned (batch encoding, buffer sizing)
 - Mesh reconnect stability under network interruption
-- Dashboard render performance — canvas draw loop profiled, overdraw eliminated
-- Final round of bug fixes discovered during v0.8 integration testing
-- Documentation, inline comments, and API surface reviewed for clarity
+- Dashboard canvas render loop profiled; overdraw eliminated
+- Documentation, inline comments, and API surface reviewed for completeness
 
-After v0.9 ships stable, **v1.0** introduces the WireGuard-NT kernel driver for hardware-offloaded throughput and a signed installer with automatic update delivery.
+After v0.9 ships stable, **v1.0** introduces the WireGuard-NT kernel driver for
+hardware-offloaded throughput and a signed installer with automatic update delivery.
 
 ---
 
