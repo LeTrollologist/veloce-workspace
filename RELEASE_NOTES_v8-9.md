@@ -192,7 +192,7 @@ All IPC discriminants are unchanged. The `veloce-policy.toml` schema is unchange
 | Version | Focus |
 |---|---|
 | **v0.9** | Security Audit 3 of 3 + VM3 join codes, gossip ownership tracking, mesh diagnostic CLI |
-| **v1.0** | WireGuard-NT kernel driver + signed auto-update installer + NRPT `.vln` routing |
+| **v1.0** | NRPT `.vln` routing · signed auto-update installer · optional WireGuard-NT perf backend (one-time admin elevation; userspace Noise_IK remains default) |
 
 ---
 
@@ -423,5 +423,5 @@ None for existing SDK consumers or CLI users. All changes are additive:
 
 | Version | Focus |
 |---|---|
-| **v1.0** | WireGuard-NT kernel driver · NRPT `.vln` routing · signed auto-update installer · winget/scoop package |
+| **v1.0** | NRPT `.vln` routing · signed auto-update installer · winget/scoop package · optional WireGuard-NT perf backend |
 | **v2.0** | Linux port (cgroups v2 + Unix sockets) · Python / Node.js / Go SDK bindings |

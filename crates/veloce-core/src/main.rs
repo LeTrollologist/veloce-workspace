@@ -13,6 +13,7 @@ Run modes:
 mod registry;
 mod job;
 mod ipc_server;
+mod nrpt;
 mod pipe_security;
 mod policy;
 mod service;
@@ -41,10 +42,40 @@ fn main() -> anyhow::Result<()> {
                 .build()?;
             rt.block_on(run_core())
         }
-        "install" => service::install(),
+        "install"   => service::install(),
         "uninstall" => service::uninstall(),
-        "start" => service::start_service(),
-        "stop"  => service::stop_service(),
+        "start"     => service::start_service(),
+        "stop"      => service::stop_service(),
+        "nrpt" => {
+            let sub = args.get(2).map(|s| s.as_str()).unwrap_or("status");
+            match sub {
+                "enable" => {
+                    nrpt::install(nrpt::VLN_DNS_ADDR)?;
+                    nrpt::restart_dnscache()
+                        .unwrap_or_else(|e| tracing::warn!("Dnscache restart: {e}"));
+                    println!("NRPT rule installed. *.vln → {}", nrpt::VLN_DNS_ADDR);
+                    Ok(())
+                }
+                "disable" => {
+                    nrpt::uninstall()?;
+                    nrpt::restart_dnscache()
+                        .unwrap_or_else(|e| tracing::warn!("Dnscache restart: {e}"));
+                    println!("NRPT rule removed.");
+                    Ok(())
+                }
+                _ => {
+                    if nrpt::is_installed() {
+                        let addr = nrpt::installed_addr().unwrap_or_else(|| "?".into());
+                        println!("NRPT:    installed");
+                        println!("DNS:     {addr}");
+                    } else {
+                        println!("NRPT:    not installed");
+                        println!("Hint:    run `veloce-core nrpt enable` as Administrator");
+                    }
+                    Ok(())
+                }
+            }
+        }
         _ => {
             // No recognised argument → assume SCM launched us as a service.
             service::dispatch()

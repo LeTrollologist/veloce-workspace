@@ -45,4 +45,8 @@ export const api = {
     // ── Policy ──────────────────────────────────────────────────────────────
     policyShow:         ()                  => invoke('policy_show'),
     policyReload:       ()                  => invoke('policy_reload_cmd'),
+
+    // ── Updates ─────────────────────────────────────────────────────────────
+    checkForUpdates:    ()                  => invoke('check_for_updates'),
+    installUpdate:      ()                  => invoke('install_update'),
 };

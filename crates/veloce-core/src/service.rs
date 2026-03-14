@@ -164,6 +164,11 @@ pub fn install() -> Result<()> {
     // Set recovery actions: restart 3x (with 5s delay), then alert
     set_recovery_actions(&service)?;
 
+    // Install NRPT rule so *.vln resolves system-wide (best-effort)
+    if let Err(e) = crate::nrpt::install(crate::nrpt::VLN_DNS_ADDR) {
+        tracing::warn!("NRPT rule install failed (non-fatal): {e:#}");
+    }
+
     println!("VeloceCore service installed. Run: sc start {SERVICE_NAME}");
     Ok(())
 }
@@ -181,6 +186,10 @@ pub fn uninstall() -> Result<()> {
     std::thread::sleep(Duration::from_secs(2));
 
     service.delete().context("delete service")?;
+
+    // Remove NRPT rule (best-effort)
+    let _ = crate::nrpt::uninstall();
+
     println!("VeloceCore service removed.");
     Ok(())
 }

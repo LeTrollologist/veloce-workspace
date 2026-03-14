@@ -16,6 +16,8 @@ export const traffic         = writable(null);
 export const trafficHistory  = writable([]);
 // PolicyRulesMsg
 export const policy          = writable(null);
+// { version, notes } when a newer release is available; null otherwise
+export const updateInfo      = writable(null);
 // nodeId → {x, y} canvas positions; persisted to localStorage
 export const topoPositions   = writable(
     JSON.parse(localStorage.getItem('veloce-topo-pos') || '{}')

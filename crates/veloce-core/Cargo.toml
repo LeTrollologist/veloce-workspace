@@ -35,3 +35,4 @@ serde_json         = { workspace = true }
 [target.'cfg(windows)'.dependencies]
 windows-service = { workspace = true }
 windows         = { workspace = true }
+winreg          = { workspace = true }

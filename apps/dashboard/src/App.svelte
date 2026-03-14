@@ -5,7 +5,7 @@
   import {
     connected, nodes, templates, meshInfo,
     logLines, resources, resourceHistory,
-    traffic, trafficHistory, policy,
+    traffic, trafficHistory, policy, updateInfo,
   } from './stores.js';
 
   import NodesTab     from './components/NodesTab.svelte';
@@ -22,7 +22,36 @@
     { id: 'network',  label: 'VeloceNet'  },
     { id: 'logs',     label: 'Logs'       },
     { id: 'topology', label: 'Topology'   },
+    { id: 'settings', label: 'Settings'   },
   ];
+
+  const APP_VERSION = '__APP_VERSION__';
+
+  // ── Update helpers ─────────────────────────────────────────────────────────
+  let updInstalling = false;
+  let updError = null;
+
+  async function doInstallUpdate() {
+    updInstalling = true;
+    updError = null;
+    try {
+      await api.installUpdate();
+    } catch (e) {
+      updError = String(e);
+      updInstalling = false;
+    }
+  }
+
+  async function checkUpdatesManual() {
+    updError = null;
+    try {
+      const info = await api.checkForUpdates();
+      if (info) { updateInfo.set(info); }
+      else       { updateInfo.set(null); }
+    } catch (e) {
+      updError = String(e);
+    }
+  }
 
   // ── Resource polling state ─────────────────────────────────────────────────
   const resourceBaseline = {};  // nodeId → {cpu_ms, ts}
@@ -48,6 +77,8 @@
 
   async function refreshAll() {
     await Promise.allSettled([refreshNodes(), refreshTemplates(), refreshMeshInfo(), refreshPolicy()]);
+    // Background update check — non-blocking, non-fatal
+    api.checkForUpdates().then(info => { if (info) updateInfo.set(info); }).catch(() => {});
   }
 
   async function refreshNodes() {
@@ -156,8 +187,15 @@
   <header>
     <div class="brand">
       <span class="brand-v">V</span>eloceNetwork
+      <span class="version-badge">v{APP_VERSION}</span>
     </div>
     <div class="status-bar">
+      {#if $updateInfo}
+        <button class="update-pill" on:click={() => activeTab = 'settings'}
+                title="Update to v{$updateInfo.version}">
+          ● v{$updateInfo.version} available
+        </button>
+      {/if}
       <span class="dot" class:connected={$connected} class:disconnected={!$connected}></span>
       <span class="status-label">{$connected ? 'Connected' : 'Disconnected'}</span>
       <button class="btn" class:btn-primary={!$connected} class:btn-danger={$connected}
@@ -187,6 +225,51 @@
       <LogsTab />
     {:else if activeTab === 'topology'}
       <TopologyTab />
+    {:else if activeTab === 'settings'}
+      <div class="card">
+        <div class="card-header">
+          <h3>About</h3>
+        </div>
+        <div class="settings-row">
+          <span class="settings-label">Version</span>
+          <span class="mono">{APP_VERSION}</span>
+        </div>
+        <div class="settings-row">
+          <span class="settings-label">Update channel</span>
+          <span class="mono">stable (GitHub Releases)</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3>Updates</h3>
+          <button class="btn btn-secondary btn-sm" on:click={checkUpdatesManual}
+                  disabled={updInstalling}>
+            Check for updates
+          </button>
+        </div>
+
+        {#if $updateInfo}
+          <div class="update-banner">
+            <div class="update-title">v{$updateInfo.version} is available</div>
+            {#if $updateInfo.notes}
+              <div class="update-notes">{$updateInfo.notes}</div>
+            {/if}
+            <button class="btn btn-primary btn-sm" on:click={doInstallUpdate}
+                    disabled={updInstalling}>
+              {updInstalling ? 'Installing…' : 'Download & Install'}
+            </button>
+          </div>
+        {:else}
+          <div class="settings-row">
+            <span style="color:#8b949e">You are on the latest version.</span>
+          </div>
+        {/if}
+
+        {#if updError}
+          <div class="result-error">{updError}</div>
+        {/if}
+      </div>
     {/if}
   </main>
 </div>
@@ -338,4 +421,51 @@
   :global(.mono)            { font-family: monospace; font-size: 12px; color: #8b949e; }
   :global(.panel-row)      { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
   :global(.panel-row h2)   { font-size: 16px; font-weight: 600; }
+
+  /* Version badge in header */
+  .version-badge {
+    margin-left: 8px;
+    font-size: 11px;
+    font-weight: 400;
+    color: #484f58;
+    letter-spacing: 0;
+  }
+
+  /* Amber update pill in header */
+  .update-pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 3px 10px;
+    background: #2d1e00;
+    border: 1px solid #d29922;
+    border-radius: 10px;
+    color: #d29922;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .update-pill:hover { background: #3d2900; }
+
+  /* Settings tab */
+  .settings-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 6px 0;
+    border-bottom: 1px solid #21262d;
+    font-size: 13px;
+  }
+  .settings-row:last-child { border-bottom: none; }
+  .settings-label { color: #8b949e; }
+
+  .update-banner {
+    background: #0d1f0d;
+    border: 1px solid #2ea043;
+    border-radius: 6px;
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .update-title { font-weight: 600; color: #3fb950; font-size: 13px; }
+  .update-notes { color: #8b949e; font-size: 12px; white-space: pre-wrap; max-height: 80px; overflow-y: auto; }
 </style>

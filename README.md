@@ -232,7 +232,7 @@ Think of it as a stripped-down version of Kubernetes Service Mesh ideas, designe
 | **Security Audit 1 of 3** — IPC hardening, mesh hardening, DNS/SOCKS5 scope restriction | ✅ v0.7 |
 | **Security Audit 2 of 3** — IPC capability enforcement, arg injection fix, DNS/gossip hardening | ✅ v0.8 |
 | **Security Audit 3 of 3** — VM3 join codes, gossip ownership, re-sync, mesh diagnostic CLI | ✅ v0.9 |
-| WireGuard-NT kernel driver (perf upgrade) | 📋 v1.0 |
+| WireGuard-NT kernel driver *(optional perf backend — one-time admin elevation, userspace Noise_IK remains default)* | 📋 v1.0 |
 | NRPT `.vln` routing (system-wide DNS without `VELOCE_DNS`) | 📋 v1.0 |
 | Signed installer with auto-update (winget/scoop) | 📋 v1.0 |
 | Linux port (cgroups v2 + Unix sockets) | 📋 v2.0 |
@@ -276,8 +276,11 @@ improvements that close gaps identified during the audit cycle:
 - **New `veloce-run mesh` subcommands** — `mesh status` (connected peers + latency), `mesh diagnose` (connectivity health report), `mesh ping <peer-id>` (latency round-trip)
 - **`MeshPingPeer` / `MeshPingResult` IPC messages** (0x58 / 0x59) — SDK-accessible ping round-trip for peer latency measurement
 
-After v0.9 ships stable, **v1.0** introduces the WireGuard-NT kernel driver for
-hardware-offloaded throughput and a signed installer with automatic update delivery.
+After v0.9 ships stable, **v1.0** delivers NRPT-based system-wide `.vln` routing, a signed
+installer with automatic update delivery, and an **optional** WireGuard-NT kernel backend
+for users who want hardware-offloaded throughput and are willing to accept a one-time admin
+elevation during installation. The userspace Noise_IK path remains the default — the
+zero-admin promise is preserved.
 
 ### Future Features — Deferred to v1.0 or Later
 
@@ -287,7 +290,7 @@ patch release prior to v1.0.
 | Item | Reason Deferred |
 |------|-----------------|
 | NRPT `.vln` routing (system-wide DNS) | Requires UAC elevation; scoped to installer track |
-| WireGuard-NT kernel driver | Major platform work, explicitly v1.0 |
+| WireGuard-NT kernel driver | Optional perf backend; one-time admin elevation required; userspace Noise_IK remains default |
 | Bincode frame versioning / migration | Requires protocol versioning framework; breaking change |
 | Dashboard force layout + minimap | Frontend-only; can ship independently |
 | `/metrics` Prometheus endpoint | New infra dependency; better as a separate crate |

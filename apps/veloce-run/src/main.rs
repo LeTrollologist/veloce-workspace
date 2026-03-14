@@ -10,8 +10,12 @@ Usage:
     veloce-run mesh diagnose
     veloce-run mesh ping <PEER_ID>
     veloce-run mesh leave <PEER_ID>
+    veloce-run nrpt enable
+    veloce-run nrpt disable
+    veloce-run nrpt status
     veloce-run policy show
     veloce-run policy reload
+    veloce-run version
 
 Examples:
     # Wrap ping and stream its output to the terminal
@@ -38,11 +42,17 @@ Examples:
     # Show last-known RTT to a specific peer
     veloce-run mesh ping <peer-uuid>
 
+    # Enable system-wide .vln DNS routing via NRPT (requires admin)
+    veloce-run nrpt enable
+
     # Show active policy rules
     veloce-run policy show
 
     # Hot-reload policy from veloce-policy.toml
     veloce-run policy reload
+
+    # Print version
+    veloce-run version
 */
 
 use anyhow::{Context, Result};
@@ -117,6 +127,13 @@ enum Commands {
         #[command(subcommand)]
         action: PolicyAction,
     },
+    /// Manage system-wide .vln DNS routing via NRPT (requires Administrator)
+    Nrpt {
+        #[command(subcommand)]
+        action: NrptAction,
+    },
+    /// Print version information
+    Version,
 }
 
 #[derive(Subcommand, Debug)]
@@ -161,6 +178,16 @@ enum PolicyAction {
     Reload,
 }
 
+#[derive(Subcommand, Debug)]
+enum NrptAction {
+    /// Install the NRPT rule: routes *.vln queries to VeloceNet DNS (127.0.0.1:5354)
+    Enable,
+    /// Remove the NRPT rule
+    Disable,
+    /// Show whether the NRPT rule is currently installed
+    Status,
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn basename(path: &str) -> String {
@@ -186,8 +213,10 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Commands::Mesh   { action }) => run_mesh(action).await,
-        Some(Commands::Policy { action }) => run_policy(action).await,
+        Some(Commands::Mesh    { action }) => run_mesh(action).await,
+        Some(Commands::Policy  { action }) => run_policy(action).await,
+        Some(Commands::Nrpt    { action }) => run_nrpt(action),
+        Some(Commands::Version)            => { run_version(); Ok(()) }
         None => {
             let executable = cli.executable.expect("clap ensures executable is set when no subcommand");
             run_spawn(
@@ -422,6 +451,89 @@ async fn run_policy(action: PolicyAction) -> Result<()> {
     }
 
     Ok(())
+}
+
+// ── NRPT subcommand ───────────────────────────────────────────────────────────
+
+fn run_nrpt(action: NrptAction) -> anyhow::Result<()> {
+    #[cfg(windows)]
+    {
+        use winreg::{enums::*, RegKey};
+
+        const BASE: &str =
+            r"SYSTEM\CurrentControlSet\Services\Dnscache\Parameters\DnsPolicyConfig";
+        const RULE: &str = "VeloceNetwork-VLN";
+        const DNS:  &str = "127.0.0.1:5354";
+
+        match action {
+            NrptAction::Enable => {
+                let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+                let base = hklm
+                    .open_subkey_with_flags(BASE, KEY_CREATE_SUB_KEY)
+                    .map_err(|e| anyhow::anyhow!(
+                        "Cannot open DnsPolicyConfig key: {e}\n\
+                         Run this command as Administrator."
+                    ))?;
+                let (rule, _) = base.create_subkey(RULE)?;
+                rule.set_value("Version",           &2u32)?;
+                rule.set_value("ConfigOptions",     &8u32)?;
+                rule.set_value("Name",              &vec![".vln".to_owned()])?;
+                rule.set_value("GenericDNSServers", &DNS)?;
+                rule.set_value("Comment",           &"VeloceNetwork .vln private namespace")?;
+
+                // Best-effort Dnscache restart for immediate effect
+                let _ = std::process::Command::new("net").args(["stop", "Dnscache"]).output();
+                let _ = std::process::Command::new("net").args(["start", "Dnscache"]).output();
+
+                println!("NRPT rule installed.  *.vln → {DNS}");
+                println!("System-wide .vln DNS is now active (no VELOCE_DNS needed).");
+            }
+            NrptAction::Disable => {
+                let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+                if let Ok(base) = hklm.open_subkey_with_flags(BASE, KEY_WRITE) {
+                    let _ = base.delete_subkey_all(RULE);
+                }
+                let _ = std::process::Command::new("net").args(["stop", "Dnscache"]).output();
+                let _ = std::process::Command::new("net").args(["start", "Dnscache"]).output();
+                println!("NRPT rule removed.  Set VELOCE_DNS=127.0.0.1:5354 for per-process routing.");
+            }
+            NrptAction::Status => {
+                let installed = RegKey::predef(HKEY_LOCAL_MACHINE)
+                    .open_subkey(format!("{BASE}\\{RULE}"))
+                    .is_ok();
+                if installed {
+                    let addr: String = RegKey::predef(HKEY_LOCAL_MACHINE)
+                        .open_subkey(format!("{BASE}\\{RULE}"))
+                        .and_then(|k| k.get_value("GenericDNSServers"))
+                        .unwrap_or_else(|_| "?".into());
+                    println!("NRPT:    installed");
+                    println!("DNS:     {addr}");
+                    println!("Effect:  *.vln queries route to VeloceNet DNS system-wide");
+                } else {
+                    println!("NRPT:    not installed");
+                    println!("Hint:    run `veloce-run nrpt enable` as Administrator to activate");
+                    println!("         or set VELOCE_DNS=127.0.0.1:5354 for per-process routing");
+                }
+            }
+        }
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = action;
+        eprintln!("NRPT is a Windows-only feature.");
+        Ok(())
+    }
+}
+
+// ── Version subcommand ────────────────────────────────────────────────────────
+
+fn run_version() {
+    println!("VeloceNetwork v{}", env!("CARGO_PKG_VERSION"));
+    println!("Components: veloce-core · veloce-net · veloce-mesh · veloce-sdk");
+    println!();
+    println!("Dashboard:  veloce-dashboard --version");
+    println!("Docs:       https://github.com/LeTrollologist/veloce-workspace");
 }
 
 // ── Spawn mode ────────────────────────────────────────────────────────────────
