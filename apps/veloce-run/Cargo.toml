@@ -18,3 +18,6 @@ anyhow      = { workspace = true }
 clap        = { workspace = true }
 ctrlc       = { workspace = true }
 uuid        = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+winreg = { workspace = true }

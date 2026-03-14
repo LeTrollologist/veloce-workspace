@@ -168,9 +168,20 @@ async fn do_install(
     }
 
     // ── 6. Uninstaller registry entry ──────────────────────────────────────
-    emit_progress(&app, "registry", 90, "Registering uninstaller…", "running");
+    emit_progress(&app, "registry", 88, "Registering uninstaller…", "running");
     let _ = register_uninstaller(&install_dir, opts.install_dir.as_str());
-    emit_progress(&app, "registry", 95, "Uninstaller registered.", "ok");
+    emit_progress(&app, "registry", 92, "Uninstaller registered.", "ok");
+
+    // ── 7. NRPT rule — route *.vln queries to VeloceNet DNS ────────────────
+    emit_progress(&app, "nrpt", 93, "Configuring .vln system DNS routing…", "running");
+    match install_nrpt() {
+        Ok(()) => emit_progress(&app, "nrpt", 97, ".vln DNS routing configured.", "ok"),
+        Err(e) => {
+            // Non-fatal: system-wide .vln resolution requires NRPT; fall back to VELOCE_DNS.
+            eprintln!("[installer] NRPT rule install failed (non-fatal): {e}");
+            emit_progress(&app, "nrpt", 97, ".vln DNS routing skipped (run as admin to enable).", "ok");
+        }
+    }
 
     emit_progress(&app, "done", 100, "Installation complete!", "ok");
     Ok(())
@@ -192,11 +203,15 @@ async fn do_uninstall(app: tauri::AppHandle) -> anyhow::Result<()> {
     let _ = remove_from_path(&install_dir);
     emit_progress(&app, "path", 70, "PATH cleaned.", "ok");
 
-    emit_progress(&app, "registry", 75, "Removing registry entries…", "running");
-    let _ = remove_uninstaller_registry();
-    emit_progress(&app, "registry", 85, "Registry cleaned.", "ok");
+    emit_progress(&app, "nrpt", 72, "Removing .vln DNS routing rule…", "running");
+    let _ = remove_nrpt();
+    emit_progress(&app, "nrpt", 76, ".vln DNS rule removed.", "ok");
 
-    emit_progress(&app, "files", 88, "Removing files…", "running");
+    emit_progress(&app, "registry", 78, "Removing registry entries…", "running");
+    let _ = remove_uninstaller_registry();
+    emit_progress(&app, "registry", 88, "Registry cleaned.", "ok");
+
+    emit_progress(&app, "files", 90, "Removing files…", "running");
     let _ = remove_install_dir(&install_dir);
     emit_progress(&app, "files", 100, "Uninstall complete.", "ok");
     Ok(())
@@ -382,7 +397,7 @@ fn register_uninstaller(install_dir: &Path, display_dir: &str) -> anyhow::Result
         r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\VeloceNetwork"
     )?;
     key.set_value("DisplayName",     &"VeloceNetwork")?;
-    key.set_value("DisplayVersion",  &"0.1.0")?;
+    key.set_value("DisplayVersion",  &env!("CARGO_PKG_VERSION"))?;
     key.set_value("Publisher",       &"VeloceSolutions")?;
     key.set_value("InstallLocation", &display_dir)?;
     key.set_value("UninstallString", &format!(
@@ -430,6 +445,55 @@ fn remove_install_dir(dir: &Path) -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+// ── NRPT helpers ──────────────────────────────────────────────────────────────
+
+/// Write the `.vln` NRPT rule so `*.vln` queries resolve system-wide.
+/// Requires Administrator privilege.  Idempotent.
+#[cfg(windows)]
+fn install_nrpt() -> anyhow::Result<()> {
+    use winreg::{enums::*, RegKey};
+
+    const BASE: &str =
+        r"SYSTEM\CurrentControlSet\Services\Dnscache\Parameters\DnsPolicyConfig";
+    const RULE: &str = "VeloceNetwork-VLN";
+    const DNS:  &str = "127.0.0.1:5354";
+
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let base  = hklm.open_subkey_with_flags(BASE, KEY_CREATE_SUB_KEY)
+        .map_err(|e| anyhow::anyhow!("open DnsPolicyConfig: {e} (run as Administrator)"))?;
+
+    let (rule, _) = base.create_subkey(RULE)?;
+    rule.set_value("Version",           &2u32)?;
+    rule.set_value("ConfigOptions",     &8u32)?;
+    rule.set_value("Name",              &vec![".vln".to_owned()])?;
+    rule.set_value("GenericDNSServers", &DNS)?;
+    rule.set_value("Comment",           &"VeloceNetwork .vln private namespace")?;
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn install_nrpt() -> anyhow::Result<()> { Ok(()) }
+
+/// Remove the `.vln` NRPT rule.  No-op if not present.
+#[cfg(windows)]
+fn remove_nrpt() -> anyhow::Result<()> {
+    use winreg::{enums::*, RegKey};
+    const BASE: &str =
+        r"SYSTEM\CurrentControlSet\Services\Dnscache\Parameters\DnsPolicyConfig";
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let base  = match hklm.open_subkey_with_flags(BASE, KEY_WRITE) {
+        Ok(k)  => k,
+        Err(_) => return Ok(()),  // key absent — nothing to do
+    };
+    match base.delete_subkey_all("VeloceNetwork-VLN") {
+        Ok(()) | Err(_) => {}
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn remove_nrpt() -> anyhow::Result<()> { Ok(()) }
 
 // ── App entry point ───────────────────────────────────────────────────────────
 
