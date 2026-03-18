@@ -24,9 +24,13 @@
     "security": { "csp": null }
   },
   "bundle": {
-    "active":  true,
-    "targets": "nsis",
-    "icon":    []
+    "active":    true,
+    "targets":   "nsis",
+    "icon":      [],
+    "resources": {
+      "resources/veloce-core.exe":      ".",
+      "resources/veloce-dashboard.exe": "."
+    }
   },
   "plugins": {
     "dialog": {}
