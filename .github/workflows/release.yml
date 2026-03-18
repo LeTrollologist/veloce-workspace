@@ -20,7 +20,7 @@ permissions:
 jobs:
   release-windows:
     name: Build & release (Windows x64)
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
 
     steps:
       # ── Checkout ─────────────────────────────────────────────────────────────
