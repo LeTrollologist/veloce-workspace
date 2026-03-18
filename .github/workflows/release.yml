@@ -2,21 +2,9 @@
 #
 # Flow:
 #   1. Build veloce-core.exe + veloce-run.exe (Rust, release profile)
-#   2. Build & publish the Dashboard via tauri-action:
-#        - compiles the Tauri app, signs it with TAURI_SIGNING_PRIVATE_KEY
-#        - creates update.json + uploads all artifacts to the GitHub Release
+#   2. Build the Dashboard (unsigned, no updater)
 #   3. Stage binaries into apps/installer/src-tauri/resources/
-#   4. Build the full installer NSIS bundle and attach it to the same release
-#
-# Required repository secrets:
-#   TAURI_SIGNING_PRIVATE_KEY          — ed25519 private key (minisign format)
-#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD — passphrase for the key (may be empty)
-#
-# Generate keypair locally:
-#   npx @tauri-apps/cli signer generate -w veloce-update.key
-# Then add the private key file contents to TAURI_SIGNING_PRIVATE_KEY
-# and paste the printed public key into apps/dashboard/src-tauri/tauri.conf.json
-# under plugins.updater.pubkey.
+#   4. Build the full installer NSIS bundle and attach it to the GitHub Release
 
 name: Release
 
@@ -64,34 +52,14 @@ jobs:
       - name: Build veloce-core.exe and veloce-run.exe
         run: cargo build --release -p veloce-core -p veloce-run
 
-      # ── 2. Build & publish Dashboard (generates update.json) ─────────────────
+      # ── 2. Build Dashboard ────────────────────────────────────────────────────
       - name: Install dashboard npm dependencies
         working-directory: apps/dashboard
         run: npm ci
 
-      - name: Build dashboard and publish release
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN:                        ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY:           ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD:  ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          tagName:       ${{ github.ref_name }}
-          releaseName:   "VeloceNetwork ${{ github.ref_name }}"
-          releaseBody: |
-            ## VeloceNetwork ${{ github.ref_name }}
-
-            See [RELEASE_NOTES_v8-9.md](https://github.com/LeTrollologist/veloce-workspace/blob/main/RELEASE_NOTES_v8-9.md)
-            for the full changelog.
-
-            ### Auto-update
-            Existing dashboard installs will receive an update prompt automatically.
-
-            ### Fresh install
-            Download `VeloceNetwork-Setup-${{ github.ref_name }}-x64.exe` below.
-          releaseDraft:  true     # review before publishing
-          prerelease:    false
-          projectPath:   apps/dashboard
+      - name: Build dashboard
+        working-directory: apps/dashboard
+        run: npx tauri build
 
       # ── 3. Stage binaries for installer ──────────────────────────────────────
       - name: Stage binaries into installer resources
@@ -110,14 +78,12 @@ jobs:
       - name: Build installer NSIS bundle
         working-directory: apps/installer
         run: npx tauri build
-        env:
-          TAURI_SIGNING_PRIVATE_KEY:           ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD:  ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
-      - name: Attach installer and CLI to release
+      - name: Create GitHub Release and attach artifacts
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
+          name:     "VeloceNetwork ${{ github.ref_name }}"
           draft:    true
           files: |
             apps/installer/src-tauri/target/release/bundle/nsis/*.exe

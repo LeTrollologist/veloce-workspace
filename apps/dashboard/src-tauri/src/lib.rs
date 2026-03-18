@@ -405,45 +405,6 @@ async fn mesh_disconnect(
     c.mesh_disconnect(peer_id).await.map_err(|e| e.to_string())
 }
 
-// ── Update commands ───────────────────────────────────────────────────────────
-
-#[derive(Serialize)]
-struct UpdateInfo {
-    version: String,
-    notes:   String,
-}
-
-#[tauri::command]
-async fn check_for_updates(app: tauri::AppHandle) -> Result<Option<UpdateInfo>, String> {
-    use tauri_plugin_updater::UpdaterExt;
-    match app.updater().map_err(|e| e.to_string())?.check().await {
-        Ok(Some(update)) => Ok(Some(UpdateInfo {
-            version: update.version.clone(),
-            notes:   update.body.clone().unwrap_or_default(),
-        })),
-        Ok(None)  => Ok(None),
-        Err(e)    => {
-            // Update check failures are non-fatal (network may be offline)
-            eprintln!("[updater] check failed: {e}");
-            Ok(None)
-        }
-    }
-}
-
-#[tauri::command]
-async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
-    use tauri_plugin_updater::UpdaterExt;
-    let update = app.updater().map_err(|e| e.to_string())?
-        .check().await.map_err(|e| e.to_string())?
-        .ok_or_else(|| "No update available".to_string())?;
-
-    update.download_and_install(|_chunk, _total| {}, || {}).await
-        .map_err(|e| e.to_string())?;
-
-    // Restart the app to apply the update
-    app.restart();
-}
-
 // ── Traffic & Policy commands ─────────────────────────────────────────────────
 
 #[tauri::command]
@@ -471,7 +432,6 @@ async fn policy_reload_cmd(state: tauri::State<'_, AppState>) -> Result<PolicyRu
 
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState { client: Arc::new(Mutex::new(None)) })
         .invoke_handler(tauri::generate_handler![
             connect,
@@ -496,8 +456,6 @@ pub fn run() {
             traffic_stats,
             policy_show,
             policy_reload_cmd,
-            check_for_updates,
-            install_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running VeloceNetwork Dashboard");
