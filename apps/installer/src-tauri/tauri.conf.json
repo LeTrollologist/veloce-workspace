@@ -1,6 +1,6 @@
 {
   "productName": "VeloceNetwork Setup",
-  "version":     "1.0.0",
+  "version":     "1.1.0",
   "identifier":  "com.velocesolutions.installer",
   "build": {
     "frontendDist":      "../dist",
@@ -27,10 +27,12 @@
     "active":    true,
     "targets":   "nsis",
     "icon":      [],
-    "resources": {
-      "resources/veloce-core.exe":      ".",
-      "resources/veloce-dashboard.exe": "."
-    }
+    "resources": [
+      "resources/veloce-core.exe",
+      "resources/veloce-dashboard.exe",
+      "resources/veloce-run.exe",
+      "resources/veloce-launcher.exe"
+    ]
   },
   "plugins": {
     "dialog": {}

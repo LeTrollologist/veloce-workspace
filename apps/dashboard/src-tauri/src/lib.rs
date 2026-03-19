@@ -28,6 +28,39 @@ pub struct AppState {
     pub client: Arc<Mutex<Option<VeloceClient>>>,
 }
 
+// ── Core service helpers (Windows) ────────────────────────────────────────────
+
+const SERVICE_NAME: &str = "VeloceCoreService";
+
+fn core_log_path() -> std::path::PathBuf {
+    std::env::temp_dir().join("veloce-core.log")
+}
+
+#[cfg(windows)]
+fn sc_run(args: &[&str]) -> Result<String, String> {
+    let out = std::process::Command::new("sc")
+        .args(args)
+        .output()
+        .map_err(|e| e.to_string())?;
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
+}
+
+#[cfg(not(windows))]
+fn sc_run(_args: &[&str]) -> Result<String, String> {
+    Ok(String::new())
+}
+
+/// Returns "running" | "stopped" | "starting" | "stopping" | "unknown"
+fn query_service_state() -> String {
+    let output = sc_run(&["query", SERVICE_NAME]).unwrap_or_default();
+    let low = output.to_lowercase();
+    if low.contains("running")  { "running".into()  }
+    else if low.contains("start_pending") { "starting".into() }
+    else if low.contains("stop_pending")  { "stopping".into() }
+    else if low.contains("stopped")       { "stopped".into()  }
+    else                                  { "unknown".into()  }
+}
+
 // ── Serialisable response types ───────────────────────────────────────────────
 
 #[derive(Serialize)]
@@ -428,11 +461,102 @@ async fn policy_reload_cmd(state: tauri::State<'_, AppState>) -> Result<PolicyRu
     c.policy_reload().await.map_err(|e| e.to_string())
 }
 
+// ── Core service commands ──────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct CoreStatus {
+    state:    String,  // "running" | "stopped" | "starting" | "stopping" | "unknown"
+    log_path: String,
+}
+
+#[tauri::command]
+fn core_status() -> CoreStatus {
+    CoreStatus {
+        state:    query_service_state(),
+        log_path: core_log_path().to_string_lossy().into_owned(),
+    }
+}
+
+#[tauri::command]
+fn core_start() -> Result<String, String> {
+    sc_run(&["start", SERVICE_NAME])
+        .map(|_| query_service_state())
+}
+
+#[tauri::command]
+fn core_stop() -> Result<String, String> {
+    sc_run(&["stop", SERVICE_NAME])
+        .map(|_| query_service_state())
+}
+
+#[tauri::command]
+async fn core_restart() -> Result<String, String> {
+    let _ = sc_run(&["stop", SERVICE_NAME]);
+    // Wait briefly for stop to complete
+    tokio::time::sleep(tokio::time::Duration::from_millis(2500)).await;
+    sc_run(&["start", SERVICE_NAME])
+        .map(|_| query_service_state())
+}
+
+/// Returns the last `lines` lines of the core log file.
+#[tauri::command]
+fn core_log_read(lines: usize) -> Vec<String> {
+    let path = core_log_path();
+    let content = std::fs::read_to_string(&path).unwrap_or_default();
+    content.lines()
+        .rev()
+        .take(lines)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .map(|s| s.to_owned())
+        .collect()
+}
+
+/// Spawn a background task that watches the core log file and emits
+/// `"core-log"` events for each new line appended.
+fn start_core_log_watcher(app: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let path = core_log_path();
+        // Seek to end first so we only see new lines
+        let mut offset: u64 = std::fs::metadata(&path)
+            .map(|m| m.len())
+            .unwrap_or(0);
+
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            let Ok(meta) = std::fs::metadata(&path) else { continue };
+            let len = meta.len();
+            if len <= offset { continue; }
+
+            // Read new bytes
+            use std::io::{Read, Seek, SeekFrom};
+            let Ok(mut f) = std::fs::File::open(&path) else { continue };
+            if f.seek(SeekFrom::Start(offset)).is_err() { continue; }
+            let mut buf = Vec::new();
+            if f.read_to_end(&mut buf).is_err() { continue; }
+            offset = len;
+
+            // Split into lines and emit each
+            let text = String::from_utf8_lossy(&buf);
+            for line in text.lines() {
+                if !line.is_empty() {
+                    let _ = app.emit("core-log", line.to_owned());
+                }
+            }
+        }
+    });
+}
+
 // ── App entry point ───────────────────────────────────────────────────────────
 
 pub fn run() {
     tauri::Builder::default()
         .manage(AppState { client: Arc::new(Mutex::new(None)) })
+        .setup(|app| {
+            start_core_log_watcher(app.handle().clone());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             connect,
             disconnect,
@@ -456,6 +580,11 @@ pub fn run() {
             traffic_stats,
             policy_show,
             policy_reload_cmd,
+            core_status,
+            core_start,
+            core_stop,
+            core_restart,
+            core_log_read,
         ])
         .run(tauri::generate_context!())
         .expect("error while running VeloceNetwork Dashboard");

@@ -13,6 +13,7 @@
   import NetworkTab   from './components/NetworkTab.svelte';
   import LogsTab      from './components/LogsTab.svelte';
   import TopologyTab  from './components/TopologyTab.svelte';
+  import CoreTab      from './components/CoreTab.svelte';
 
   // ── Tab state ──────────────────────────────────────────────────────────────
   let activeTab = 'nodes';
@@ -22,6 +23,7 @@
     { id: 'network',  label: 'VeloceNet'  },
     { id: 'logs',     label: 'Logs'       },
     { id: 'topology', label: 'Topology'   },
+    { id: 'core',     label: 'Service'    },
   ];
 
   const APP_VERSION = '__APP_VERSION__';
@@ -190,6 +192,8 @@
       <LogsTab />
     {:else if activeTab === 'topology'}
       <TopologyTab />
+    {:else if activeTab === 'core'}
+      <CoreTab />
     {/if}
   </main>
 </div>
