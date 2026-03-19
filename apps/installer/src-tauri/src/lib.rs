@@ -121,7 +121,11 @@ async fn do_install(
 
     emit_progress(&app, "copy_dash", 35, "Copying VeloceNetwork Dashboard…", "running");
     copy_resource(&app, "veloce-dashboard.exe", &install_dir.join("veloce-dashboard.exe")).await?;
-    emit_progress(&app, "copy_dash", 50, "Dashboard copied.", "ok");
+    emit_progress(&app, "copy_dash", 46, "Dashboard copied.", "ok");
+
+    copy_resource(&app, "veloce-run.exe",      &install_dir.join("veloce-run.exe")).await?;
+    copy_resource(&app, "veloce-launcher.exe", &install_dir.join("veloce-launcher.exe")).await?;
+    emit_progress(&app, "copy_dash", 50, "All binaries copied.", "ok");
 
     // Copy installer itself for the uninstall entry
     if let Ok(self_exe) = std::env::current_exe() {
@@ -497,6 +501,23 @@ fn remove_nrpt() -> anyhow::Result<()> { Ok(()) }
 
 // ── App entry point ───────────────────────────────────────────────────────────
 
+/// Launch the installed Dashboard binary and detach it from the installer process.
+#[tauri::command]
+fn launch_dashboard() {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let install_dir = get_install_dir_from_registry()
+            .unwrap_or_else(|| PathBuf::from(default_install_dir()));
+        let exe = install_dir.join("veloce-dashboard.exe");
+        if exe.exists() {
+            let _ = std::process::Command::new(exe)
+                .creation_flags(0x00000008 /* DETACHED_PROCESS */)
+                .spawn();
+        }
+    }
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -506,6 +527,7 @@ pub fn run() {
             browse_dir,
             start_install,
             start_uninstall,
+            launch_dashboard,
         ])
         .run(tauri::generate_context!())
         .expect("error while running VeloceNetwork Installer");

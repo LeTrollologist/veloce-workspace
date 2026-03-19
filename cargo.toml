@@ -9,10 +9,11 @@ members = [
     "apps/dashboard/src-tauri",
     "apps/installer/src-tauri",
     "apps/veloce-run",
+    "apps/veloce-launcher",
 ]
 
 [workspace.package]
-version     = "1.0.0"
+version     = "1.1.0"
 edition     = "2021"
 authors     = ["VeloceSolutions"]
 license     = "proprietary"

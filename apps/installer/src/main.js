@@ -61,7 +61,7 @@ function renderWelcome() {
     <div class="step-body">
       <div class="welcome-hero">
         <div class="hero-icon">⚡</div>
-        <span class="hero-badge">✦ v0.1.0 Release</span>
+        <span class="hero-badge">✦ v1.1.0 Release</span>
       </div>
       <div class="feature-grid">
         <div class="feature-card">
@@ -341,11 +341,7 @@ function wireDone() {
   document.getElementById("btn-finish").addEventListener("click", async () => {
     const launch = document.getElementById("chk-launch").checked;
     if (launch) {
-      // Best-effort: open the dashboard (it should be in PATH or we know the dir)
-      await invoke("start_install", {}).catch(() => {});  // no-op, dashboard is already installed
-      // Actually just open explorer or shell it
-      const { Command } = await import("@tauri-apps/plugin-shell").catch(() => ({ Command: null }));
-      // Fallback: just close
+      await invoke("launch_dashboard").catch(() => {});
     }
     await win.close();
   });
