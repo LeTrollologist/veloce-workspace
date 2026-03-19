@@ -42,23 +42,30 @@
 | **apps/installer** | Glassmorphic 5-step Tauri installer; service registration, PATH, registry |
 | **apps/veloce-run** | CLI launcher (`--name`, `--hostname`, `--cpu`, `--mem`, `--restarts`, `--watch`, `--detach`) + `mesh identity/join/peers/leave/status/diagnose/ping` + `policy show/reload` |
 
-### Out of Scope — Deferred to v1.0 or Later
+### Completed Beyond v0.9 (v1.0)
 
-| Feature | Target | Reason |
-|---|---|---|
-| NRPT `.vln` routing (system-wide DNS) | v1.0 | Requires UAC elevation; scoped to installer track |
-| WireGuard-NT kernel driver (optional perf backend) | v1.0 | One-time admin elevation required for driver install; userspace Noise_IK path remains fully functional without it — zero-admin promise is preserved |
-| Signed installer with auto-update (winget/scoop) | v1.0 | Release packaging track |
-| Bincode frame versioning / migration | v1.0+ | Requires protocol versioning framework; breaking change |
-| Dashboard force layout + minimap | v1.0+ | Frontend-only; can ship independently |
-| `/metrics` Prometheus endpoint | v1.0+ | New infra dependency; better as a separate crate |
-| `--perf-mode` raw socket bypass | v1.0+ | Deferred until profiling confirms need |
-| Integration test suite (mesh recovery scenarios) | v1.0+ | Build infra work; long tail |
-| `veloce-examples` repo + `veloce-compose.toml` | v1.0+ | Documentation/tooling, not core |
-| C FFI / Python SDK improvements | v2.0 | SDK scope, separate track |
-| Linux port (cgroups v2, Unix domain sockets) | v2.0 | Platform work |
-| Unprivileged user namespaces (rootless Linux) | v2.0 | Dependent on Linux port |
-| Python / Node.js / Go SDK bindings | v2.0 | Dependent on Linux port + C FFI stabilisation |
+| Feature | Released |
+|---|---|
+| WireGuard-NT kernel driver (optional perf backend, one-time admin elevation) | ✅ v1.0 |
+| NRPT `.vln` routing (system-wide DNS without VELOCE_DNS) | ✅ v1.0 |
+| Signed installer + Tauri auto-update | ✅ v1.0 |
+| GitHub Actions CI/CD pipeline | ✅ v1.0 |
+| `SECURITY.md` + `VELOCE_PRINCIPALS.md` manifesto | ✅ v1.0 |
+
+### Out of Scope (Future Releases)
+
+| Feature | Target |
+|---|---|
+| Veloce Compose (`veloce-compose.yml`, `veloce up/down`, port publishing, env injection, health probes) | v1.1 |
+| Persistence & Secrets (named volumes, bind mounts, DPAPI-backed runtime secrets) | v1.2 |
+| Rolling Deployments & Desired State (reconciler, rolling/recreate strategies) | v1.3 |
+| Linux port (cgroups v2, Unix domain sockets) | v2.0 |
+| Unprivileged user namespaces (rootless Linux) | v2.0 |
+| Python / Node.js / Go SDK bindings | v2.0 |
+| HTTP Ingress + TLS (L7 reverse proxy, ACME certs, ClusterIP service type) | v2.1 |
+| Autoscaling + Scheduling (HPA, CronJobs, DaemonSet-equivalent) | v2.2 |
+| Veloce Hub — package manager (signed `.vpack` bundles, Helm-style values) | v2.3 |
+| Multi-Node Control Plane (Raft leader election, distributed desired state, StatefulSets, Namespaces) | v3.0 |
 
 ---
 
@@ -257,8 +264,15 @@ Seven findings (N1–N7) identified and remediated. No new features.
 | v0.7.0 (Security Audit 1 of 3 — IPC, mesh, DNS/SOCKS5 hardening) | ✅ Released |
 | v0.8.0 (Security Audit 2 of 3 — capability enforcement, arg injection, DNS/gossip hardening) | ✅ Released |
 | v0.9.0 (Security Audit 3 of 3 + VM3 join codes, gossip ownership, mesh diagnostic CLI) | ✅ Released |
-| v1.0 (NRPT .vln routing + signed auto-update installer + optional WireGuard-NT perf backend) | Q4 2026 |
-| v2.0 (Linux port + unified SDK bindings) | 2027 |
+| v1.0 (WireGuard-NT + NRPT + signed installer + auto-update + CI/CD) | ✅ Released |
+| v1.1 (Veloce Compose — declarative multi-service, port publishing, health probes) | Q2 2027 |
+| v1.2 (Persistence & Secrets — named volumes, bind mounts, DPAPI secrets) | Q3 2027 |
+| v1.3 (Rolling Deployments — desired-state reconciler, rolling/recreate strategies) | Q4 2027 |
+| v2.0 (Linux port — cgroups v2, Unix sockets, Python/Node/Go SDK bindings) | Q1–Q2 2028 |
+| v2.1 (HTTP Ingress + TLS — L7 reverse proxy, ACME certs) | Q3 2028 |
+| v2.2 (Autoscaling + Scheduling — HPA, CronJobs, DaemonSet-equivalent) | Q4 2028 |
+| v2.3 (Veloce Hub — package manager, signed bundles, Helm-style values) | Q1 2029 |
+| v3.0 (Multi-Node Control Plane — Raft, distributed desired state, StatefulSets, Namespaces) | Q2–Q3 2029 |
 
 ---
 
@@ -312,10 +326,67 @@ This phase dedicated three sequential releases to security, correctness, and sta
 
 ---
 
-### Phase 4 — Linux Engine Swap (v2.0)
+### v1.0.0 ✅ Released
 
+**Production Release — NRPT, WireGuard-NT, Signed Installer**
+
+- [x] NRPT `.vln` routing — `crates/veloce-core/src/nrpt.rs`; Windows Name Resolution Policy Table entry written at service install; every app, browser, and terminal resolves `.vln` without the `VELOCE_DNS` environment variable
+- [x] WireGuard-NT optional kernel driver — one-time admin elevation during install; userspace Noise_IK remains the default; zero-admin promise preserved
+- [x] Signed installer with Tauri auto-update delivery
+- [x] GitHub Actions CI/CD pipeline (`.github/workflows/ci.yml`, `release.yml`)
+- [x] `SECURITY.md` — comprehensive security policy, threat model, and trust boundaries
+- [x] `VELOCE_PRINCIPALS.md` — design manifesto (zero-admin, zero kernel deps, encrypted mesh, capability-based security)
+- [x] Workspace version bumped to `1.0.0`
+
+---
+
+### Phase 4 — Docker/K3s Competitive Parity (v1.1 – v3.0)
+
+**v1.1 — Veloce Compose**
+- `veloce-compose.yml` declarative multi-service format; maps onto existing `SpawnNodeMsg` / `NetRegisterHost` / `RestartPolicy` IPC primitives
+- `veloce up` / `veloce down` CLI; port publishing (`ports: ["8080:80"]`) via new `TcpListener` in `veloce-net`
+- Environment injection (`environment:`, `--env`) — `Vec<(String,String)>` field on `SpawnNodeMsg` fed into `CreateProcessW`
+- HTTP / TCP / exec health checks (`healthcheck:`) — extends existing health loop in `veloce-core/src/job.rs`
+- `depends_on:` ordering with `condition: service_healthy` support
+
+**v1.2 — Persistence & Secrets**
+- Named volumes — `VolumeRegistry` maps name → NTFS path under `%PROGRAMDATA%\VeloceSolutions\volumes\`
+- Bind mounts — host path injection; AppContainer allowlist updated when `use_appcontainer: true`
+- DPAPI-backed runtime secrets — `SecretsVault` using `CryptProtectData`/`CryptUnprotectData`; injected at spawn, never plaintext on disk after initial registration
+- `veloce secret set/rm/list` CLI; new `ReadSecrets` capability in policy engine
+
+**v1.3 — Rolling Deployments & Desired State**
+- Desired-state reconciler — `DesiredState` field on `CoreState`; cluster-level reconciliation loop
+- Rolling update strategy — drain one instance, await health check, drain next
+- Recreate strategy — stop all, start new version
+- `veloce ps` / `veloce status` — desired vs. actual replica counts, health state, last restart
+
+**v2.0 — Linux Engine Swap**
 - Replace named pipes → Unix domain sockets (same VELC framing, same SDK API)
-- Replace Job Objects → cgroups v2 (CPU quota + `memory.max`) + process groups for clean tree kill
+- Replace Job Objects → cgroups v2 (`cpu.max` + `memory.max`) + process groups for clean tree kill
 - Unprivileged user namespaces for rootless sandboxing (equivalent to AppContainer on Linux)
-- Swappable backend: `veloce-core` auto-detects OS at compile time and links the right driver module
-- Unified Python, Node.js, and Go SDK bindings via the existing C FFI layer
+- `systemd` service registration replacing Windows service install path
+- Unified Python, Node.js, and Go SDK bindings via the existing C FFI layer (`libveloce_sdk.so`)
+
+**v2.1 — HTTP Ingress & Service Routing**
+- `veloce-ingress` module — Layer-7 HTTP/HTTPS reverse proxy; reads `ingress:` block from Compose
+- Host-based and path-based routing; TLS termination via ACME (`http-01`) / self-signed local CA
+- `type: ClusterIP` — stable `127.x.x.x` virtual IP formalising the existing SOCKS5 routing
+
+**v2.2 — Autoscaling & Scheduling**
+- Horizontal Process Autoscaler — metrics-driven replica target using existing `AtomicU64` traffic counters and `NodeTable::query_all_resources()`
+- CronJobs — `cron:` block in Compose; `CronScheduler` fires `SpawnNodeMsg`; `lifetime_secs` auto-terminates
+- DaemonSet-equivalent — `mode: daemon`; reconciler tracks `MeshState::peers`, maintains one replica per connected mesh peer
+
+**v2.3 — Veloce Hub Package Manager**
+- `veloce install <package>` downloads a signed `.vpack` bundle (ZIP: `veloce-compose.yml` + config + sig)
+- Trusted key pinned at install; unsigned bundles rejected
+- Helm-style `{{ .Values.port }}` parameter substitution; manifest composition via `include:` blocks
+- Plugin hooks (`hooks: pre_start: / post_stop:`) via `CreateProcessW` / `fork/exec`
+
+**v3.0 — Multi-Node Control Plane**
+- New `veloce-control` crate — Raft-based leader election over existing Noise_IK mesh channels; extends `GossipEntry` in `veloce-mesh/src/peer.rs`
+- Distributed desired state — leader manages services across all mesh nodes; remote spawn via mesh gossip protocol
+- Multi-node failover — `MeshPeerGone` event (wire type `0x57`) triggers re-election
+- StatefulSets — ordered, identity-preserving deployment; stable hostnames (`svc-0.vln`, `svc-1.vln`)
+- Namespace isolation — `namespace:` in Compose → Policy scope + DNS sub-zone (`.ns.vln`); mesh ACLs enforce inter-namespace network isolation

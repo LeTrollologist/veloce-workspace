@@ -232,11 +232,18 @@ Think of it as a stripped-down version of Kubernetes Service Mesh ideas, designe
 | **Security Audit 1 of 3** — IPC hardening, mesh hardening, DNS/SOCKS5 scope restriction | ✅ v0.7 |
 | **Security Audit 2 of 3** — IPC capability enforcement, arg injection fix, DNS/gossip hardening | ✅ v0.8 |
 | **Security Audit 3 of 3** — VM3 join codes, gossip ownership, re-sync, mesh diagnostic CLI | ✅ v0.9 |
-| WireGuard-NT kernel driver *(optional perf backend — one-time admin elevation, userspace Noise_IK remains default)* | 📋 v1.0 |
-| NRPT `.vln` routing (system-wide DNS without `VELOCE_DNS`) | 📋 v1.0 |
-| Signed installer with auto-update (winget/scoop) | 📋 v1.0 |
+| WireGuard-NT kernel driver *(optional perf backend — one-time admin elevation, userspace Noise_IK remains default)* | ✅ v1.0 |
+| NRPT `.vln` routing (system-wide DNS without `VELOCE_DNS`) | ✅ v1.0 |
+| Signed installer + Tauri auto-update | ✅ v1.0 |
+| Veloce Compose (`veloce-compose.yml`, `veloce up/down`, port publishing, env injection, health probes) | 📋 v1.1 |
+| Persistence & Secrets (named volumes, bind mounts, DPAPI-backed runtime secrets) | 📋 v1.2 |
+| Rolling Deployments & Desired State (reconciler, rolling/recreate strategies, `veloce status`) | 📋 v1.3 |
 | Linux port (cgroups v2 + Unix sockets) | 📋 v2.0 |
 | Python / Node.js / Go SDK bindings | 📋 v2.0 |
+| HTTP Ingress + TLS (L7 reverse proxy, ACME certs, ClusterIP service type) | 📋 v2.1 |
+| Autoscaling + Scheduling (HPA, CronJobs, DaemonSet-equivalent) | 📋 v2.2 |
+| Veloce Hub — package manager (signed `.vpack` bundles, Helm-style values) | 📋 v2.3 |
+| Multi-Node Control Plane (Raft leader election, distributed desired state, StatefulSets, Namespaces) | 📋 v3.0 |
 
 ### v0.7 — Security Audit 1 of 3 ✅
 
@@ -276,29 +283,81 @@ improvements that close gaps identified during the audit cycle:
 - **New `veloce-run mesh` subcommands** — `mesh status` (connected peers + latency), `mesh diagnose` (connectivity health report), `mesh ping <peer-id>` (latency round-trip)
 - **`MeshPingPeer` / `MeshPingResult` IPC messages** (0x58 / 0x59) — SDK-accessible ping round-trip for peer latency measurement
 
-After v0.9 ships stable, **v1.0** delivers NRPT-based system-wide `.vln` routing, a signed
-installer with automatic update delivery, and an **optional** WireGuard-NT kernel backend
-for users who want hardware-offloaded throughput and are willing to accept a one-time admin
-elevation during installation. The userspace Noise_IK path remains the default — the
-zero-admin promise is preserved.
+### v1.0 — Production Release ✅
 
-### Future Features — Deferred to v1.0 or Later
+NRPT-based system-wide `.vln` routing — every app, browser, and terminal resolves `.vln` hostnames without the `VELOCE_DNS` environment variable. Signed installer with Tauri auto-update. Optional WireGuard-NT kernel backend for hardware-offloaded mesh throughput; the userspace Noise_IK path remains the default — zero-admin promise preserved. GitHub Actions CI/CD pipeline.
 
-The following items were evaluated and explicitly deferred. They are not in scope for any
-patch release prior to v1.0.
+### v1.1 — Veloce Compose 📋
 
-| Item | Reason Deferred |
-|------|-----------------|
-| NRPT `.vln` routing (system-wide DNS) | Requires UAC elevation; scoped to installer track |
-| WireGuard-NT kernel driver | Optional perf backend; one-time admin elevation required; userspace Noise_IK remains default |
-| Bincode frame versioning / migration | Requires protocol versioning framework; breaking change |
-| Dashboard force layout + minimap | Frontend-only; can ship independently |
-| `/metrics` Prometheus endpoint | New infra dependency; better as a separate crate |
-| Integration test suite (mesh recovery) | Build infra work; long tail |
-| `veloce-examples` repo + `veloce-compose.toml` | Documentation/tooling, not core |
-| C FFI / Python SDK improvements | SDK scope, separate track |
-| winget / scoop installer package | v1.0 release track |
-| `--perf-mode` raw socket bypass | Risky footgun; deferred until profiling confirms need |
+Closes the Docker Compose parity gap. Nearly all underlying primitives exist; this release adds a declarative YAML orchestration layer on top:
+
+- `veloce-compose.yml` — service definitions mapping to existing IPC primitives (`SpawnNodeMsg`, `NetRegisterHost`, `RestartPolicy`)
+- `veloce up` / `veloce down` — start and stop entire multi-service stacks with one command
+- **Port publishing** (`ports: ["8080:80"]`) — bind a host TCP listener and forward to a node's internal port; no kernel involvement, no admin required
+- **Environment injection** (`environment:` block, `--env` flag) — fed into `CreateProcessW` environment block at spawn
+- **HTTP / TCP / exec health checks** (`healthcheck:`) — extends the existing health loop; results feed `RestartPolicy`
+- **`depends_on:` ordering** — Compose processor waits for dependency health before starting dependents
+
+### v1.2 — Persistence & Secrets 📋
+
+Enables stateful workloads:
+
+- **Named volumes** — `VolumeRegistry` maps volume names to NTFS paths; mounted into nodes at spawn
+- **Bind mounts** — host path injection with AppContainer allowlist support
+- **DPAPI-backed runtime secrets** — `SecretsVault` using Windows `CryptProtectData`/`CryptUnprotectData`; secrets injected into the process environment at spawn, never written to disk as plaintext; `veloce secret set/rm/list` CLI
+
+### v1.3 — Rolling Deployments & Desired State 📋
+
+Closes the Kubernetes Deployment controller gap:
+
+- **Desired-state reconciler** — background loop drives actual node state toward a declared target; cluster-level, not per-node
+- **Rolling update strategy** — drain one instance, await health check pass, drain next; safe zero-downtime deploys
+- **Recreate strategy** — stop all, start new version; for schema-migration workloads
+- **`depends_on: condition: service_healthy`** — blocks start until dependency health check passes
+- **`veloce ps` / `veloce status`** — desired vs. actual replica counts, health state, last restart timestamp
+
+### v2.0 — Linux Port & SDK Bindings 📋
+
+Cross-platform foundation. Same VELC framing, same SDK API:
+
+- cgroups v2 (`cpu.max` + `memory.max` + process groups) replacing Windows Job Objects
+- Unix domain sockets replacing named pipes (`#[cfg(unix)]` split already partially in place)
+- Unprivileged user namespaces for rootless sandboxing (Linux equivalent of AppContainer)
+- `systemd` service registration
+- Python, Node.js, and Go SDK bindings via the existing C FFI layer (`libveloce_sdk.so`)
+
+### v2.1 — HTTP Ingress & TLS 📋
+
+- Layer-7 HTTP/HTTPS reverse proxy (`veloce-ingress` module within `veloce-net`)
+- Host-based and path-based routing: `app.vln/api → service-a`, `app.vln/ → service-b`
+- TLS termination via ACME (Let's Encrypt `http-01`) for public deployments; self-signed local CA for development
+- `type: ClusterIP` service type formalising the existing SOCKS5 internal routing with a stable loopback virtual IP
+
+### v2.2 — Autoscaling & Scheduling 📋
+
+- **Horizontal Process Autoscaler (HPA)** — metrics-driven replica target; polls CPU%, memory, and the existing per-tunnel/per-host `AtomicU64` traffic counters; adjusts replica count in `DesiredState`
+- **CronJobs** — `cron:` block in Compose; fires `SpawnNodeMsg` on schedule; existing `lifetime_secs` auto-terminates the job
+- **DaemonSet-equivalent** — `mode: daemon`; reconciler tracks connected mesh peers and maintains one replica per peer
+
+### v2.3 — Veloce Hub 📋
+
+Helm-equivalent ecosystem layer:
+
+- `veloce install <package>` downloads a signed `.vpack` bundle (ZIP: `veloce-compose.yml` + config + signature)
+- Bundle signing verified against a trusted key pinned at install time
+- Helm-style template values (`{{ .Values.port }}` substitution)
+- Manifest composition via `include:` blocks
+- Plugin hooks (`hooks: pre_start: / post_stop:`) executed via `CreateProcessW` (Windows) or `fork/exec` (Linux)
+
+### v3.0 — Multi-Node Control Plane 📋
+
+Full K3s competitive parity. The existing Noise_IK mesh + LWW CRDT gossip is the natural foundation:
+
+- **Raft-based leader election** (`veloce-control` crate) running over existing Noise_IK mesh channels
+- **Distributed desired state** — leader manages services across all mesh nodes; remote spawn issued via mesh gossip
+- **Multi-node failover** — `MeshPeerGone` event (wire type `0x57`) triggers re-election
+- **StatefulSets** — ordered, identity-preserving deployment with stable `.vln` hostnames (`svc-0.vln`, `svc-1.vln`)
+- **Namespace isolation** — `namespace:` in Compose maps to a Policy scope + DNS sub-zone (`.ns.vln`); mesh ACLs enforce inter-namespace network isolation
 
 ---
 
