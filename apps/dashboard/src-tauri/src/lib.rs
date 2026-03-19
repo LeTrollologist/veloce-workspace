@@ -25,7 +25,10 @@ use veloce_sdk::VeloceClient;
 // ── Managed state ─────────────────────────────────────────────────────────────
 
 pub struct AppState {
-    pub client: Arc<Mutex<Option<VeloceClient>>>,
+    pub client:   Arc<Mutex<Option<VeloceClient>>>,
+    /// Handles for background tasks spawned by `connect()`.
+    /// Aborted on `disconnect()` so they don't outlive the connection.
+    pub bg_tasks: Mutex<Vec<tokio::task::JoinHandle<()>>>,
 }
 
 // ── Serialisable response types ───────────────────────────────────────────────
@@ -97,7 +100,7 @@ async fn connect(
     // Forward log chunks → "node-log" Tauri events
     let mut log_stream = client.subscribe_all_logs();
     let app_log = app.clone();
-    tokio::spawn(async move {
+    let h_log = tokio::spawn(async move {
         while let Some(chunk) = log_stream.next().await {
             let stream_str = match chunk.stream {
                 veloce_ipc::message::LogStream::Stdout => "stdout",
@@ -114,7 +117,7 @@ async fn connect(
     // Forward node lifecycle events → "node-event" Tauri events
     let mut ev_stream = client.subscribe_all_events();
     let app_ev = app.clone();
-    tokio::spawn(async move {
+    let h_ev = tokio::spawn(async move {
         while let Some(ev) = ev_stream.next().await {
             let _ = app_ev.emit("node-event", NodeEventPayload {
                 node_id: ev.node_id.to_string(),
@@ -126,7 +129,7 @@ async fn connect(
     // Push traffic snapshot every 2 s → "traffic-update" Tauri events
     let client_traffic = Arc::clone(&state.client);
     let app_traffic = app.clone();
-    tokio::spawn(async move {
+    let h_traffic = tokio::spawn(async move {
         loop {
             tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
             let mut guard = client_traffic.lock().await;
@@ -141,12 +144,20 @@ async fn connect(
         }
     });
 
+    // Store handles so disconnect() can abort them
+    *state.bg_tasks.lock().await = vec![h_log, h_ev, h_traffic];
+
     *guard = Some(client);
     Ok("connected".into())
 }
 
 #[tauri::command]
 async fn disconnect(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    // Abort background tasks before dropping the client so they don't
+    // keep running (or emitting stale events) after the connection closes.
+    for handle in state.bg_tasks.lock().await.drain(..) {
+        handle.abort();
+    }
     *state.client.lock().await = None;
     Ok(())
 }
@@ -430,7 +441,10 @@ async fn policy_reload_cmd(state: tauri::State<'_, AppState>) -> Result<PolicyRu
 
 pub fn run() {
     tauri::Builder::default()
-        .manage(AppState { client: Arc::new(Mutex::new(None)) })
+        .manage(AppState {
+            client:   Arc::new(Mutex::new(None)),
+            bg_tasks: Mutex::new(Vec::new()),
+        })
         .invoke_handler(tauri::generate_handler![
             connect,
             disconnect,

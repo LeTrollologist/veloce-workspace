@@ -135,7 +135,7 @@ where
                     self.read_buf.extend_from_slice(&buf[..n]);
 
                     loop {
-                        match Codec::decode_safe(&mut self.read_buf) {
+                        match Codec::decode(&mut self.read_buf) {
                             Ok(Some((_hdr, env))) => {
                                 if let Err(e) = self.handle(env).await {
                                     tracing::warn!("handler error: {e:#}");
@@ -178,8 +178,15 @@ where
                 }
 
                 // ── PSK gate ───────────────────────────────────────────────
-                // Skip in dev mode: set VELOCE_SKIP_PSK=1 in the environment.
+                // VELOCE_SKIP_PSK=1 bypasses authentication — dev use only.
                 let skip_psk = std::env::var("VELOCE_SKIP_PSK").as_deref() == Ok("1");
+                #[cfg(not(debug_assertions))]
+                if skip_psk {
+                    tracing::error!(
+                        "VELOCE_SKIP_PSK is set in a release build — \
+                         PSK authentication is disabled. This is insecure."
+                    );
+                }
                 if !skip_psk {
                     let ok = match hs.psk_hash {
                         Some(received) => received == *self.state.psk(),

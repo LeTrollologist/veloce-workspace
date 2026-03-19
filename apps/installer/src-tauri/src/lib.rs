@@ -2,11 +2,18 @@
 VeloceNetwork Installer — Tauri 2 backend.
 
 Exposes Tauri commands for the glassmorphic installer wizard:
-  - `check_admin`     — returns true if running elevated
-  - `get_default_dir` — returns default install path
+  - `check_admin`     — returns true if running elevated (informational only)
+  - `get_default_dir` — returns default install path (LOCALAPPDATA, no admin needed)
   - `browse_dir`      — opens a native folder picker
   - `start_install`   — performs the installation, emitting progress events
   - `start_uninstall` — removes VeloceNetwork from the machine
+
+No-Admin design:
+  - Service registered as a per-user Task Scheduler task (schtasks, no SCM needed)
+  - PATH written to HKCU\Environment (no HKLM write needed)
+  - Uninstaller registered in HKCU (no HKLM write needed)
+  - Shortcuts created via IShellLinkW COM (no PowerShell subprocess)
+  - Default install directory is %LOCALAPPDATA%\VeloceNetwork
 
 Progress events emitted to the frontend:
   - `"install-progress"` — `{ step, pct, message, status }`
@@ -47,22 +54,45 @@ fn emit_progress(app: &tauri::AppHandle, step: &str, pct: u8, message: &str, sta
 }
 
 /// True when the process has Administrator privilege.
-/// Uses a write-probe to %ProgramFiles% rather than Win32 token introspection.
+/// Uses Win32 token introspection — informational only.
+/// The installer does not require elevation in normal operation.
+#[cfg(windows)]
 fn is_elevated() -> bool {
-    let probe = std::path::Path::new(r"C:\Program Files\.veloce_admin_check");
-    match std::fs::write(probe, b"") {
-        Ok(_) => { let _ = std::fs::remove_file(probe); true }
-        Err(_) => false,
+    use windows::Win32::{
+        Foundation::{CloseHandle, HANDLE},
+        Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY},
+        System::Threading::{GetCurrentProcess, OpenProcessToken},
+    };
+    unsafe {
+        let mut token = HANDLE::default();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).is_err() {
+            return false;
+        }
+        let mut elevation = TOKEN_ELEVATION::default();
+        let mut returned = 0u32;
+        let ok = GetTokenInformation(
+            token,
+            TokenElevation,
+            Some(&mut elevation as *mut _ as *mut _),
+            std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+            &mut returned,
+        ).is_ok();
+        let _ = CloseHandle(token);
+        ok && elevation.TokenIsElevated != 0
     }
 }
 
+#[cfg(not(windows))]
+fn is_elevated() -> bool { false }
+
+/// Default install directory — prefers LOCALAPPDATA (no admin required).
 fn default_install_dir() -> String {
-    std::env::var("ProgramFiles")
+    std::env::var("LOCALAPPDATA")
         .map(|p| format!("{}\\VeloceNetwork", p))
         .unwrap_or_else(|_| {
-            std::env::var("LOCALAPPDATA")
+            std::env::var("ProgramFiles")
                 .map(|p| format!("{}\\VeloceNetwork", p))
-                .unwrap_or_else(|_| r"C:\Program Files\VeloceNetwork".into())
+                .unwrap_or_else(|_| r"C:\Users\Public\VeloceNetwork".into())
         })
 }
 
@@ -115,7 +145,7 @@ async fn do_install(
     emit_progress(&app, "directory", 10, "Installation directory ready.", "ok");
 
     // ── 2. Copy bundled binaries ───────────────────────────────────────────
-    emit_progress(&app, "copy_core", 15, "Copying VeloceCore service…", "running");
+    emit_progress(&app, "copy_core", 15, "Copying VeloceCore…", "running");
     copy_resource(&app, "veloce-core.exe", &install_dir.join("veloce-core.exe")).await?;
     emit_progress(&app, "copy_core", 30, "VeloceCore copied.", "ok");
 
@@ -128,14 +158,14 @@ async fn do_install(
         let _ = tokio::fs::copy(&self_exe, install_dir.join("uninstall.exe")).await;
     }
 
-    // ── 3. Windows service ─────────────────────────────────────────────────
-    emit_progress(&app, "service", 55, "Registering VeloceCore service…", "running");
+    // ── 3. Schedule startup task (no SCM / no admin required) ─────────────
+    emit_progress(&app, "service", 55, "Scheduling startup task…", "running");
     tokio::task::spawn_blocking({
         let dir   = install_dir.clone();
         let start = opts.start_service;
-        move || install_service(&dir, start)
+        move || schedule_startup_task(&dir, start)
     }).await??;
-    emit_progress(&app, "service", 68, "Service registered.", "ok");
+    emit_progress(&app, "service", 68, "Startup task scheduled.", "ok");
 
     // ── 4. Shortcuts ───────────────────────────────────────────────────────
     if opts.start_menu {
@@ -160,14 +190,14 @@ async fn do_install(
         emit_progress(&app, "shortcuts", 82, "Desktop shortcut created.", "ok");
     }
 
-    // ── 5. PATH ────────────────────────────────────────────────────────────
+    // ── 5. PATH (HKCU — no admin required) ────────────────────────────────
     if opts.add_to_path {
-        emit_progress(&app, "path", 84, "Adding to system PATH…", "running");
+        emit_progress(&app, "path", 84, "Adding to user PATH…", "running");
         let _ = add_to_path(&install_dir);
         emit_progress(&app, "path", 87, "PATH updated.", "ok");
     }
 
-    // ── 6. Uninstaller registry entry ──────────────────────────────────────
+    // ── 6. Uninstaller registry entry (HKCU — no admin required) ──────────
     emit_progress(&app, "registry", 90, "Registering uninstaller…", "running");
     let _ = register_uninstaller(&install_dir, opts.install_dir.as_str());
     emit_progress(&app, "registry", 95, "Uninstaller registered.", "ok");
@@ -180,9 +210,9 @@ async fn do_uninstall(app: tauri::AppHandle) -> anyhow::Result<()> {
     let install_dir = get_install_dir_from_registry()
         .unwrap_or_else(|| PathBuf::from(default_install_dir()));
 
-    emit_progress(&app, "stop_service", 10, "Stopping VeloceCore service…", "running");
-    let _ = tokio::task::spawn_blocking(stop_and_remove_service).await?;
-    emit_progress(&app, "stop_service", 30, "Service removed.", "ok");
+    emit_progress(&app, "stop_service", 10, "Stopping VeloceCore task…", "running");
+    let _ = tokio::task::spawn_blocking(remove_startup_task).await?;
+    emit_progress(&app, "stop_service", 30, "Task removed.", "ok");
 
     emit_progress(&app, "cleanup", 40, "Removing shortcuts…", "running");
     let _ = remove_shortcuts();
@@ -205,7 +235,8 @@ async fn do_uninstall(app: tauri::AppHandle) -> anyhow::Result<()> {
 // ── Platform helpers ──────────────────────────────────────────────────────────
 
 /// Copy a bundled resource to a destination path.
-/// During development, binaries aren't bundled — this emits a warning instead of failing.
+/// Returns an error if the resource is not bundled — installation cannot proceed
+/// without the required binaries.
 async fn copy_resource(
     app:  &tauri::AppHandle,
     name: &str,
@@ -217,8 +248,11 @@ async fn copy_resource(
     let src = resource_dir.join(name);
 
     if !src.exists() {
-        eprintln!("[installer] resource not bundled: {}", src.display());
-        return Ok(());
+        anyhow::bail!(
+            "Required binary '{}' is not bundled in this installer. \
+             Please use an official release build.",
+            name
+        );
     }
 
     tokio::fs::copy(&src, dest)
@@ -227,99 +261,145 @@ async fn copy_resource(
         .map_err(|e| anyhow::anyhow!("copy {}: {e}", name))
 }
 
+/// Register VeloceCore as a per-user Task Scheduler task.
+/// Runs as the current user with LIMITED rights — no SCM or admin required.
+/// VeloceCore is launched with the `run` subcommand (foreground/daemon mode).
 #[cfg(windows)]
-fn install_service(install_dir: &Path, start_now: bool) -> anyhow::Result<()> {
-    use std::ffi::OsString;
-    use windows_service::service::{
-        ServiceAccess, ServiceErrorControl, ServiceInfo,
-        ServiceStartType, ServiceType,
-    };
-    use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
-
-    let manager = ServiceManager::local_computer(
-        None::<&str>,
-        ServiceManagerAccess::CREATE_SERVICE,
-    )?;
+fn schedule_startup_task(install_dir: &Path, start_now: bool) -> anyhow::Result<()> {
+    use std::process::Command;
 
     let exe = install_dir.join("veloce-core.exe");
-    let info = ServiceInfo {
-        name:             OsString::from("VeloceCoreService"),
-        display_name:     OsString::from("VeloceNetwork Core"),
-        service_type:     ServiceType::OWN_PROCESS,
-        start_type:       ServiceStartType::AutoStart,
-        error_control:    ServiceErrorControl::Normal,
-        executable_path:  exe,
-        launch_arguments: vec![],
-        dependencies:     vec![],
-        account_name:     None,
-        account_password: None,
-    };
+    // Wrap path in quotes so spaces in directory names are handled correctly.
+    let exe_cmd = format!("\"{}\" run", exe.to_string_lossy());
 
-    let svc = manager.create_service(
-        &info,
-        ServiceAccess::CHANGE_CONFIG | ServiceAccess::START,
-    )?;
+    let status = Command::new("schtasks")
+        .args([
+            "/Create", "/F",
+            "/SC",    "ONLOGON",
+            "/RL",    "LIMITED",
+            "/TN",    r"VeloceNetwork\VeloceCore",
+            "/TR",    &exe_cmd,
+            "/DELAY", "0000:30",  // 30 s grace period after logon
+        ])
+        .status()
+        .map_err(|e| anyhow::anyhow!("schtasks unavailable: {e}"))?;
+
+    if !status.success() {
+        anyhow::bail!(
+            "Failed to register startup task (schtasks exited {}). \
+             Ensure the Task Scheduler service is running.",
+            status
+        );
+    }
 
     if start_now {
-        let args: &[&std::ffi::OsStr] = &[];
-        svc.start(args)?;
+        let _ = Command::new("schtasks")
+            .args(["/Run", "/TN", r"VeloceNetwork\VeloceCore"])
+            .status();
     }
+
     Ok(())
 }
 
 #[cfg(not(windows))]
-fn install_service(_dir: &Path, _start: bool) -> anyhow::Result<()> { Ok(()) }
+fn schedule_startup_task(_dir: &Path, _start: bool) -> anyhow::Result<()> { Ok(()) }
 
+/// End and delete the VeloceCore Task Scheduler task.
 #[cfg(windows)]
-fn stop_and_remove_service() -> anyhow::Result<()> {
-    use windows_service::service::{ServiceAccess, ServiceState};
-    use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
-    use std::time::Duration;
+fn remove_startup_task() -> anyhow::Result<()> {
+    use std::process::Command;
 
-    let manager = ServiceManager::local_computer(
-        None::<&str>,
-        ServiceManagerAccess::CONNECT,
-    )?;
-    let svc = manager.open_service(
-        "VeloceCoreService",
-        ServiceAccess::STOP | ServiceAccess::DELETE | ServiceAccess::QUERY_STATUS,
-    )?;
+    // Stop the task if running (ignore errors — may already be stopped)
+    let _ = Command::new("schtasks")
+        .args(["/End", "/TN", r"VeloceNetwork\VeloceCore"])
+        .status();
 
-    if let Ok(status) = svc.query_status() {
-        if status.current_state != ServiceState::Stopped {
-            let _ = svc.stop();
-            let deadline = std::time::Instant::now() + Duration::from_secs(10);
-            loop {
-                std::thread::sleep(Duration::from_millis(300));
-                if let Ok(s) = svc.query_status() {
-                    if s.current_state == ServiceState::Stopped { break; }
-                }
-                if std::time::Instant::now() > deadline { break; }
-            }
-        }
+    let status = Command::new("schtasks")
+        .args(["/Delete", "/F", "/TN", r"VeloceNetwork\VeloceCore"])
+        .status()
+        .map_err(|e| anyhow::anyhow!("schtasks unavailable: {e}"))?;
+
+    if !status.success() {
+        anyhow::bail!("Failed to delete startup task (schtasks exited {})", status);
     }
-    svc.delete()?;
+
     Ok(())
 }
 
 #[cfg(not(windows))]
-fn stop_and_remove_service() -> anyhow::Result<()> { Ok(()) }
+fn remove_startup_task() -> anyhow::Result<()> { Ok(()) }
 
-/// Create a Windows `.lnk` shortcut via PowerShell.
+/// Create a Windows `.lnk` shortcut using the IShellLinkW COM interface.
+///
+/// Previously used a PowerShell subprocess with unsanitised path strings
+/// interpolated into a single-quoted PS script — vulnerable to injection via
+/// paths containing single quotes (e.g. `C:\Users\O'Brien\Desktop`).
+/// The COM approach has no injection surface and requires no external process.
+#[cfg(windows)]
 fn create_shortcut(target: &Path, link: &Path, description: &str) -> anyhow::Result<()> {
-    let script = format!(
-        "$ws = New-Object -ComObject WScript.Shell; \
-         $s = $ws.CreateShortcut('{link}'); \
-         $s.TargetPath = '{target}'; \
-         $s.Description = '{desc}'; \
-         $s.Save()",
-        link   = link.display(),
-        target = target.display(),
-        desc   = description,
-    );
-    std::process::Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-        .output()?;
+    use windows::{
+        core::PCWSTR,
+        Win32::{
+            Foundation::BOOL,
+            System::Com::{
+                CoCreateInstance, CoInitializeEx, CoUninitialize, IPersistFile,
+                CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
+            },
+            UI::Shell::{IShellLinkW, ShellLink},
+        },
+    };
+
+    fn to_wide_nul(s: &str) -> Vec<u16> {
+        s.encode_utf16().chain(std::iter::once(0u16)).collect()
+    }
+
+    unsafe {
+        // S_OK (0) = we initialised; S_FALSE (1) = already init'd on this thread.
+        // Both are success. Only call CoUninitialize if we did the initialisation.
+        let hr = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        if hr.is_err() {
+            anyhow::bail!("CoInitializeEx failed: {:?}", hr);
+        }
+        let we_initialized = hr.0 == 0;
+
+        let result = (|| -> anyhow::Result<()> {
+            let sl: IShellLinkW =
+                CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)
+                    .map_err(|e| anyhow::anyhow!("CoCreateInstance(IShellLinkW): {e}"))?;
+
+            let target_w = to_wide_nul(&target.to_string_lossy());
+            sl.SetPath(PCWSTR(target_w.as_ptr()))
+                .map_err(|e| anyhow::anyhow!("IShellLinkW::SetPath: {e}"))?;
+
+            let desc_w = to_wide_nul(description);
+            sl.SetDescription(PCWSTR(desc_w.as_ptr()))
+                .map_err(|e| anyhow::anyhow!("IShellLinkW::SetDescription: {e}"))?;
+
+            // Ensure the parent directory exists before saving the .lnk file
+            if let Some(parent) = link.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+
+            let persist: IPersistFile = sl.cast()
+                .map_err(|e| anyhow::anyhow!("cast to IPersistFile: {e}"))?;
+
+            let link_w = to_wide_nul(&link.to_string_lossy());
+            persist.Save(PCWSTR(link_w.as_ptr()), BOOL(1))
+                .map_err(|e| anyhow::anyhow!("IPersistFile::Save: {e}"))?;
+
+            Ok(())
+        })();
+
+        if we_initialized {
+            CoUninitialize();
+        }
+
+        result
+    }
+}
+
+#[cfg(not(windows))]
+fn create_shortcut(_target: &Path, _link: &Path, _description: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
@@ -334,18 +414,25 @@ fn remove_shortcuts() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Add the install directory to HKCU\Environment PATH (no admin required).
+/// Broadcasts WM_SETTINGCHANGE so running shells pick up the change immediately.
 #[cfg(windows)]
 fn add_to_path(dir: &Path) -> anyhow::Result<()> {
     use winreg::{enums::*, RegKey};
-    let hklm  = RegKey::predef(HKEY_LOCAL_MACHINE);
-    let key   = hklm.open_subkey_with_flags(
-        r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
-        KEY_READ | KEY_WRITE,
-    )?;
-    let current: String = key.get_value("PATH")?;
-    let dir_str: String = dir.to_string_lossy().into_owned();
+
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let (key, _) = hkcu.create_subkey(r"Environment")?;
+    let current: String = key.get_value("PATH").unwrap_or_default();
+    let dir_str = dir.to_string_lossy().into_owned();
+
     if !current.to_lowercase().contains(&dir_str.to_lowercase() as &str) {
-        key.set_value("PATH", &format!("{};{}", current, dir_str))?;
+        let new_path = if current.is_empty() {
+            dir_str
+        } else {
+            format!("{};{}", current, dir_str)
+        };
+        key.set_value("PATH", &new_path)?;
+        broadcast_env_change();
     }
     Ok(())
 }
@@ -353,44 +440,69 @@ fn add_to_path(dir: &Path) -> anyhow::Result<()> {
 #[cfg(not(windows))]
 fn add_to_path(_dir: &Path) -> anyhow::Result<()> { Ok(()) }
 
+/// Remove the install directory from HKCU\Environment PATH.
 #[cfg(windows)]
 fn remove_from_path(dir: &Path) -> anyhow::Result<()> {
     use winreg::{enums::*, RegKey};
-    let hklm  = RegKey::predef(HKEY_LOCAL_MACHINE);
-    let key   = hklm.open_subkey_with_flags(
-        r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
-        KEY_READ | KEY_WRITE,
-    )?;
-    let current: String = key.get_value("PATH")?;
-    let dir_lower: String = dir.to_string_lossy().to_lowercase();
-    let parts: Vec<&str> = current
-        .split(';')
-        .filter(|p| p.to_lowercase() != dir_lower)
-        .collect();
-    key.set_value("PATH", &parts.join(";"))?;
+
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    if let Ok(key) = hkcu.open_subkey_with_flags(r"Environment", KEY_READ | KEY_WRITE) {
+        let current: String = key.get_value("PATH").unwrap_or_default();
+        let dir_lower = dir.to_string_lossy().to_lowercase();
+        let parts: Vec<&str> = current
+            .split(';')
+            .filter(|p| p.to_lowercase() != dir_lower)
+            .collect();
+        key.set_value("PATH", &parts.join(";"))?;
+        broadcast_env_change();
+    }
     Ok(())
 }
 
 #[cfg(not(windows))]
 fn remove_from_path(_dir: &Path) -> anyhow::Result<()> { Ok(()) }
 
+/// Broadcast WM_SETTINGCHANGE("Environment") so Explorer and open terminals
+/// pick up the updated HKCU PATH without requiring a logoff/logon cycle.
+#[cfg(windows)]
+fn broadcast_env_change() {
+    use windows::Win32::{
+        Foundation::{HWND, LPARAM, WPARAM},
+        UI::WindowsAndMessaging::{SendMessageTimeoutW, SMTO_ABORTIFHUNG, WM_SETTINGCHANGE},
+    };
+    let env: Vec<u16> = "Environment\0".encode_utf16().collect();
+    unsafe {
+        SendMessageTimeoutW(
+            HWND(0xffff_isize), // HWND_BROADCAST
+            WM_SETTINGCHANGE,
+            WPARAM(0),
+            LPARAM(env.as_ptr() as isize),
+            SMTO_ABORTIFHUNG,
+            5000,
+            None,
+        );
+    }
+}
+
+/// Register uninstall entry in HKCU (no admin required).
+/// Visible to the current user in Settings > Apps & Features.
 #[cfg(windows)]
 fn register_uninstaller(install_dir: &Path, display_dir: &str) -> anyhow::Result<()> {
     use winreg::{enums::*, RegKey};
-    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-    let (key, _) = hklm.create_subkey(
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let (key, _) = hkcu.create_subkey(
         r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\VeloceNetwork"
     )?;
     key.set_value("DisplayName",     &"VeloceNetwork")?;
-    key.set_value("DisplayVersion",  &"0.1.0")?;
+    key.set_value("DisplayVersion",  &env!("CARGO_PKG_VERSION"))?;
     key.set_value("Publisher",       &"VeloceSolutions")?;
     key.set_value("InstallLocation", &display_dir)?;
     key.set_value("UninstallString", &format!(
         r#""{}" --uninstall"#,
         install_dir.join("uninstall.exe").display()
     ))?;
-    key.set_value("NoModify",        &1u32)?;
-    key.set_value("NoRepair",        &1u32)?;
+    key.set_value("NoModify", &1u32)?;
+    key.set_value("NoRepair", &1u32)?;
     Ok(())
 }
 
@@ -400,8 +512,8 @@ fn register_uninstaller(_dir: &Path, _s: &str) -> anyhow::Result<()> { Ok(()) }
 #[cfg(windows)]
 fn remove_uninstaller_registry() -> anyhow::Result<()> {
     use winreg::{enums::*, RegKey};
-    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-    hklm.delete_subkey_all(
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    hkcu.delete_subkey_all(
         r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\VeloceNetwork"
     )?;
     Ok(())
@@ -413,7 +525,7 @@ fn remove_uninstaller_registry() -> anyhow::Result<()> { Ok(()) }
 #[cfg(windows)]
 fn get_install_dir_from_registry() -> Option<PathBuf> {
     use winreg::{enums::*, RegKey};
-    let key: String = RegKey::predef(HKEY_LOCAL_MACHINE)
+    let key: String = RegKey::predef(HKEY_CURRENT_USER)
         .open_subkey(r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\VeloceNetwork")
         .ok()?
         .get_value("InstallLocation")

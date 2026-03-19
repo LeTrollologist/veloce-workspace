@@ -95,36 +95,12 @@ impl Codec {
 
     /// Try to decode a complete frame from `src`.
     ///
-    /// Returns `Ok(None)` if more data is needed (keep buffering).
-    /// Advances `src` past the consumed bytes on success.
-    pub fn decode(src: &mut BytesMut) -> Result<Option<(FrameHeader, Envelope)>, IpcError> {
-        // We need to peek at the header without consuming, then consume everything at once.
-        // Clone a small slice for inspection.
-        let header = match FrameHeader::decode(src)? {
-            Some(h) => h,
-            None    => return Ok(None),
-        };
-
-        let payload_len = header.payload_len as usize;
-        if src.len() < payload_len {
-            // Re-prepend header bytes? No — we already consumed them from src.
-            // We handle this by checking header BEFORE advancing in FrameHeader::decode.
-            // But we already advanced. To handle this correctly we need a two-phase approach.
-            // See note below — we use a peeking decode to avoid this.
-            return Ok(None);
-        }
-
-        let payload = src.split_to(payload_len);
-        let envelope: Envelope = bincode::deserialize(&payload)
-            .map_err(|e| IpcError::DecodeFailed(e.to_string()))?;
-
-        Ok(Some((header, envelope)))
-    }
-
-    /// Safe two-phase decode: peek, then consume.
+    /// Uses a two-phase peek-then-consume approach: the buffer is not advanced
+    /// until both the header and the full payload are available, so a partial
+    /// frame leaves `src` untouched and the caller can continue buffering.
     ///
-    /// This is the version you should call from async read loops.
-    pub fn decode_safe(src: &mut BytesMut) -> Result<Option<(FrameHeader, Envelope)>, IpcError> {
+    /// Returns `Ok(None)` if more data is needed.
+    pub fn decode(src: &mut BytesMut) -> Result<Option<(FrameHeader, Envelope)>, IpcError> {
         // Phase 1: peek at header without consuming
         if src.len() < HEADER_LEN {
             return Ok(None);
@@ -187,7 +163,7 @@ mod tests {
         let env   = sample_envelope();
         let flags = Flags::EXPECTS_ACK;
         let mut buf = Codec::encode(&env, flags).unwrap();
-        let (hdr, decoded) = Codec::decode_safe(&mut buf).unwrap().unwrap();
+        let (hdr, decoded) = Codec::decode(&mut buf).unwrap().unwrap();
         assert_eq!(hdr.msg_type, MessageType::Handshake);
         assert_eq!(hdr.flags, flags);
         assert_eq!(decoded.correlation_id, env.correlation_id);
@@ -199,7 +175,7 @@ mod tests {
         let mut full = Codec::encode(&env, Flags::empty()).unwrap();
         // Truncate by removing last 5 bytes
         full.truncate(full.len() - 5);
-        let result = Codec::decode_safe(&mut full).unwrap();
+        let result = Codec::decode(&mut full).unwrap();
         assert!(result.is_none());
         // Buffer should be untouched (zero consumed)
         assert!(!full.is_empty());
@@ -208,14 +184,14 @@ mod tests {
     #[test]
     fn bad_magic_is_error() {
         let mut buf = BytesMut::from(&[0xDE, 0xAD, 0xBE, 0xEF, 1, 0, 0, 0, 0, 0, 0, 0][..]);
-        assert!(matches!(Codec::decode_safe(&mut buf), Err(IpcError::BadMagic(_))));
+        assert!(matches!(Codec::decode(&mut buf), Err(IpcError::BadMagic(_))));
     }
 
     #[test]
     fn ping_pong_roundtrip() {
         let env = Envelope::new(Body::Ping);
         let mut buf = Codec::encode(&env, Flags::URGENT).unwrap();
-        let (_hdr, decoded) = Codec::decode_safe(&mut buf).unwrap().unwrap();
+        let (_hdr, decoded) = Codec::decode(&mut buf).unwrap().unwrap();
         assert!(matches!(decoded.body, Body::Ping));
     }
 }

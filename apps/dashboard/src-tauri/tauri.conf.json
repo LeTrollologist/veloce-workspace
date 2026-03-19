@@ -1,6 +1,6 @@
 {
   "productName": "VeloceNetwork Dashboard",
-  "version":     "0.2.0",
+  "version":     "1.3.0",
   "identifier":  "com.velocesolutions.dashboard",
   "build": {
     "frontendDist":      "../dist",

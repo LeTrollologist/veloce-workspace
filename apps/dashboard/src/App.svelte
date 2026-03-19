@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
   import { api } from './lib/tauri.js';
   import {
@@ -28,9 +28,19 @@
   const resourceBaseline = {};  // nodeId → {cpu_ms, ts}
   const MAX_HISTORY = 120;
 
+  // Interval handles — cleared on disconnect and on component destroy
+  let resourcePollId;
+  let meshHeartbeatId;
+
   // ── Connection management ──────────────────────────────────────────────────
+  function clearPolling() {
+    if (resourcePollId)   { clearInterval(resourcePollId);   resourcePollId   = undefined; }
+    if (meshHeartbeatId)  { clearInterval(meshHeartbeatId);  meshHeartbeatId  = undefined; }
+  }
+
   async function toggleConnect() {
     if ($connected) {
+      clearPolling();
       await api.disconnect().catch(() => {});
       connected.set(false);
       nodes.set([]);
@@ -136,11 +146,11 @@
     });
 
     // Resource poll every 5 s
-    setInterval(pollResources, 5_000);
+    resourcePollId = setInterval(pollResources, 5_000);
     pollResources();
 
     // Mesh info refresh every 10 s + heartbeat ping
-    setInterval(async () => {
+    meshHeartbeatId = setInterval(async () => {
       if (!$connected) return;
       await refreshMeshInfo();
       try {
@@ -149,6 +159,8 @@
       } catch { connected.set(false); }
     }, 10_000);
   });
+
+  onDestroy(clearPolling);
 </script>
 
 <!-- ── Shell ─────────────────────────────────────────────────────────────── -->

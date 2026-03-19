@@ -36,14 +36,26 @@ type LogBus     = Arc<tokio::sync::broadcast::Sender<NodeLogChunkMsg>>;
 
 pub struct VeloceClient {
     /// Write half — protected so concurrent callers can send without races.
-    writer:    Arc<AsyncMutex<tokio::io::WriteHalf<tokio::net::windows::named_pipe::NamedPipeClient>>>,
-    pending:   PendingMap,
+    writer:      Arc<AsyncMutex<tokio::io::WriteHalf<tokio::net::windows::named_pipe::NamedPipeClient>>>,
+    pending:     PendingMap,
     /// Broadcast bus for unsolicited NodeEvent push frames from Core.
-    event_bus: EventBus,
+    event_bus:   EventBus,
     /// Broadcast bus for NodeLogChunk push frames from Core.
-    log_bus:   LogBus,
+    log_bus:     LogBus,
     /// Our assigned client ID (set after handshake).
     pub client_id: Uuid,
+    /// Background reader task — aborted on Drop so it doesn't outlive the client.
+    reader_task: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for VeloceClient {
+    fn drop(&mut self) {
+        // Abort the reader loop. This drops the Arc references it holds,
+        // which in turn closes the broadcast channels and causes any
+        // NodeEventStream / NodeLogStream subscribers to see RecvError::Closed
+        // and return None naturally.
+        self.reader_task.abort();
+    }
 }
 
 // ── NODE EVENT STREAM ─────────────────────────────────────────────────────────
@@ -127,17 +139,17 @@ impl VeloceClient {
             let (log_tx, _) = tokio::sync::broadcast::channel(512);
             let log_bus: LogBus = Arc::new(log_tx);
 
-            // Spawn background reader
+            // Spawn background reader — handle stored so Drop can abort it
             let bg_pending   = pending.clone();
             let bg_event_bus = event_bus.clone();
             let bg_log_bus   = log_bus.clone();
-            tokio::spawn(async move {
+            let reader_task = tokio::spawn(async move {
                 if let Err(e) = reader_loop(reader, bg_pending, bg_event_bus, bg_log_bus).await {
                     tracing::warn!("VeloceClient reader error: {e:#}");
                 }
             });
 
-            let mut client = Self { writer, pending, event_bus, log_bus, client_id: Uuid::nil() };
+            let mut client = Self { writer, pending, event_bus, log_bus, client_id: Uuid::nil(), reader_task };
 
             // Read the per-session PSK that Core wrote at startup.
             let psk_hash = read_psk().context("read session PSK")?;
@@ -487,7 +499,7 @@ where
         acc.extend_from_slice(&buf[..n]);
 
         loop {
-            match Codec::decode_safe(&mut acc) {
+            match Codec::decode(&mut acc) {
                 Ok(Some((_hdr, env))) => {
                     if let Some(tx) = pending.lock().remove(&env.correlation_id) {
                         let _ = tx.send(env.body);

@@ -7,6 +7,7 @@
   let topoCanvas;
   let heatCanvas;
   let rafId;
+  let resizeObserver;
 
   // ── Interaction state ─────────────────────────────────────────────────────────
   let drag = null;  // { nodeKey, ox, oy }
@@ -91,8 +92,10 @@
   // ── Canvas render ─────────────────────────────────────────────────────────────
   function renderTopo() {
     if (!topoCanvas) return;
-    const w   = topoCanvas.width;
-    const h   = topoCanvas.height;
+    // Use logical (CSS) dimensions for drawing coordinates since ctx is scaled by DPR
+    const dpr = window.devicePixelRatio || 1;
+    const w   = topoCanvas.width  / dpr;
+    const h   = topoCanvas.height / dpr;
     const ctx = topoCanvas.getContext('2d');
     clearCanvas(ctx, w, h);
 
@@ -231,14 +234,27 @@
     rafId = requestAnimationFrame(loop);
   }
 
+  function resizeTopoCanvas() {
+    const dpr = window.devicePixelRatio || 1;
+    const w   = topoCanvas.offsetWidth  || 800;
+    const h   = topoCanvas.offsetHeight || 400;
+    topoCanvas.width  = w * dpr;
+    topoCanvas.height = h * dpr;
+    const ctx = topoCanvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+  }
+
   onMount(() => {
-    topoCanvas.width  = topoCanvas.offsetWidth  || 800;
-    topoCanvas.height = topoCanvas.offsetHeight || 400;
+    resizeTopoCanvas();
     loop();
+
+    resizeObserver = new ResizeObserver(() => resizeTopoCanvas());
+    resizeObserver.observe(topoCanvas);
   });
 
   onDestroy(() => {
     if (rafId) cancelAnimationFrame(rafId);
+    if (resizeObserver) resizeObserver.disconnect();
   });
 
   // ── Utilities ─────────────────────────────────────────────────────────────────

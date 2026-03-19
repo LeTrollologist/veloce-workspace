@@ -124,17 +124,12 @@ async fn handle_connection(
             send_reply(&mut stream, REP_SUCCESS, bind_ip, bind_port).await?;
 
             // Bidirectional copy — count bytes for .vln routes.
-            let (mut cr, mut cw) = stream.split();
-            let (mut tr, mut tw) = target.split();
-            tokio::select! {
-                res = io::copy(&mut cr, &mut tw) => {
-                    let n = res?;
-                    if let Some(ref c) = bytes_counter { c.fetch_add(n, Ordering::Relaxed); }
-                }
-                res = io::copy(&mut tr, &mut cw) => {
-                    let n = res?;
-                    if let Some(ref c) = bytes_counter { c.fetch_add(n, Ordering::Relaxed); }
-                }
+            // copy_bidirectional runs both directions concurrently and returns
+            // (client→target, target→client) byte counts only after both halves
+            // complete, ensuring all traffic is captured in the counter.
+            let (a_to_b, b_to_a) = io::copy_bidirectional(&mut stream, &mut target).await?;
+            if let Some(ref c) = bytes_counter {
+                c.fetch_add(a_to_b + b_to_a, Ordering::Relaxed);
             }
         }
         Err(e) => {

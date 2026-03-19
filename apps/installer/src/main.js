@@ -1,6 +1,7 @@
 import { invoke }      from "@tauri-apps/api/core";
 import { listen }       from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getVersion }   from "@tauri-apps/api/app";
 
 // ── Step definitions ────────────────────────────────────────────────────────
 const STEPS = [
@@ -15,15 +16,16 @@ const STEPS = [
 let currentStep = 0;
 let licenseAgreed = false;
 let isAdmin = false;
+let appVersion = "";
 
 // Ordered install-step rows to track in the UI
 const INSTALL_ROWS = [
   { key: "directory",  label: "Creating installation directory" },
   { key: "copy_core",  label: "Copying VeloceCore service"      },
   { key: "copy_dash",  label: "Copying VeloceNetwork Dashboard"  },
-  { key: "service",    label: "Registering Windows service"      },
+  { key: "service",    label: "Scheduling startup task"           },
   { key: "shortcuts",  label: "Creating shortcuts"               },
-  { key: "path",       label: "Updating system PATH"             },
+  { key: "path",       label: "Updating user PATH"               },
   { key: "registry",   label: "Registering uninstaller"          },
 ];
 
@@ -61,7 +63,7 @@ function renderWelcome() {
     <div class="step-body">
       <div class="welcome-hero">
         <div class="hero-icon">⚡</div>
-        <span class="hero-badge">✦ v0.1.0 Release</span>
+        <span class="hero-badge">✦ v${escHtml(appVersion)} Release</span>
       </div>
       <div class="feature-grid">
         <div class="feature-card">
@@ -92,9 +94,6 @@ function renderWelcome() {
             <p>Named-pipe ACL with SID-based auth and per-session PSK.</p>
           </div>
         </div>
-      </div>
-      <div class="admin-warn ${isAdmin ? "" : "visible"}" id="admin-warn">
-        ⚠ Running without Administrator privileges. Service installation may fail.
       </div>
     </div>
     <div class="step-footer">
@@ -339,14 +338,6 @@ function wireOptions() {
 
 function wireDone() {
   document.getElementById("btn-finish").addEventListener("click", async () => {
-    const launch = document.getElementById("chk-launch").checked;
-    if (launch) {
-      // Best-effort: open the dashboard (it should be in PATH or we know the dir)
-      await invoke("start_install", {}).catch(() => {});  // no-op, dashboard is already installed
-      // Actually just open explorer or shell it
-      const { Command } = await import("@tauri-apps/plugin-shell").catch(() => ({ Command: null }));
-      // Fallback: just close
-    }
     await win.close();
   });
 }
@@ -422,7 +413,10 @@ function escHtml(s) {
 // ── Init ─────────────────────────────────────────────────────────────────────
 
 window.addEventListener("DOMContentLoaded", async () => {
-  isAdmin = await invoke("check_admin").catch(() => false);
+  [isAdmin, appVersion] = await Promise.all([
+    invoke("check_admin").catch(() => false),
+    getVersion().catch(() => ""),
+  ]);
   renderSidebar();
   showStep(0);
 });

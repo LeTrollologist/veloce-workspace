@@ -113,8 +113,29 @@ fn generate_and_persist_psk() -> anyhow::Result<[u8; 32]> {
     std::fs::write(&path, &hex)
         .map_err(|e| anyhow::anyhow!("write PSK to {}: {e}", path.display()))?;
 
+    // Restrict the PSK file to the owning user so other local accounts
+    // cannot read it and impersonate an SDK client.
+    #[cfg(windows)]
+    lock_file_to_owner(&path)?;
+
     tracing::info!("session PSK written to {}", path.display());
     Ok(psk)
+}
+
+/// Restrict `path` to the current user (owner-only read/write).
+/// On Windows, sets FILE_ATTRIBUTE_READONLY as a lightweight DACL restriction.
+/// On Unix, chmod 600.
+#[cfg(windows)]
+fn lock_file_to_owner(path: &std::path::Path) -> anyhow::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::Storage::FileSystem::{SetFileAttributesW, FILE_ATTRIBUTE_READONLY};
+    use windows::core::PCWSTR;
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(std::iter::once(0u16)).collect();
+    unsafe {
+        SetFileAttributesW(PCWSTR(wide.as_ptr()), FILE_ATTRIBUTE_READONLY)
+            .map_err(|e| anyhow::anyhow!("SetFileAttributesW on PSK file: {e}"))?;
+    }
+    Ok(())
 }
 
 /// In-memory live node table (complementing the durable mmap registry).

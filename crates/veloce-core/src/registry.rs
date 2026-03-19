@@ -124,7 +124,11 @@ impl Registry {
         let mut mmap = unsafe { MmapMut::map_mut(&file) }
             .context("mmap registry")?;
 
-        let magic = u32::from_le_bytes(mmap[hdr::MAGIC..hdr::MAGIC+4].try_into().unwrap());
+        let magic = u32::from_le_bytes(
+            mmap[hdr::MAGIC..hdr::MAGIC+4]
+                .try_into()
+                .context("registry mmap too small to read header")?,
+        );
         if magic == 0 {
             // New file — initialise header
             init_header(&mut mmap);
@@ -154,15 +158,12 @@ impl Registry {
             .context("registry node table full")?;
 
         write_slot(&mut g.mmap, slot_idx, |buf| {
-            // node_id
             buf[slot::NODE_ID..slot::NODE_ID+16].copy_from_slice(node_id.as_bytes());
-            // status = Running
             buf[slot::STATUS] = NodeStatus::Running as u8;
-            // app_name (truncated to 63 bytes + null)
-            write_str_field(&mut buf[slot::APP_NAME..slot::APP_NAME+64], app_name);
-            // pipe_path (truncated to 159 bytes + null)
-            write_str_field(&mut buf[slot::PIPE_PATH..slot::PIPE_PATH+160], pipe_path);
-        });
+            write_str_field(&mut buf[slot::APP_NAME..slot::APP_NAME+64], app_name)?;
+            write_str_field(&mut buf[slot::PIPE_PATH..slot::PIPE_PATH+160], pipe_path)?;
+            Ok(())
+        })?;
 
         // Increment node_count
         let count = read_u32(&g.mmap, hdr::NODE_COUNT);
@@ -177,7 +178,8 @@ impl Registry {
         let mut g = self.inner.lock();
         write_slot(&mut g.mmap, slot_idx, |buf| {
             write_u32_in(buf, slot::PID, pid);
-        });
+            Ok(())
+        })?;
         g.mmap.flush().context("flush")?;
         Ok(())
     }
@@ -188,7 +190,8 @@ impl Registry {
         write_slot(&mut g.mmap, slot_idx, |buf| {
             buf[slot::STATUS] = status as u8;
             write_u32_in(buf, slot::EXIT_CODE, exit_code);
-        });
+            Ok(())
+        })?;
         g.mmap.flush().context("flush")?;
         Ok(())
     }
@@ -267,9 +270,9 @@ fn find_empty_slot(mmap: &MmapMut) -> Option<usize> {
     None
 }
 
-fn write_slot(mmap: &mut MmapMut, idx: usize, f: impl FnOnce(&mut [u8])) {
+fn write_slot(mmap: &mut MmapMut, idx: usize, f: impl FnOnce(&mut [u8]) -> Result<()>) -> Result<()> {
     let offset = HEADER_SIZE + idx * NODE_SLOT_SIZE;
-    f(&mut mmap[offset..offset + NODE_SLOT_SIZE]);
+    f(&mut mmap[offset..offset + NODE_SLOT_SIZE])
 }
 
 fn read_u32(mmap: &MmapMut, offset: usize) -> u32 {
@@ -282,11 +285,21 @@ fn write_u32_in(buf: &mut [u8], offset: usize, v: u32) {
     buf[offset..offset+4].copy_from_slice(&v.to_le_bytes());
 }
 
-fn write_str_field(dst: &mut [u8], s: &str) {
+/// Write a null-terminated UTF-8 string into `dst`.
+/// Returns an error if `s` is too long to fit (with the null terminator),
+/// rather than silently truncating and corrupting the stored value.
+fn write_str_field(dst: &mut [u8], s: &str) -> Result<()> {
     let bytes = s.as_bytes();
-    let len = bytes.len().min(dst.len() - 1);
-    dst[..len].copy_from_slice(&bytes[..len]);
-    dst[len] = 0; // null terminator
+    let max   = dst.len().saturating_sub(1); // reserve 1 byte for null
+    if bytes.len() > max {
+        anyhow::bail!(
+            "field value too long: {} bytes (max {})",
+            bytes.len(), max
+        );
+    }
+    dst[..bytes.len()].copy_from_slice(bytes);
+    dst[bytes.len()] = 0; // null terminator
+    Ok(())
 }
 
 fn read_str_field(src: &[u8]) -> String {
