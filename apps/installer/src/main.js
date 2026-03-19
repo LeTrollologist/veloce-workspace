@@ -25,6 +25,7 @@ const INSTALL_ROWS = [
   { key: "shortcuts",  label: "Creating shortcuts"               },
   { key: "path",       label: "Updating system PATH"             },
   { key: "registry",   label: "Registering uninstaller"          },
+  { key: "nrpt",       label: "Configuring .vln DNS routing"     },
 ];
 
 // ── Titlebar wiring ─────────────────────────────────────────────────────────
@@ -177,6 +178,23 @@ async function renderOptions() {
           <button class="btn btn-ghost" id="btn-browse">Browse…</button>
         </div>
 
+        <div class="section-label">What to Install</div>
+        <label class="option-row" for="chk-install-core">
+          <input type="checkbox" id="chk-install-core" checked />
+          <span class="option-icon">🔧</span>
+          <div class="option-text"><h4>VeloceCore Service</h4><span>Background service that manages nodes &amp; DNS</span></div>
+        </label>
+        <label class="option-row" for="chk-install-dashboard">
+          <input type="checkbox" id="chk-install-dashboard" checked />
+          <span class="option-icon">📊</span>
+          <div class="option-text"><h4>Dashboard</h4><span>Tauri GUI for monitoring and control</span></div>
+        </label>
+        <label class="option-row" for="chk-install-cli">
+          <input type="checkbox" id="chk-install-cli" checked />
+          <span class="option-icon">💻</span>
+          <div class="option-text"><h4>CLI Tools</h4><span>veloce-run, veloce-launcher (startup menu), veloce-shell</span></div>
+        </label>
+
         <div class="section-label">Components</div>
         <label class="option-row" for="chk-service">
           <input type="checkbox" id="chk-service" checked />
@@ -324,11 +342,14 @@ function wireOptions() {
 
   document.getElementById("btn-install").addEventListener("click", async () => {
     const opts = {
-      install_dir:      document.getElementById("install-dir").value.trim(),
-      start_service:    document.getElementById("chk-service").checked,
-      add_to_path:      document.getElementById("chk-path").checked,
-      start_menu:       document.getElementById("chk-startmenu").checked,
-      desktop_shortcut: document.getElementById("chk-desktop").checked,
+      install_dir:       document.getElementById("install-dir").value.trim(),
+      install_core:      document.getElementById("chk-install-core").checked,
+      install_dashboard: document.getElementById("chk-install-dashboard").checked,
+      install_cli:       document.getElementById("chk-install-cli").checked,
+      start_service:     document.getElementById("chk-service").checked,
+      add_to_path:       document.getElementById("chk-path").checked,
+      start_menu:        document.getElementById("chk-startmenu").checked,
+      desktop_shortcut:  document.getElementById("chk-desktop").checked,
     };
     if (!opts.install_dir) return;
 

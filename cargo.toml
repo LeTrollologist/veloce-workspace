@@ -10,6 +10,7 @@ members = [
     "apps/installer/src-tauri",
     "apps/veloce-run",
     "apps/veloce-launcher",
+    "apps/veloce-shell",
 ]
 
 [workspace.package]

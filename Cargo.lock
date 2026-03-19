@@ -4763,6 +4763,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "veloce-shell"
+version = "1.1.0"
+dependencies = [
+ "anyhow",
+ "winreg 0.52.0",
+]
+
+[[package]]
 name = "version-compare"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
