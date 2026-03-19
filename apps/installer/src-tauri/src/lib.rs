@@ -20,11 +20,14 @@ use tauri::{Emitter, Manager};
 
 #[derive(Debug, Deserialize)]
 struct InstallOptions {
-    install_dir:      String,
-    desktop_shortcut: bool,
-    start_menu:       bool,
-    add_to_path:      bool,
-    start_service:    bool,
+    install_dir:       String,
+    install_core:      bool,
+    install_dashboard: bool,
+    install_cli:       bool,
+    desktop_shortcut:  bool,
+    start_menu:        bool,
+    add_to_path:       bool,
+    start_service:     bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -115,17 +118,28 @@ async fn do_install(
     emit_progress(&app, "directory", 10, "Installation directory ready.", "ok");
 
     // ── 2. Copy bundled binaries ───────────────────────────────────────────
-    emit_progress(&app, "copy_core", 15, "Copying VeloceCore service…", "running");
-    copy_resource(&app, "veloce-core.exe", &install_dir.join("veloce-core.exe")).await?;
-    emit_progress(&app, "copy_core", 30, "VeloceCore copied.", "ok");
+    if opts.install_core {
+        emit_progress(&app, "copy_core", 15, "Copying VeloceCore service…", "running");
+        copy_resource(&app, "veloce-core.exe", &install_dir.join("veloce-core.exe")).await?;
+        emit_progress(&app, "copy_core", 30, "VeloceCore copied.", "ok");
+    } else {
+        emit_progress(&app, "copy_core", 30, "VeloceCore skipped.", "ok");
+    }
 
-    emit_progress(&app, "copy_dash", 35, "Copying VeloceNetwork Dashboard…", "running");
-    copy_resource(&app, "veloce-dashboard.exe", &install_dir.join("veloce-dashboard.exe")).await?;
-    emit_progress(&app, "copy_dash", 46, "Dashboard copied.", "ok");
+    if opts.install_dashboard {
+        emit_progress(&app, "copy_dash", 35, "Copying VeloceNetwork Dashboard…", "running");
+        copy_resource(&app, "veloce-dashboard.exe", &install_dir.join("veloce-dashboard.exe")).await?;
+        emit_progress(&app, "copy_dash", 46, "Dashboard copied.", "ok");
+    } else {
+        emit_progress(&app, "copy_dash", 46, "Dashboard skipped.", "ok");
+    }
 
-    copy_resource(&app, "veloce-run.exe",      &install_dir.join("veloce-run.exe")).await?;
-    copy_resource(&app, "veloce-launcher.exe", &install_dir.join("veloce-launcher.exe")).await?;
-    emit_progress(&app, "copy_dash", 50, "All binaries copied.", "ok");
+    if opts.install_cli {
+        copy_resource(&app, "veloce-run.exe",      &install_dir.join("veloce-run.exe")).await?;
+        copy_resource(&app, "veloce-launcher.exe", &install_dir.join("veloce-launcher.exe")).await?;
+        copy_resource(&app, "veloce-shell.exe",    &install_dir.join("veloce-shell.exe")).await?;
+        emit_progress(&app, "copy_dash", 50, "CLI tools copied.", "ok");
+    }
 
     // Copy installer itself for the uninstall entry
     if let Ok(self_exe) = std::env::current_exe() {
@@ -133,34 +147,43 @@ async fn do_install(
     }
 
     // ── 3. Windows service ─────────────────────────────────────────────────
-    emit_progress(&app, "service", 55, "Registering VeloceCore service…", "running");
-    tokio::task::spawn_blocking({
-        let dir   = install_dir.clone();
-        let start = opts.start_service;
-        move || install_service(&dir, start)
-    }).await??;
-    emit_progress(&app, "service", 68, "Service registered.", "ok");
+    if opts.install_core {
+        emit_progress(&app, "service", 55, "Registering VeloceCore service…", "running");
+        tokio::task::spawn_blocking({
+            let dir   = install_dir.clone();
+            let start = opts.start_service;
+            move || install_service(&dir, start)
+        }).await??;
+        emit_progress(&app, "service", 68, "Service registered.", "ok");
+    } else {
+        emit_progress(&app, "service", 68, "Service registration skipped.", "ok");
+    }
+
+    // Shortcut target: prefer veloce-launcher (if CLI installed), else veloce-dashboard
+    let shortcut_target = if opts.install_cli {
+        install_dir.join("veloce-launcher.exe")
+    } else {
+        install_dir.join("veloce-dashboard.exe")
+    };
 
     // ── 4. Shortcuts ───────────────────────────────────────────────────────
     if opts.start_menu {
         emit_progress(&app, "shortcuts", 72, "Creating Start Menu shortcut…", "running");
-        let target = install_dir.join("veloce-dashboard.exe");
         let programs = std::env::var("APPDATA")
             .map(|a| PathBuf::from(a).join(r"Microsoft\Windows\Start Menu\Programs"))
             .unwrap_or_else(|_| PathBuf::from(r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs"));
         let link = programs.join("VeloceNetwork.lnk");
-        create_shortcut(&target, &link, "VeloceNetwork Dashboard")?;
+        create_shortcut(&shortcut_target, &link, "VeloceNetwork")?;
         emit_progress(&app, "shortcuts", 76, "Start Menu shortcut created.", "ok");
     }
 
     if opts.desktop_shortcut {
         emit_progress(&app, "shortcuts", 78, "Creating Desktop shortcut…", "running");
-        let target = install_dir.join("veloce-dashboard.exe");
         let desktop = std::env::var("USERPROFILE")
             .map(|h| PathBuf::from(h).join("Desktop"))
             .unwrap_or_else(|_| PathBuf::from(r"C:\Users\Public\Desktop"));
         let link = desktop.join("VeloceNetwork.lnk");
-        create_shortcut(&target, &link, "VeloceNetwork Dashboard")?;
+        create_shortcut(&shortcut_target, &link, "VeloceNetwork")?;
         emit_progress(&app, "shortcuts", 82, "Desktop shortcut created.", "ok");
     }
 

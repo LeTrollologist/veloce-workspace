@@ -31,7 +31,8 @@
       "resources/veloce-core.exe",
       "resources/veloce-dashboard.exe",
       "resources/veloce-run.exe",
-      "resources/veloce-launcher.exe"
+      "resources/veloce-launcher.exe",
+      "resources/veloce-shell.exe"
     ]
   },
   "plugins": {

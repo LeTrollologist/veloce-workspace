@@ -1,16 +1,15 @@
 /*!
-VeloceNetwork Launcher — interactive startup menu.
+VeloceNetwork Launcher — startup menu.
 
-Presents five launch modes when run from a terminal or double-clicked:
-
-  1  Terminal Interface          veloce-run in a new console window
-  2  Dashboard (GUI)             veloce-dashboard.exe
-  3  Terminal + Dashboard        both of the above
-  4  Start Service + Dashboard   starts VeloceCoreService, then opens the Dashboard
-  5  Developer CLI               new console with veloce-run --help and a held prompt
+  1  Start Service          sc start VeloceCoreService
+  2  VeloceNet Shell        opens veloce-shell.exe in a new console window
+  3  Dashboard              opens veloce-dashboard.exe detached
+  4  Shell + Dashboard      both of the above
+  5  Stop Service           sc stop VeloceCoreService
+  Q  Quit
 */
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 use std::io::{self, Write};
 
@@ -28,35 +27,68 @@ fn install_dir() -> PathBuf {
             }
         }
     }
-    // Fallback: assume binaries live next to this launcher
     std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|d| d.to_path_buf()))
         .unwrap_or_else(|| PathBuf::from(r"C:\Program Files\VeloceNetwork"))
 }
 
-// ── Process launchers ─────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
-/// Open a new visible console window running `cmd /k <command>`.
-/// The window stays open after the command so the user can read output.
+fn service_status() -> &'static str {
+    let out = Command::new("sc")
+        .args(["query", "VeloceCoreService"])
+        .output()
+        .unwrap_or_else(|_| std::process::Output {
+            status: std::process::ExitStatus::default(),
+            stdout: b"unknown".to_vec(),
+            stderr: vec![],
+        });
+    let text = String::from_utf8_lossy(&out.stdout).to_lowercase();
+    if text.contains("running") { "RUNNING" }
+    else if text.contains("stopped") { "STOPPED" }
+    else if text.contains("start_pending") { "STARTING" }
+    else if text.contains("stop_pending") { "STOPPING" }
+    else { "UNKNOWN" }
+}
+
+fn service_ctl(verb: &str) -> String {
+    let out = Command::new("sc")
+        .args([verb, "VeloceCoreService"])
+        .output();
+    match out {
+        Ok(o) => {
+            let text = String::from_utf8_lossy(&o.stdout);
+            // Find the STATE line
+            text.lines()
+                .find(|l| l.contains("STATE") || l.contains("successfully"))
+                .unwrap_or(if o.status.success() { "OK" } else { "Command ran" })
+                .trim()
+                .to_owned()
+        }
+        Err(e) => format!("Error: {e}"),
+    }
+}
+
 #[cfg(windows)]
-fn open_terminal(title: &str, command: &str) {
+fn open_shell_window(shell_exe: &std::path::Path) {
     use std::os::windows::process::CommandExt;
+    let quoted = format!(r#""{}""#, shell_exe.display());
     let _ = Command::new("cmd")
-        .args(["/c", "start", title, "cmd", "/k", command])
+        .args(["/c", "start", "VeloceNet Shell", &quoted])
         .creation_flags(0x00000008 /* DETACHED_PROCESS */)
         .spawn();
 }
 
 #[cfg(not(windows))]
-fn open_terminal(_title: &str, command: &str) {
-    // Best-effort on non-Windows (not a real target, but keeps it compiling)
-    let _ = Command::new("sh").args(["-c", &format!("xterm -e '{command}'")]).spawn();
+fn open_shell_window(shell_exe: &std::path::Path) {
+    let _ = Command::new("xterm")
+        .args(["-title", "VeloceNet Shell", "-e", &shell_exe.to_string_lossy()])
+        .spawn();
 }
 
-/// Launch a GUI binary detached (no console window needed).
 #[cfg(windows)]
-fn launch_detached(exe: &Path) {
+fn launch_detached(exe: &std::path::Path) {
     use std::os::windows::process::CommandExt;
     let _ = Command::new(exe)
         .creation_flags(0x00000008 /* DETACHED_PROCESS */)
@@ -64,15 +96,9 @@ fn launch_detached(exe: &Path) {
 }
 
 #[cfg(not(windows))]
-fn launch_detached(exe: &Path) {
+fn launch_detached(exe: &std::path::Path) {
     let _ = Command::new(exe).spawn();
 }
-
-fn service_ctl(verb: &str) {
-    let _ = Command::new("sc").args([verb, "VeloceCoreService"]).output();
-}
-
-// ── Menu rendering ────────────────────────────────────────────────────────────
 
 fn clear() {
     #[cfg(windows)]
@@ -81,21 +107,25 @@ fn clear() {
     { print!("\x1b[2J\x1b[H"); }
 }
 
-fn print_menu() {
+// ── Menu ─────────────────────────────────────────────────────────────────────
+
+fn print_menu(status: &str) {
     println!();
-    println!("  ╔══════════════════════════════════════════╗");
-    println!("  ║        V e l o c e N e t w o r k        ║");
-    println!("  ╠══════════════════════════════════════════╣");
-    println!("  ║                                          ║");
-    println!("  ║   1 ›  Terminal Interface                ║");
-    println!("  ║   2 ›  Dashboard  (GUI)                  ║");
-    println!("  ║   3 ›  Terminal Interface + Dashboard    ║");
-    println!("  ║   4 ›  Start Service + Dashboard         ║");
-    println!("  ║   5 ›  Developer CLI                     ║");
-    println!("  ║                                          ║");
-    println!("  ║   Q ›  Quit                              ║");
-    println!("  ║                                          ║");
-    println!("  ╚══════════════════════════════════════════╝");
+    println!("  \u{2554}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2557}");
+    println!("  \u{2551}        V e l o c e N e t w o r k        \u{2551}");
+    println!("  \u{2560}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2563}");
+    println!("  \u{2551}                                          \u{2551}");
+    println!("  \u{2551}   Service: {status:<32}\u{2551}");
+    println!("  \u{2551}                                          \u{2551}");
+    println!("  \u{2551}   1 \u{203a}  Start Service                     \u{2551}");
+    println!("  \u{2551}   2 \u{203a}  VeloceNet Shell                   \u{2551}");
+    println!("  \u{2551}   3 \u{203a}  Dashboard                         \u{2551}");
+    println!("  \u{2551}   4 \u{203a}  Shell + Dashboard                 \u{2551}");
+    println!("  \u{2551}   5 \u{203a}  Stop Service                      \u{2551}");
+    println!("  \u{2551}                                          \u{2551}");
+    println!("  \u{2551}   Q \u{203a}  Quit                              \u{2551}");
+    println!("  \u{2551}                                          \u{2551}");
+    println!("  \u{255a}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{255d}");
     println!();
     print!("  Choose [1-5 / Q]: ");
     let _ = io::stdout().flush();
@@ -104,61 +134,50 @@ fn print_menu() {
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 fn main() {
-    let dir = install_dir();
-    let run_exe  = dir.join("veloce-run.exe");
-    let dash_exe = dir.join("veloce-dashboard.exe");
-
-    // Quote the paths for use in cmd /k strings
-    let run_cmd  = format!("\"{}\"", run_exe.display());
-    let _dash_cmd = format!("\"{}\"", dash_exe.display());
+    let dir     = install_dir();
+    let shell   = dir.join("veloce-shell.exe");
+    let dash    = dir.join("veloce-dashboard.exe");
 
     loop {
         clear();
-        print_menu();
+        let status = service_status();
+        print_menu(status);
 
         let mut input = String::new();
-        if io::stdin().read_line(&mut input).is_err() {
-            break;
-        }
+        if io::stdin().read_line(&mut input).is_err() { break; }
 
+        println!();
         match input.trim().to_uppercase().as_str() {
             "1" => {
-                // Open a new terminal running veloce-run interactively
-                open_terminal("VeloceNetwork — Terminal Interface", &run_cmd);
-                println!("\n  ✓  Terminal opened.");
+                println!("  Starting VeloceCoreService…");
+                let result = service_ctl("start");
+                println!("  {result}");
             }
             "2" => {
-                launch_detached(&dash_exe);
-                println!("\n  ✓  Dashboard launched.");
+                open_shell_window(&shell);
+                println!("  \u{2713}  VeloceNet Shell opened.");
             }
             "3" => {
-                open_terminal("VeloceNetwork — Terminal Interface", &run_cmd);
-                launch_detached(&dash_exe);
-                println!("\n  ✓  Terminal + Dashboard launched.");
+                launch_detached(&dash);
+                println!("  \u{2713}  Dashboard launched.");
             }
             "4" => {
-                println!("\n  Starting VeloceCore service…");
-                service_ctl("start");
-                // Brief pause so the service has a moment to bind its pipe
-                std::thread::sleep(std::time::Duration::from_secs(2));
-                launch_detached(&dash_exe);
-                println!("  ✓  Service started + Dashboard launched.");
+                open_shell_window(&shell);
+                launch_detached(&dash);
+                println!("  \u{2713}  Shell + Dashboard launched.");
             }
             "5" => {
-                // Open a developer console: show veloce-run help, then stay open
-                let dev_cmd = format!("{run_cmd} --help & echo. & echo Type a veloce-run command above, or close this window.");
-                open_terminal("VeloceNetwork — Developer CLI", &dev_cmd);
-                println!("\n  ✓  Developer CLI opened.");
+                println!("  Stopping VeloceCoreService…");
+                let result = service_ctl("stop");
+                println!("  {result}");
             }
             "Q" | "QUIT" | "EXIT" => break,
             _ => {
-                println!("\n  Invalid choice — press Enter to try again.");
-                let _ = io::stdin().read_line(&mut String::new());
-                continue;
+                println!("  Invalid choice.");
             }
         }
 
-        // Brief pause so the user sees the confirmation, then loop back
+        println!();
         println!("  Press Enter to return to the menu…");
         let _ = io::stdin().read_line(&mut String::new());
     }
