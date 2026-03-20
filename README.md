@@ -235,9 +235,9 @@ Think of it as a stripped-down version of Kubernetes Service Mesh ideas, designe
 | WireGuard-NT kernel driver *(optional perf backend — one-time admin elevation, userspace Noise_IK remains default)* | ✅ v1.0 |
 | NRPT `.vln` routing (system-wide DNS without `VELOCE_DNS`) | ✅ v1.0 |
 | Signed installer + Tauri auto-update | ✅ v1.0 |
-| Veloce Compose (`veloce-compose.yml`, `veloce up/down`, port publishing, env injection, health probes) | 📋 v1.1 |
-| Persistence & Secrets (named volumes, bind mounts, DPAPI-backed runtime secrets) | 📋 v1.2 |
-| Rolling Deployments & Desired State (reconciler, rolling/recreate strategies, `veloce status`) | 📋 v1.3 |
+| Veloce Compose (`veloce-compose.yml`, `veloce up/down`, port publishing, env injection, health probes) | ✅ v1.1 |
+| Persistence & Secrets (named volumes, bind mounts, DPAPI-backed runtime secrets) | ✅ v1.2 |
+| Rolling Deployments & Desired State (reconciler, rolling/recreate strategies, `veloce status`) | ✅ v1.3 |
 | Linux port (cgroups v2 + Unix sockets) | 📋 v2.0 |
 | Python / Node.js / Go SDK bindings | 📋 v2.0 |
 | HTTP Ingress + TLS (L7 reverse proxy, ACME certs, ClusterIP service type) | 📋 v2.1 |
@@ -287,9 +287,9 @@ improvements that close gaps identified during the audit cycle:
 
 NRPT-based system-wide `.vln` routing — every app, browser, and terminal resolves `.vln` hostnames without the `VELOCE_DNS` environment variable. Signed installer with Tauri auto-update. Optional WireGuard-NT kernel backend for hardware-offloaded mesh throughput; the userspace Noise_IK path remains the default — zero-admin promise preserved. GitHub Actions CI/CD pipeline.
 
-### v1.1 — Veloce Compose 📋
+### v1.1 — Veloce Compose ✅
 
-Closes the Docker Compose parity gap. Nearly all underlying primitives exist; this release adds a declarative YAML orchestration layer on top:
+Closed the Docker Compose parity gap. Shipped as a declarative YAML orchestration layer on top of existing IPC primitives:
 
 - `veloce-compose.yml` — service definitions mapping to existing IPC primitives (`SpawnNodeMsg`, `NetRegisterHost`, `RestartPolicy`)
 - `veloce up` / `veloce down` — start and stop entire multi-service stacks with one command
@@ -298,17 +298,17 @@ Closes the Docker Compose parity gap. Nearly all underlying primitives exist; th
 - **HTTP / TCP / exec health checks** (`healthcheck:`) — extends the existing health loop; results feed `RestartPolicy`
 - **`depends_on:` ordering** — Compose processor waits for dependency health before starting dependents
 
-### v1.2 — Persistence & Secrets 📋
+### v1.2 — Persistence & Secrets ✅
 
-Enables stateful workloads:
+Enabled stateful workloads:
 
 - **Named volumes** — `VolumeRegistry` maps volume names to NTFS paths; mounted into nodes at spawn
 - **Bind mounts** — host path injection with AppContainer allowlist support
 - **DPAPI-backed runtime secrets** — `SecretsVault` using Windows `CryptProtectData`/`CryptUnprotectData`; secrets injected into the process environment at spawn, never written to disk as plaintext; `veloce secret set/rm/list` CLI
 
-### v1.3 — Rolling Deployments & Desired State 📋
+### v1.3 — Rolling Deployments & Desired State ✅
 
-Closes the Kubernetes Deployment controller gap:
+Closed the Kubernetes Deployment controller gap:
 
 - **Desired-state reconciler** — background loop drives actual node state toward a declared target; cluster-level, not per-node
 - **Rolling update strategy** — drain one instance, await health check pass, drain next; safe zero-downtime deploys

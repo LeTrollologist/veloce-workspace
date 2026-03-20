@@ -51,14 +51,14 @@
 | Signed installer + Tauri auto-update | ✅ v1.0 |
 | GitHub Actions CI/CD pipeline | ✅ v1.0 |
 | `SECURITY.md` + `VELOCE_PRINCIPALS.md` manifesto | ✅ v1.0 |
+| Veloce Compose (`veloce-compose.yml`, `veloce up/down`, port publishing, env injection, health probes) | ✅ v1.1 |
+| Persistence & Secrets (named volumes, bind mounts, DPAPI-backed runtime secrets) | ✅ v1.2 |
+| Rolling Deployments & Desired State (reconciler, rolling/recreate strategies, `veloce status`) | ✅ v1.3 |
 
 ### Out of Scope (Future Releases)
 
 | Feature | Target |
 |---|---|
-| Veloce Compose (`veloce-compose.yml`, `veloce up/down`, port publishing, env injection, health probes) | v1.1 |
-| Persistence & Secrets (named volumes, bind mounts, DPAPI-backed runtime secrets) | v1.2 |
-| Rolling Deployments & Desired State (reconciler, rolling/recreate strategies) | v1.3 |
 | Linux port (cgroups v2, Unix domain sockets) | v2.0 |
 | Unprivileged user namespaces (rootless Linux) | v2.0 |
 | Python / Node.js / Go SDK bindings | v2.0 |
@@ -265,9 +265,9 @@ Seven findings (N1–N7) identified and remediated. No new features.
 | v0.8.0 (Security Audit 2 of 3 — capability enforcement, arg injection, DNS/gossip hardening) | ✅ Released |
 | v0.9.0 (Security Audit 3 of 3 + VM3 join codes, gossip ownership, mesh diagnostic CLI) | ✅ Released |
 | v1.0 (WireGuard-NT + NRPT + signed installer + auto-update + CI/CD) | ✅ Released |
-| v1.1 (Veloce Compose — declarative multi-service, port publishing, health probes) | Q2 2027 |
-| v1.2 (Persistence & Secrets — named volumes, bind mounts, DPAPI secrets) | Q3 2027 |
-| v1.3 (Rolling Deployments — desired-state reconciler, rolling/recreate strategies) | Q4 2027 |
+| v1.1 (Veloce Compose — declarative multi-service, port publishing, health probes) | ✅ Released |
+| v1.2 (Persistence & Secrets — named volumes, bind mounts, DPAPI secrets) | ✅ Released |
+| v1.3 (Rolling Deployments — desired-state reconciler, rolling/recreate strategies) | ✅ Released |
 | v2.0 (Linux port — cgroups v2, Unix sockets, Python/Node/Go SDK bindings) | Q1–Q2 2028 |
 | v2.1 (HTTP Ingress + TLS — L7 reverse proxy, ACME certs) | Q3 2028 |
 | v2.2 (Autoscaling + Scheduling — HPA, CronJobs, DaemonSet-equivalent) | Q4 2028 |
@@ -340,26 +340,39 @@ This phase dedicated three sequential releases to security, correctness, and sta
 
 ---
 
-### Phase 4 — Docker/K3s Competitive Parity (v1.1 – v3.0)
+### v1.1.0 ✅ Released
 
-**v1.1 — Veloce Compose**
-- `veloce-compose.yml` declarative multi-service format; maps onto existing `SpawnNodeMsg` / `NetRegisterHost` / `RestartPolicy` IPC primitives
-- `veloce up` / `veloce down` CLI; port publishing (`ports: ["8080:80"]`) via new `TcpListener` in `veloce-net`
-- Environment injection (`environment:`, `--env`) — `Vec<(String,String)>` field on `SpawnNodeMsg` fed into `CreateProcessW`
-- HTTP / TCP / exec health checks (`healthcheck:`) — extends existing health loop in `veloce-core/src/job.rs`
-- `depends_on:` ordering with `condition: service_healthy` support
+**Veloce Compose — Docker Compose Parity**
 
-**v1.2 — Persistence & Secrets**
-- Named volumes — `VolumeRegistry` maps name → NTFS path under `%PROGRAMDATA%\VeloceSolutions\volumes\`
-- Bind mounts — host path injection; AppContainer allowlist updated when `use_appcontainer: true`
-- DPAPI-backed runtime secrets — `SecretsVault` using `CryptProtectData`/`CryptUnprotectData`; injected at spawn, never plaintext on disk after initial registration
-- `veloce secret set/rm/list` CLI; new `ReadSecrets` capability in policy engine
+- [x] `veloce-compose.yml` declarative multi-service format; maps onto `SpawnNodeMsg` / `NetRegisterHost` / `RestartPolicy` IPC primitives
+- [x] `veloce up` / `veloce down` CLI subcommands
+- [x] Port publishing (`ports: ["8080:80"]`) — `TcpListener` in `veloce-net` forwards to node's `.vln` port
+- [x] Environment injection (`environment:`, `--env`) — `Vec<(String,String)>` on `SpawnNodeMsg` fed into `CreateProcessW`
+- [x] HTTP / TCP / exec health checks (`healthcheck:`) — extends health loop in `veloce-core/src/job.rs`
+- [x] `depends_on:` startup ordering with `condition: service_healthy` support
 
-**v1.3 — Rolling Deployments & Desired State**
-- Desired-state reconciler — `DesiredState` field on `CoreState`; cluster-level reconciliation loop
-- Rolling update strategy — drain one instance, await health check, drain next
-- Recreate strategy — stop all, start new version
-- `veloce ps` / `veloce status` — desired vs. actual replica counts, health state, last restart
+### v1.2.0 ✅ Released
+
+**Persistence & Secrets — Stateful Workloads**
+
+- [x] Named volumes — `VolumeRegistry` maps name → NTFS path under `%PROGRAMDATA%\VeloceSolutions\volumes\`
+- [x] Bind mounts — host path injection; AppContainer allowlist updated when `use_appcontainer: true`
+- [x] DPAPI-backed runtime secrets — `SecretsVault` using `CryptProtectData`/`CryptUnprotectData`; injected at spawn, never plaintext on disk
+- [x] `veloce secret set/rm/list` CLI; `ReadSecrets` capability enforced via policy engine
+
+### v1.3.0 ✅ Released
+
+**Rolling Deployments & Desired State**
+
+- [x] Desired-state reconciler — `DesiredState` field on `CoreState`; cluster-level reconciliation loop in `veloce-core`
+- [x] Rolling update strategy — drain one instance, await health check pass, drain next; zero-downtime deploys
+- [x] Recreate strategy — stop all, start new version; for schema-migration workloads
+- [x] `depends_on: condition: service_healthy` — blocks start until health check passes
+- [x] `veloce ps` / `veloce status` — desired vs. actual replica counts, health state, last restart timestamp
+
+---
+
+### Phase 4 — Docker/K3s Competitive Parity (v2.0 – v3.0)
 
 **v2.0 — Linux Engine Swap**
 - Replace named pipes → Unix domain sockets (same VELC framing, same SDK API)
