@@ -3188,12 +3188,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 
 [[package]]
-name = "ryu"
-version = "1.0.23"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
-
-[[package]]
 name = "same-file"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3430,19 +3424,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
-]
-
-[[package]]
-name = "serde_yaml"
-version = "0.9.34+deprecated"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a8b1a1a2ebf674015cc02edccce75287f1a0130d394307b36743c2f5d504b47"
-dependencies = [
- "indexmap 2.13.0",
- "itoa",
- "ryu",
- "serde",
- "unsafe-libyaml",
 ]
 
 [[package]]
@@ -4574,12 +4555,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "unsafe-libyaml"
-version = "0.2.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
-
-[[package]]
 name = "url"
 version = "2.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4643,7 +4618,7 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
 name = "veloce-core"
-version = "1.1.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "bincode",
@@ -4664,7 +4639,6 @@ dependencies = [
  "veloce-net",
  "windows 0.54.0",
  "windows-service",
- "winreg 0.52.0",
 ]
 
 [[package]]
@@ -4700,7 +4674,7 @@ dependencies = [
 
 [[package]]
 name = "veloce-ipc"
-version = "1.1.0"
+version = "0.4.0"
 dependencies = [
  "bincode",
  "bitflags 2.11.0",
@@ -4712,23 +4686,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "veloce-launcher"
-version = "1.1.0"
-dependencies = [
- "anyhow",
- "winreg 0.52.0",
-]
-
-[[package]]
 name = "veloce-mesh"
-version = "1.1.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
  "ed25519-dalek",
  "hostname",
  "once_cell",
- "parking_lot",
  "rand 0.8.5",
  "serde",
  "serde_json",
@@ -4744,7 +4709,7 @@ dependencies = [
 
 [[package]]
 name = "veloce-net"
-version = "1.1.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -4753,29 +4718,24 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
- "veloce-ipc",
- "windows 0.54.0",
 ]
 
 [[package]]
 name = "veloce-run"
-version = "1.1.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "clap",
  "ctrlc",
- "serde",
- "serde_yaml",
  "tokio",
  "uuid",
  "veloce-ipc",
  "veloce-sdk",
- "winreg 0.52.0",
 ]
 
 [[package]]
 name = "veloce-sdk"
-version = "1.1.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4787,14 +4747,6 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "veloce-ipc",
-]
-
-[[package]]
-name = "veloce-shell"
-version = "1.1.0"
-dependencies = [
- "anyhow",
- "winreg 0.52.0",
 ]
 
 [[package]]

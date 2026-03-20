@@ -16,8 +16,11 @@ mod ipc_server;
 mod nrpt;
 mod pipe_security;
 mod policy;
+mod reconciler;
+mod secrets;
 mod service;
 mod state;
+mod volume;
 
 #[cfg(not(windows))]
 fn main() -> anyhow::Result<()> {
@@ -94,6 +97,9 @@ pub async fn run_core() -> anyhow::Result<()> {
     let state = Arc::new(CoreState::new()?);
     tracing::info!("Registry mapped at {:?}", state.registry().path());
 
+    // Wire the reconciler to CoreState (breaks the construction-time circular ref).
+    state.reconciler().wire_state(state.clone());
+
     // 2. Start VeloceNet (DNS + routing)
     let net_state = state.clone();
     tokio::spawn(async move {
@@ -124,6 +130,12 @@ pub async fn run_core() -> anyhow::Result<()> {
     let hc_state = state.clone();
     tokio::spawn(async move {
         job::health_loop(hc_state).await;
+    });
+
+    // 5. Desired-state reconciler loop (v1.3)
+    let rec = state.reconciler().clone();
+    tokio::spawn(async move {
+        rec.run().await;
     });
 
     tracing::info!("VeloceCore online — pipe: {}", veloce_ipc::PIPE_NAME);

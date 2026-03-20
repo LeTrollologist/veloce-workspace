@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VeloceNetwork Dashboard</title>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <div id="app">
+
+    <!-- ── Header ── -->
+    <header>
+      <div class="brand">
+        <span class="brand-v">V</span>eloceNetwork
+      </div>
+      <div class="status-bar">
+        <span id="status-dot" class="dot"></span>
+        <span id="status-label">Disconnected</span>
+        <button id="btn-connect" class="btn btn-primary">Connect</button>
+      </div>
+    </header>
+
+    <!-- ── Tabs ── -->
+    <nav class="tabs">
+      <button class="tab-btn active" data-tab="nodes">Nodes</button>
+      <button class="tab-btn"        data-tab="templates">Templates</button>
+      <button class="tab-btn"        data-tab="network">VeloceNet</button>
+      <button class="tab-btn"        data-tab="logs">Logs</button>
+    </nav>
+
+    <!-- ── Nodes Panel ── -->
+    <section id="tab-nodes" class="tab-panel active">
+      <div class="panel-row">
+        <h2>Running Nodes</h2>
+        <button id="btn-refresh" class="btn btn-ghost">↻ Refresh</button>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>PID</th>
+              <th>Status</th>
+              <th>CPU%</th>
+              <th>Memory</th>
+              <th>Spawned</th>
+              <th>Node ID</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="node-list">
+            <tr id="node-empty-row">
+              <td colspan="8" class="empty-cell">No nodes running</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card spawn-card">
+        <h3>Spawn Node</h3>
+        <div class="form-row">
+          <input id="spawn-name" class="input" placeholder="App name" />
+          <input id="spawn-exe"  class="input wide" placeholder="C:\path\to\app.exe" />
+          <button id="btn-spawn" class="btn btn-primary">Spawn</button>
+        </div>
+        <div id="spawn-result" class="result hidden"></div>
+      </div>
+    </section>
+
+    <!-- ── Templates Panel ── -->
+    <section id="tab-templates" class="tab-panel">
+      <div class="panel-row">
+        <h2>Node Templates</h2>
+        <button id="btn-refresh-templates" class="btn btn-ghost">↻ Refresh</button>
+      </div>
+
+      <!-- Saved templates list -->
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>App Name</th>
+              <th>Executable</th>
+              <th>CPU%</th>
+              <th>RAM (MB)</th>
+              <th>Restarts</th>
+              <th>Sandbox</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="template-list">
+            <tr id="template-empty-row">
+              <td colspan="8" class="empty-cell">No templates saved</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Create / edit template form -->
+      <div class="card spawn-card">
+        <h3>Save Template</h3>
+        <div class="form-row">
+          <input id="tmpl-name"   class="input"        placeholder="Template name (e.g. webserver)" />
+          <input id="tmpl-app"    class="input"        placeholder="App name" />
+          <input id="tmpl-exe"    class="input wide"   placeholder="C:\path\to\app.exe" />
+        </div>
+        <div class="form-row">
+          <input id="tmpl-args"   class="input wide"   placeholder="Args (space-separated, optional)" />
+          <input id="tmpl-cpu"    class="input narrow" type="number" min="1" max="100" placeholder="CPU%" />
+          <input id="tmpl-mem"    class="input narrow" type="number" min="1" placeholder="RAM MB" />
+          <input id="tmpl-restarts" class="input narrow" type="number" min="0" placeholder="Max restarts" />
+          <label class="checkbox-label" title="Wrap node in Windows AppContainer (filesystem + network sandbox)">
+            <input id="tmpl-appcontainer" type="checkbox" />
+            AppContainer sandbox
+          </label>
+          <button id="btn-save-template" class="btn btn-primary">Save</button>
+        </div>
+        <div id="tmpl-result" class="result hidden"></div>
+      </div>
+    </section>
+
+    <!-- ── Logs Panel ── -->
+    <section id="tab-logs" class="tab-panel">
+      <div class="panel-row">
+        <h2>Node Logs</h2>
+        <div class="log-controls">
+          <select id="log-node-select" class="input">
+            <option value="">— select a node —</option>
+          </select>
+          <button id="btn-clear-log" class="btn btn-ghost">Clear</button>
+        </div>
+      </div>
+      <div id="log-viewer" class="log-viewer">
+        <div id="log-empty" class="empty-cell">Select a node to view its output</div>
+      </div>
+    </section>
+
+    <!-- ── Network Panel ── -->
+    <section id="tab-network" class="tab-panel">
+      <div class="card">
+        <h3>Register Host</h3>
+        <div class="form-row">
+          <input id="net-hostname"  class="input"       placeholder="myapp.vln" />
+          <input id="net-node-id"   class="input wide"  placeholder="Node UUID" />
+          <input id="net-port"      class="input narrow" type="number" placeholder="Port" />
+          <input id="net-ttl"       class="input narrow" type="number" placeholder="TTL (s)" value="0" />
+          <button id="btn-register" class="btn btn-primary">Register</button>
+        </div>
+        <div id="reg-result" class="result hidden"></div>
+      </div>
+
+      <div class="card">
+        <h3>Unregister Host</h3>
+        <div class="form-row">
+          <input id="unreg-hostname"  class="input" placeholder="myapp.vln" />
+          <button id="btn-unregister" class="btn btn-danger">Unregister</button>
+        </div>
+        <div id="unreg-result" class="result hidden"></div>
+      </div>
+
+      <!-- ── Mesh identity ──────────────────────────────────────────────── -->
+      <div class="card" id="mesh-identity-card">
+        <h3>This Machine</h3>
+        <div class="form-row mesh-identity-row">
+          <label class="label-sm">Machine ID</label>
+          <span  id="mesh-machine-id" class="mono-chip">—</span>
+        </div>
+        <div class="form-row mesh-identity-row">
+          <label class="label-sm">Join Code</label>
+          <input id="mesh-join-code" class="input wide" readonly placeholder="(connect to load)" />
+          <button id="btn-copy-join-code" class="btn btn-secondary" title="Copy to clipboard">Copy</button>
+        </div>
+        <div class="form-row mesh-identity-row">
+          <label class="label-sm">Port</label>
+          <span  id="mesh-listen-port" class="mono-chip">—</span>
+        </div>
+      </div>
+
+      <!-- ── Connect to peer ───────────────────────────────────────────── -->
+      <div class="card">
+        <h3>Connect to Peer</h3>
+        <div class="form-row">
+          <input id="mesh-peer-code" class="input wide" placeholder="Paste join code from remote machine (VM1:…)" />
+          <button id="btn-mesh-connect" class="btn btn-primary">Connect</button>
+        </div>
+        <div id="mesh-connect-result" class="result hidden"></div>
+      </div>
+
+      <!-- ── Connected peers ───────────────────────────────────────────── -->
+      <div class="card">
+        <div class="card-header">
+          <h3>Connected Peers</h3>
+          <button id="btn-refresh-peers" class="btn btn-secondary btn-sm">Refresh</button>
+        </div>
+        <table class="data-table" id="peers-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Peer ID</th>
+              <th>Latency</th>
+              <th>Remote Hosts</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="peers-tbody">
+            <tr><td colspan="5" class="empty-row">No connected peers</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

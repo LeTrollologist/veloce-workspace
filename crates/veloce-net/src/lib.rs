@@ -20,9 +20,11 @@ pub mod dns;
 pub mod socks5;
 pub mod registry;
 pub mod error;
+pub mod port_forward;
 
 pub use registry::NetRegistry;
 pub use error::NetError;
+pub use port_forward::PortForwardTable;
 
 use anyhow::Result;
 use std::sync::Arc;

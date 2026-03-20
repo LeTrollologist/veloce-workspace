@@ -369,6 +369,8 @@ pub extern "C" fn veloce_poll_event(
                 NodeEvent::CpuThrottled { current_pct }                   => (3u8, current_pct as u64, 0u64),
                 NodeEvent::LifetimeExpired                                => (4u8, 0u64, 0u64),
                 NodeEvent::Restarting { attempt, delay_secs }            => (5u8, attempt as u64, delay_secs),
+                NodeEvent::HealthCheckPassed                              => (6u8, 0u64, 0u64),
+                NodeEvent::HealthCheckFailed { .. }                       => (7u8, 0u64, 0u64),
             };
             unsafe {
                 let o = &mut *out;

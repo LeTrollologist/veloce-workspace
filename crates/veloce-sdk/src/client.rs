@@ -19,9 +19,11 @@ use uuid::Uuid;
 use veloce_ipc::{
     Codec,
     message::{
-        Body, Capability, Envelope, Flags, MeshConnectMsg, MeshConnectResultMsg,
-        MeshDisconnectMsg, MeshInfoMsg, NodeLogChunkMsg, NodeSpawnedMsg,
-        NodeEventMsg, PeerInfoMsg, PolicyRulesMsg, SpawnNodeMsg, TrafficStatsMsg,
+        Body, Capability, DesiredStateSpec, Envelope, Flags,
+        MeshConnectMsg, MeshConnectResultMsg, MeshDisconnectMsg, MeshInfoMsg,
+        NetPortForwardMsg, NodeLogChunkMsg, NodeSpawnedMsg, NodeStatusMsg,
+        NodeEventMsg, PeerInfoMsg, PolicyRulesMsg, PortForwardEntry, SpawnNodeMsg,
+        TrafficStatsMsg, VolumeEntry, VolumeRegisteredMsg,
     },
     PIPE_NAME,
 };
@@ -182,6 +184,11 @@ impl VeloceClient {
             auto_kill:        true,
             restart_policy:   None,
             use_appcontainer: false,
+            health_check:     None,
+            volume_mounts:    vec![],
+            secret_refs:      vec![],
+            service_name:     None,
+            replica_index:    None,
         }).await
     }
 
@@ -433,6 +440,111 @@ impl VeloceClient {
             Body::PolicyRulesResult(msg) => Ok(msg),
             Body::Error(e) => bail!("policy_reload error: {}", e.message),
             other => bail!("policy_reload: unexpected response {:?}", other.msg_type()),
+        }
+    }
+
+    // ── Port forwarding (v1.1) ────────────────────────────────────────────────
+
+    /// Add a TCP port-forward rule: bind `host_port` → `target_port` on the node.
+    pub async fn add_port_forward(
+        &mut self,
+        msg: NetPortForwardMsg,
+    ) -> Result<PortForwardEntry> {
+        match self.request(Body::NetAddPortForward(msg)).await? {
+            Body::NetPortForwardAdded(e) => Ok(e),
+            Body::Error(e)               => bail!("add_port_forward: {}", e.message),
+            other                        => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// Remove a port-forward rule by name.
+    pub async fn remove_port_forward(&mut self, name: &str) -> Result<()> {
+        match self.request(Body::NetRemovePortForward { name: name.into() }).await? {
+            Body::Pong     => Ok(()),
+            Body::Error(e) => bail!("remove_port_forward: {}", e.message),
+            other          => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// List active port-forward rules.
+    pub async fn list_port_forwards(&mut self) -> Result<Vec<PortForwardEntry>> {
+        match self.request(Body::NetListPortForwards).await? {
+            Body::NetPortForwardList(v) => Ok(v),
+            Body::Error(e)              => bail!("list_port_forwards: {}", e.message),
+            other                       => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    // ── Named volumes (v1.2) ──────────────────────────────────────────────────
+
+    /// Get-or-create a named volume; returns its host path.
+    pub async fn volume_register(&mut self, name: &str) -> Result<VolumeRegisteredMsg> {
+        match self.request(Body::VolumeRegister(
+            veloce_ipc::message::VolumeRegisterMsg { name: name.into() }
+        )).await? {
+            Body::VolumeRegistered(v) => Ok(v),
+            Body::Error(e)            => bail!("volume_register: {}", e.message),
+            other                     => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// List all known named volumes.
+    pub async fn volume_list(&mut self) -> Result<Vec<VolumeEntry>> {
+        match self.request(Body::VolumeList).await? {
+            Body::VolumeListResult(v) => Ok(v),
+            Body::Error(e)            => bail!("volume_list: {}", e.message),
+            other                     => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    // ── Secrets (v1.2) ────────────────────────────────────────────────────────
+
+    /// Encrypt and store a named secret in the DPAPI vault.
+    pub async fn secret_set(&mut self, name: &str, plaintext: &str) -> Result<()> {
+        match self.request(Body::SecretSet(
+            veloce_ipc::message::SecretSetMsg { name: name.into(), plaintext: plaintext.into() }
+        )).await? {
+            Body::SecretSetAck { .. } => Ok(()),
+            Body::Error(e)            => bail!("secret_set: {}", e.message),
+            other                     => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// Delete a named secret from the vault.
+    pub async fn secret_delete(&mut self, name: &str) -> Result<()> {
+        match self.request(Body::SecretDelete { name: name.into() }).await? {
+            Body::SecretDeleteAck { .. } => Ok(()),
+            Body::Error(e)               => bail!("secret_delete: {}", e.message),
+            other                        => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// List all secret names (values are never returned over IPC).
+    pub async fn secret_list(&mut self) -> Result<Vec<String>> {
+        match self.request(Body::SecretList).await? {
+            Body::SecretListResult(v) => Ok(v),
+            Body::Error(e)            => bail!("secret_list: {}", e.message),
+            other                     => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    // ── Desired state / reconciler (v1.3) ─────────────────────────────────────
+
+    /// Apply a desired-state specification; the reconciler takes over management.
+    pub async fn apply_desired_state(&mut self, spec: DesiredStateSpec) -> Result<()> {
+        match self.request(Body::ApplyDesiredState(spec)).await? {
+            Body::DesiredStateApplied { .. } => Ok(()),
+            Body::Error(e)                   => bail!("apply_desired_state: {}", e.message),
+            other                            => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// Query extended node status including health and service labels.
+    pub async fn query_node_status(&mut self) -> Result<Vec<NodeStatusMsg>> {
+        match self.request(Body::QueryNodeStatus).await? {
+            Body::NodeStatusResult(v) => Ok(v),
+            Body::Error(e)            => bail!("query_node_status: {}", e.message),
+            other                     => bail!("unexpected: {:?}", other.msg_type()),
         }
     }
 

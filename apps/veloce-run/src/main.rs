@@ -55,9 +55,12 @@ Examples:
     veloce-run version
 */
 
+mod compose;
+
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use veloce_ipc::message::{Capability, LogStream, NodeLimits, RestartPolicy, SpawnNodeMsg};
+use std::path::PathBuf;
+use veloce_ipc::message::{Capability, LogStream, NetPortForwardMsg, NodeLimits, RestartPolicy, SpawnNodeMsg};
 use veloce_sdk::VeloceClient;
 
 // ── Top-level CLI ─────────────────────────────────────────────────────────────
@@ -81,6 +84,10 @@ struct Cli {
     /// Arguments forwarded to the executable
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     args: Vec<String>,
+
+    /// Extra environment variables (KEY=VALUE); may be repeated
+    #[arg(short = 'e', long = "env", value_name = "KEY=VALUE")]
+    extra_env: Vec<String>,
 
     /// App name shown in the Dashboard [default: exe basename]
     #[arg(short = 'n', long)]
@@ -131,6 +138,28 @@ enum Commands {
     Nrpt {
         #[command(subcommand)]
         action: NrptAction,
+    },
+    /// Start services from a veloce-compose.yml file
+    Up {
+        /// Path to the compose file [default: veloce-compose.yml]
+        #[arg(short, long, value_name = "FILE")]
+        file: Option<PathBuf>,
+        /// Detach after spawning (don't stream logs)
+        #[arg(short, long)]
+        detach: bool,
+    },
+    /// Stop services started by a compose file
+    Down {
+        /// Path to the compose file [default: veloce-compose.yml]
+        #[arg(short, long, value_name = "FILE")]
+        file: Option<PathBuf>,
+    },
+    /// Show status of all running nodes (including compose services)
+    Ps,
+    /// Manage the secrets vault
+    Secret {
+        #[command(subcommand)]
+        action: SecretAction,
     },
     /// Print version information
     Version,
@@ -188,6 +217,25 @@ enum NrptAction {
     Status,
 }
 
+#[derive(Subcommand, Debug)]
+enum SecretAction {
+    /// Encrypt and store a secret value
+    Set {
+        /// Secret name (alphanumeric, _ and - only)
+        name: String,
+        /// Plaintext value to store
+        #[arg(long, value_name = "VALUE")]
+        value: String,
+    },
+    /// Delete a secret from the vault
+    Rm {
+        /// Secret name to remove
+        name: String,
+    },
+    /// List all stored secret names (values are never shown)
+    List,
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn basename(path: &str) -> String {
@@ -216,11 +264,15 @@ async fn main() -> Result<()> {
         Some(Commands::Mesh    { action }) => run_mesh(action).await,
         Some(Commands::Policy  { action }) => run_policy(action).await,
         Some(Commands::Nrpt    { action }) => run_nrpt(action),
-        Some(Commands::Version)            => { run_version(); Ok(()) }
+        Some(Commands::Up   { file, detach }) => run_up(file, detach).await,
+        Some(Commands::Down { file })         => run_down(file).await,
+        Some(Commands::Ps)                    => run_ps().await,
+        Some(Commands::Secret { action })     => run_secret(action).await,
+        Some(Commands::Version)               => { run_version(); Ok(()) }
         None => {
             let executable = cli.executable.expect("clap ensures executable is set when no subcommand");
             run_spawn(
-                executable, cli.args, cli.name, cli.hostname,
+                executable, cli.args, cli.extra_env, cli.name, cli.hostname,
                 cli.port, cli.cpu, cli.mem, cli.restarts, cli.detach,
             ).await
         }
@@ -526,6 +578,176 @@ fn run_nrpt(action: NrptAction) -> anyhow::Result<()> {
     }
 }
 
+// ── Compose up/down/ps ────────────────────────────────────────────────────────
+
+async fn run_up(file: Option<PathBuf>, detach: bool) -> Result<()> {
+    let path = file.unwrap_or_else(|| PathBuf::from("veloce-compose.yml"));
+    let compose_file = compose::load(&path)?;
+
+    let caps = vec![
+        Capability::SpawnNodes, Capability::KillNodes,
+        Capability::RegistryRead, Capability::RegistryWrite,
+        Capability::NetPortForward, Capability::DesiredStateManage,
+        Capability::SecretsRead, Capability::SecretsWrite,
+    ];
+    let mut client = connect_client("veloce-compose", caps).await?;
+
+    // Pre-load file-backed secrets declared in the compose file.
+    for (secret_name, src) in &compose_file.secrets {
+        if let Some(ref file_path) = src.file {
+            let plaintext = std::fs::read_to_string(file_path)
+                .with_context(|| format!("read secret file '{}' for '{}'", file_path, secret_name))?;
+            client.secret_set(secret_name, plaintext.trim()).await
+                .with_context(|| format!("store secret '{secret_name}'"))?;
+            eprintln!("veloce-compose: ✓ secret '{secret_name}' loaded from {file_path}");
+        }
+    }
+
+    // Pre-create named volumes declared in the compose file.
+    for volume_name in compose_file.volumes.keys() {
+        let v = client.volume_register(volume_name).await
+            .with_context(|| format!("register volume '{volume_name}'"))?;
+        eprintln!("veloce-compose: ✓ volume '{}' → {}", volume_name, v.host_path);
+    }
+
+    // Build desired state and apply it.
+    let compose_name = path.file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "compose".into());
+    let spec = compose::to_desired_state(&compose_file, &compose_name)?;
+    eprintln!("veloce-compose: applying desired state '{}' ({} services)…",
+        spec.name, spec.services.len());
+    client.apply_desired_state(spec).await?;
+    eprintln!("veloce-compose: ✓ desired state applied — reconciler is converging");
+
+    // Register port forwards.
+    let order = compose::topo_sort(&compose_file.services)?;
+    for svc_name in &order {
+        let svc = &compose_file.services[svc_name];
+        for port_str in &svc.ports {
+            let (host_port, target_port) = compose::parse_port_mapping(port_str)
+                .with_context(|| format!("service '{}': port '{}'", svc_name, port_str))?;
+            let forward_name = format!("{svc_name}-{host_port}");
+            client.add_port_forward(NetPortForwardMsg {
+                name:        forward_name.clone(),
+                host_port,
+                target_port,
+                node_id:     None,
+            }).await.with_context(|| format!("add port forward {host_port}:{target_port}"))?;
+            eprintln!("veloce-compose: ✓ port forward {host_port} → {target_port}  ({forward_name})");
+        }
+    }
+
+    if !detach {
+        eprintln!("veloce-compose: services are starting (run `veloce-run ps` to check status)");
+    }
+    Ok(())
+}
+
+async fn run_down(file: Option<PathBuf>) -> Result<()> {
+    let path = file.unwrap_or_else(|| PathBuf::from("veloce-compose.yml"));
+    let compose_file = compose::load(&path)?;
+
+    let caps = vec![
+        Capability::KillNodes, Capability::DesiredStateManage, Capability::NetPortForward,
+    ];
+    let mut client = connect_client("veloce-compose", caps).await?;
+
+    // Clear the desired state so the reconciler stops managing these services.
+    let compose_name = path.file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "compose".into());
+
+    // Apply an empty desired state spec to clear reconciler.
+    client.apply_desired_state(veloce_ipc::message::DesiredStateSpec {
+        name:     compose_name.clone(),
+        services: vec![],
+    }).await?;
+
+    // Kill all running nodes for services in the compose file.
+    let statuses = client.query_node_status().await?;
+    let service_names: std::collections::HashSet<&str> = compose_file.services.keys()
+        .map(|s| s.as_str()).collect();
+
+    let mut killed = 0usize;
+    for s in &statuses {
+        if s.service_name.as_deref().map(|n| service_names.contains(n)).unwrap_or(false) {
+            match client.kill_node(s.node_id).await {
+                Ok(_)  => { killed += 1; }
+                Err(e) => eprintln!("veloce-compose: warn: kill {}: {e}", s.node_id),
+            }
+        }
+    }
+    eprintln!("veloce-compose: ✓ {killed} node(s) stopped");
+
+    // Remove port forwards.
+    let forwards = client.list_port_forwards().await?;
+    for f in &forwards {
+        // Only remove forwards whose names start with a service name from this file.
+        let belongs = service_names.iter().any(|n| f.name.starts_with(*n));
+        if belongs {
+            client.remove_port_forward(&f.name).await.ok();
+        }
+    }
+
+    eprintln!("veloce-compose: ✓ down complete");
+    Ok(())
+}
+
+async fn run_ps() -> Result<()> {
+    let mut client = connect_client("veloce-run-ps", vec![]).await?;
+    let statuses = client.query_node_status().await?;
+
+    if statuses.is_empty() {
+        println!("No running nodes.");
+        return Ok(());
+    }
+
+    println!("{:<36}  {:<20}  {:<12}  {:<12}  {:>7}  {}",
+        "NODE ID", "APP / SERVICE", "HEALTH", "REPLICA", "PID", "SPAWNED");
+    println!("{}", "-".repeat(110));
+    for s in &statuses {
+        let svc = match (&s.service_name, s.replica_index) {
+            (Some(n), Some(i)) => format!("{n}[{i}]"),
+            (Some(n), None)    => n.clone(),
+            (None,    _)       => s.app_name.clone(),
+        };
+        let health = format!("{:?}", s.health);
+        let replica = s.replica_index.map(|i| i.to_string()).unwrap_or_default();
+        println!("{:<36}  {:<20}  {:<12}  {:<12}  {:>7}  {}",
+            s.node_id, svc, health, replica, s.pid,
+            s.spawned_at.format("%H:%M:%S"));
+    }
+    Ok(())
+}
+
+// ── Secrets subcommand ────────────────────────────────────────────────────────
+
+async fn run_secret(action: SecretAction) -> Result<()> {
+    let caps = vec![Capability::SecretsRead, Capability::SecretsWrite];
+    let mut client = connect_client("veloce-run-secret", caps).await?;
+
+    match action {
+        SecretAction::Set { name, value } => {
+            client.secret_set(&name, &value).await?;
+            eprintln!("✓ secret '{name}' stored");
+        }
+        SecretAction::Rm { name } => {
+            client.secret_delete(&name).await?;
+            eprintln!("✓ secret '{name}' deleted");
+        }
+        SecretAction::List => {
+            let names = client.secret_list().await?;
+            if names.is_empty() {
+                println!("No secrets stored.");
+            } else {
+                for n in &names { println!("{n}"); }
+            }
+        }
+    }
+    Ok(())
+}
+
 // ── Version subcommand ────────────────────────────────────────────────────────
 
 fn run_version() {
@@ -542,6 +764,7 @@ fn run_version() {
 async fn run_spawn(
     executable: String,
     args: Vec<String>,
+    extra_env: Vec<String>,
     name: Option<String>,
     hostname: Option<String>,
     port: Option<u16>,
@@ -581,15 +804,26 @@ async fn run_spawn(
         None
     };
 
+    // Parse --env KEY=VALUE pairs
+    let env: Vec<(String, String)> = extra_env.iter().filter_map(|e| {
+        let mut parts = e.splitn(2, '=');
+        Some((parts.next()?.to_owned(), parts.next().unwrap_or("").to_owned()))
+    }).collect();
+
     let msg = SpawnNodeMsg {
-        app_name:        app_name.clone(),
-        executable:      executable.clone(),
-        args:            args.clone(),
-        env:             vec![],
+        app_name:         app_name.clone(),
+        executable:       executable.clone(),
+        args:             args.clone(),
+        env,
         limits,
-        auto_kill:       !detach,
+        auto_kill:        !detach,
         restart_policy,
         use_appcontainer: false,
+        health_check:     None,
+        volume_mounts:    vec![],
+        secret_refs:      vec![],
+        service_name:     None,
+        replica_index:    None,
     };
 
     let spawned = client.spawn_node_with(msg).await.context("spawn_node failed")?;

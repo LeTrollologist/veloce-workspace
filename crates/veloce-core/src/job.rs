@@ -19,7 +19,8 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 use uuid::Uuid;
 
 use veloce_ipc::message::{
-    LogStream, NodeEvent, NodeLimits, NodeLogChunkMsg, RestartPolicy, SpawnNodeMsg,
+    HealthProbe, HealthStatus, LogStream, NodeEvent, NodeLimits,
+    NodeLogChunkMsg, RestartPolicy, SpawnNodeMsg, VolumeMountSource,
 };
 
 use crate::state::CoreState;
@@ -467,18 +468,86 @@ fn spawn_log_reader(
     });
 }
 
+// ── RECONCILER HELPER ─────────────────────────────────────────────────────────
+
+/// Spawn a node on behalf of the reconciler.
+///
+/// Resolves volume mounts and secret refs from the state before calling the
+/// platform-level `spawn_node`.  The new node is registered in the NodeTable
+/// and the service label is set so the reconciler can track it.
+pub async fn spawn_node_via_state(
+    state:     &Arc<CoreState>,
+    mut msg:   SpawnNodeMsg,
+) -> Result<()> {
+    // ── Resolve volume mounts ────────────────────────────────────────────────
+    for vm in &msg.volume_mounts {
+        let host_path = match &vm.source {
+            VolumeMountSource::Named(name) => {
+                state.volume_registry().get_or_create(name)
+                    .map_err(|e| anyhow::anyhow!("volume '{}': {e}", name))?
+            }
+            VolumeMountSource::BindPath(p) => {
+                crate::volume::VolumeRegistry::resolve_bind(p)
+                    .map_err(|e| anyhow::anyhow!("bind path '{}': {e}", p))?
+            }
+        };
+        let env_key = format!("VELOCE_VOLUME_{}", vm.env_suffix.to_uppercase());
+        msg.env.push((env_key, host_path.to_string_lossy().into_owned()));
+    }
+
+    // ── Resolve secret refs ──────────────────────────────────────────────────
+    for sr in &msg.secret_refs {
+        match state.secrets_vault().get(&sr.secret_name) {
+            Ok(plaintext) => {
+                msg.env.push((sr.env_var.clone(), plaintext));
+            }
+            Err(e) => {
+                tracing::warn!("secret '{}' not found: {e}", sr.secret_name);
+            }
+        }
+    }
+
+    let node_id   = uuid::Uuid::new_v4();
+    let pipe      = format!(r"\\.\pipe\VeloceNode-{}", node_id.simple());
+    let slot      = state.registry()
+        .alloc_node(node_id, &msg.app_name, &pipe)
+        .context("alloc registry slot")?;
+
+    let handle = spawn_node(&msg, node_id, slot, veloce_ipc::PIPE_NAME, None, None)
+        .await
+        .context("spawn_node")?;
+
+    state.registry().set_node_pid(slot, handle.pid)?;
+
+    // Set service label for reconciler tracking.
+    if let (Some(svc_name), Some(replica_idx)) = (&msg.service_name, msg.replica_index) {
+        state.node_table().set_service_label(node_id, svc_name.clone(), replica_idx);
+    }
+
+    state.node_table().insert(handle);
+    Ok(())
+}
+
 // ── HEALTH MONITOR ────────────────────────────────────────────────────────────
+
+/// Per-node health-probe tracking state.
+struct NodeHealthState {
+    next_check_at: std::time::Instant,
+    consec_pass:   u32,
+    consec_fail:   u32,
+}
 
 /// Background task: poll live nodes every 2 s, emit events, apply restart policy.
 pub async fn health_loop(state: Arc<CoreState>) {
+    let mut health_map: HashMap<Uuid, NodeHealthState> = HashMap::new();
     loop {
         tokio::time::sleep(Duration::from_secs(2)).await;
-        check_nodes(&state).await;
+        check_nodes(&state, &mut health_map).await;
     }
 }
 
 #[cfg(windows)]
-async fn check_nodes(state: &Arc<CoreState>) {
+async fn check_nodes(state: &Arc<CoreState>, health_map: &mut HashMap<Uuid, NodeHealthState>) {
     use windows::Win32::Foundation::WAIT_TIMEOUT;
 
     let nodes = state.node_table().list_live();
@@ -489,7 +558,53 @@ async fn check_nodes(state: &Arc<CoreState>) {
         let still_running = unsafe {
             WaitForSingleObject(raw_handle, 0) == WAIT_TIMEOUT
         };
-        if still_running { continue; }
+
+        // ── Health check probing for running nodes ─────────────────────────
+        if still_running {
+            if let Some(ref hc) = info.health_check {
+                let now = std::time::Instant::now();
+                let hs = health_map.entry(info.node_id).or_insert_with(|| NodeHealthState {
+                    next_check_at: now,
+                    consec_pass:   0,
+                    consec_fail:   0,
+                });
+                if now >= hs.next_check_at {
+                    let passed = run_health_check(&hc.probe, hc.timeout_secs).await;
+                    hs.next_check_at = now + std::time::Duration::from_secs(hc.interval_secs);
+
+                    if passed {
+                        hs.consec_fail = 0;
+                        hs.consec_pass += 1;
+                        if hs.consec_pass >= hc.success_threshold {
+                            state.node_table().set_health(info.node_id, HealthStatus::Healthy);
+                            let _ = info.event_tx.send(NodeEventMsg {
+                                node_id: info.node_id,
+                                event:   NodeEvent::HealthCheckPassed,
+                            });
+                        }
+                    } else {
+                        hs.consec_pass = 0;
+                        hs.consec_fail += 1;
+                        let probe_desc = match &hc.probe {
+                            HealthProbe::Http { port, path } => format!("HTTP :{port}{path}"),
+                            HealthProbe::Tcp  { port }       => format!("TCP  :{port}"),
+                            HealthProbe::Exec { command, .. }=> format!("Exec {command}"),
+                        };
+                        let _ = info.event_tx.send(NodeEventMsg {
+                            node_id: info.node_id,
+                            event:   NodeEvent::HealthCheckFailed {
+                                probe:  probe_desc.clone(),
+                                reason: "probe did not succeed".into(),
+                            },
+                        });
+                        if hs.consec_fail >= hc.failure_threshold {
+                            state.node_table().set_health(info.node_id, HealthStatus::Unhealthy);
+                        }
+                    }
+                }
+            }
+            continue;
+        }
 
         let mut exit_code = 0u32;
         unsafe { let _ = GetExitCodeProcess(raw_handle, &mut exit_code); }
@@ -564,6 +679,53 @@ async fn check_nodes(state: &Arc<CoreState>) {
     }
 }
 
+/// Run a single health-check probe.  Returns `true` if the probe passes.
+async fn run_health_check(probe: &HealthProbe, timeout_secs: u64) -> bool {
+    use tokio::time::timeout;
+    let dur = std::time::Duration::from_secs(timeout_secs.max(1));
+
+    match probe {
+        HealthProbe::Tcp { port } => {
+            let addr = format!("127.0.0.1:{port}");
+            timeout(dur, tokio::net::TcpStream::connect(&addr))
+                .await
+                .map(|r| r.is_ok())
+                .unwrap_or(false)
+        }
+        HealthProbe::Http { port, path } => {
+            let addr = format!("127.0.0.1:{port}");
+            let fut = async {
+                let mut stream = tokio::net::TcpStream::connect(&addr).await?;
+                use tokio::io::{AsyncWriteExt, AsyncBufReadExt};
+                let req = format!("GET {path} HTTP/1.0\r\nHost: localhost\r\n\r\n");
+                stream.write_all(req.as_bytes()).await?;
+                let mut reader = tokio::io::BufReader::new(stream);
+                let mut line = String::new();
+                reader.read_line(&mut line).await?;
+                // Check for 2xx status code
+                let ok = line.split_whitespace().nth(1)
+                    .and_then(|c| c.parse::<u16>().ok())
+                    .map(|code| (200..300).contains(&code))
+                    .unwrap_or(false);
+                Ok::<bool, std::io::Error>(ok)
+            };
+            timeout(dur, fut)
+                .await
+                .map(|r| r.unwrap_or(false))
+                .unwrap_or(false)
+        }
+        HealthProbe::Exec { command, args } => {
+            let fut = tokio::process::Command::new(command)
+                .args(args)
+                .status();
+            timeout(dur, fut)
+                .await
+                .map(|r| r.map(|s| s.success()).unwrap_or(false))
+                .unwrap_or(false)
+        }
+    }
+}
+
 /// Exponential back-off: `min(base * 2^count, max_delay)`.
 fn back_off_secs(policy: &RestartPolicy, count: u32) -> u64 {
     let delay = policy.base_delay_secs.saturating_mul(1u64 << count.min(10));
@@ -571,7 +733,7 @@ fn back_off_secs(policy: &RestartPolicy, count: u32) -> u64 {
 }
 
 #[cfg(not(windows))]
-async fn check_nodes(_state: &Arc<CoreState>) {}
+async fn check_nodes(_state: &Arc<CoreState>, _health_map: &mut HashMap<Uuid, NodeHealthState>) {}
 
 // ── WIN32 HELPERS ─────────────────────────────────────────────────────────────
 

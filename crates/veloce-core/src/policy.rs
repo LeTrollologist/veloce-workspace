@@ -212,7 +212,7 @@ impl PolicyEngine {
         use veloce_ipc::message::Capability::*;
         const ALL: &[veloce_ipc::message::Capability] =
             &[SpawnNodes, KillNodes, RegistryRead, RegistryWrite, NetRegister, NetResolve,
-              MeshManage, PolicyAdmin];
+              MeshManage, PolicyAdmin, SecretsRead, SecretsWrite, NetPortForward, DesiredStateManage];
 
         let cfg = self.config.read();
         for rule in &cfg.rules {

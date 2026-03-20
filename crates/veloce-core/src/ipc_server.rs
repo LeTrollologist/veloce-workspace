@@ -25,7 +25,7 @@ use veloce_ipc::{
         HandshakeAckMsg, MeshConnectMsg, MeshDisconnectMsg,
         NodeEventMsg, NodeInfo, NodeKilledMsg, NodeListMsg,
         NodeLogChunkMsg, NodeResourceMsg, NodeSpawnedMsg, NodeStatus as IpcNodeStatus,
-        TrafficStatsMsg,
+        NodeStatusMsg, TrafficStatsMsg,
     },
     PIPE_NAME,
 };
@@ -607,6 +607,101 @@ where
             Body::TrafficStatsResult(_) => {
                 self.send_error(Some(cid), ErrorCode::InvalidMessage,
                     "TrafficStatsResult is server-to-client only".into()).await?;
+            }
+
+            // ── Port forwarding (v1.1) ─────────────────────────────────────
+            Body::NetAddPortForward(msg) => {
+                self.require_cap(Capability::NetPortForward)?;
+                match self.state.port_forward_table()
+                    .add(msg.name.clone(), msg.host_port, msg.target_port, msg.node_id)
+                    .await
+                {
+                    Ok(entry) => self.send_reply(cid, Body::NetPortForwardAdded(entry)).await?,
+                    Err(e) => self.send_error(Some(cid), ErrorCode::InternalError,
+                        format!("port forward: {e}")).await?,
+                }
+            }
+
+            Body::NetRemovePortForward { name } => {
+                self.require_cap(Capability::NetPortForward)?;
+                self.state.port_forward_table().remove(&name);
+                self.send_reply(cid, Body::Pong).await?;
+            }
+
+            Body::NetListPortForwards => {
+                let list = self.state.port_forward_table().list();
+                self.send_reply(cid, Body::NetPortForwardList(list)).await?;
+            }
+
+            // ── Named volumes (v1.2) ───────────────────────────────────────
+            Body::VolumeRegister(msg) => {
+                self.require_cap(Capability::RegistryWrite)?;
+                match self.state.volume_registry().get_or_create(&msg.name) {
+                    Ok(path) => self.send_reply(cid, Body::VolumeRegistered(
+                        veloce_ipc::message::VolumeRegisteredMsg {
+                            name:      msg.name,
+                            host_path: path.to_string_lossy().into_owned(),
+                        }
+                    )).await?,
+                    Err(e) => self.send_error(Some(cid), ErrorCode::InternalError,
+                        format!("volume register: {e}")).await?,
+                }
+            }
+
+            Body::VolumeList => {
+                let volumes = self.state.volume_registry().list();
+                self.send_reply(cid, Body::VolumeListResult(volumes)).await?;
+            }
+
+            // ── Secrets (v1.2) ─────────────────────────────────────────────
+            Body::SecretSet(msg) => {
+                self.require_cap(Capability::SecretsWrite)?;
+                match self.state.secrets_vault().set(&msg.name, &msg.plaintext) {
+                    Ok(()) => self.send_reply(cid, Body::SecretSetAck { name: msg.name }).await?,
+                    Err(e) => self.send_error(Some(cid), ErrorCode::InternalError,
+                        format!("secret set: {e}")).await?,
+                }
+            }
+
+            Body::SecretDelete { name } => {
+                self.require_cap(Capability::SecretsWrite)?;
+                match self.state.secrets_vault().delete(&name) {
+                    Ok(()) => self.send_reply(cid, Body::SecretDeleteAck { name }).await?,
+                    Err(e) => self.send_error(Some(cid), ErrorCode::InternalError,
+                        format!("secret delete: {e}")).await?,
+                }
+            }
+
+            Body::SecretList => {
+                self.require_cap(Capability::SecretsRead)?;
+                let names = self.state.secrets_vault().list();
+                self.send_reply(cid, Body::SecretListResult(names)).await?;
+            }
+
+            // ── Desired state / reconciler (v1.3) ──────────────────────────
+            Body::ApplyDesiredState(spec) => {
+                self.require_cap(Capability::DesiredStateManage)?;
+                let name = spec.name.clone();
+                self.state.reconciler().apply(spec);
+                self.send_reply(cid, Body::DesiredStateApplied { name }).await?;
+            }
+
+            // ── Extended node status (v1.3) ────────────────────────────────
+            Body::QueryNodeStatus => {
+                let statuses: Vec<NodeStatusMsg> = self.state.node_table()
+                    .list_live()
+                    .into_iter()
+                    .map(|s| NodeStatusMsg {
+                        node_id:       s.node_id,
+                        app_name:      s.app_name,
+                        pid:           s.pid,
+                        health:        s.health,
+                        spawned_at:    chrono::Utc::now(), // best-effort: registry would have exact time
+                        service_name:  s.service_name,
+                        replica_index: s.replica_index,
+                    })
+                    .collect();
+                self.send_reply(cid, Body::NodeStatusResult(statuses)).await?;
             }
 
             other => {

@@ -15,8 +15,11 @@ use uuid::Uuid;
 use crate::policy::PolicyEngine;
 use crate::registry::Registry;
 use crate::job::{NodeHandle, NodeEventMsg};
-use veloce_ipc::message::NodeLogChunkMsg;
-use veloce_net::NetRegistry;
+use crate::volume::VolumeRegistry;
+use crate::secrets::SecretsVault;
+use crate::reconciler::Reconciler;
+use veloce_ipc::message::{HealthCheck, NodeLogChunkMsg, HealthStatus};
+use veloce_net::{NetRegistry, PortForwardTable};
 use veloce_mesh::{MeshState, DEFAULT_MESH_PORT};
 
 pub struct CoreState {
@@ -32,6 +35,20 @@ pub struct CoreState {
     /// Per-session pre-shared key.  32 truly random bytes from OsRng, written to
     /// the PSK file at startup; every connecting client must echo them.
     psk:          [u8; 32],
+
+    // ── v1.1 ──────────────────────────────────────────────────────────────────
+    /// Active TCP port-forward rules (host → node port mappings).
+    pub port_forward_table: Arc<PortForwardTable>,
+
+    // ── v1.2 ──────────────────────────────────────────────────────────────────
+    /// Named volume registry persisted in the data directory.
+    pub volume_registry: Arc<VolumeRegistry>,
+    /// DPAPI-backed secret vault.
+    pub secrets_vault: Arc<SecretsVault>,
+
+    // ── v1.3 ──────────────────────────────────────────────────────────────────
+    /// Desired-state reconciler.  The background task is started in `run_core`.
+    pub reconciler: Arc<Reconciler>,
 }
 
 impl CoreState {
@@ -84,20 +101,41 @@ impl CoreState {
             }
         };
 
+        let port_forward_table = Arc::new(PortForwardTable::new());
+        let volume_registry    = VolumeRegistry::new(&dir);
+        let secrets_vault      = SecretsVault::new(&dir);
+        let node_table         = Arc::new(NodeTable::new());
+
+        // Reconciler needs CoreState — it is wired up after construction.
+        // We use a temporary Arc<Reconciler> with a placeholder; the real
+        // CoreState is passed via `Reconciler::new` call in main.rs after
+        // Arc::new(CoreState { … }) is created.  To break the cycle we use
+        // a OnceLock-based approach: Reconciler takes Arc<CoreState> in its
+        // `run` call, not at construction.
+        let reconciler = Arc::new(crate::reconciler::Reconciler::new_detached());
+
         Ok(Self {
             registry,
-            node_table:   Arc::new(NodeTable::new()),
+            node_table,
             net_registry,
             mesh,
             policy,
             shutdown:     AtomicBool::new(false),
             psk,
+            port_forward_table,
+            volume_registry,
+            secrets_vault,
+            reconciler,
         })
     }
 
-    pub fn registry(&self)     -> &Registry         { &self.registry }
-    pub fn node_table(&self)   -> &Arc<NodeTable>   { &self.node_table }
-    pub fn net_registry(&self) -> &Arc<NetRegistry> { &self.net_registry }
+    pub fn registry(&self)            -> &Registry              { &self.registry }
+    pub fn node_table(&self)          -> &Arc<NodeTable>        { &self.node_table }
+    pub fn net_registry(&self)        -> &Arc<NetRegistry>      { &self.net_registry }
+    pub fn port_forward_table(&self)  -> &Arc<PortForwardTable> { &self.port_forward_table }
+    pub fn volume_registry(&self)     -> &Arc<VolumeRegistry>   { &self.volume_registry }
+    pub fn secrets_vault(&self)       -> &Arc<SecretsVault>     { &self.secrets_vault }
+    pub fn reconciler(&self)          -> &Arc<Reconciler>       { &self.reconciler }
     /// The current session's PSK bytes.  Clients must send these verbatim.
     pub fn psk(&self) -> &[u8; 32] { &self.psk }
 
@@ -136,12 +174,20 @@ fn generate_and_persist_psk() -> anyhow::Result<[u8; 32]> {
 
 /// In-memory live node table (complementing the durable mmap registry).
 pub struct NodeTable {
-    nodes: RwLock<HashMap<Uuid, NodeHandle>>,
+    nodes:           RwLock<HashMap<Uuid, NodeHandle>>,
+    /// Per-node health status set by the health-check loop (v1.1).
+    health_statuses: RwLock<HashMap<Uuid, HealthStatus>>,
+    /// Maps node_id → (service_name, replica_index) for reconciler-managed nodes (v1.3).
+    service_labels:  RwLock<HashMap<Uuid, (String, u32)>>,
 }
 
 impl NodeTable {
     pub fn new() -> Self {
-        Self { nodes: RwLock::new(HashMap::new()) }
+        Self {
+            nodes:           RwLock::new(HashMap::new()),
+            health_statuses: RwLock::new(HashMap::new()),
+            service_labels:  RwLock::new(HashMap::new()),
+        }
     }
 
     pub fn insert(&self, handle: NodeHandle) {
@@ -149,12 +195,39 @@ impl NodeTable {
     }
 
     pub fn remove(&self, id: Uuid) -> Option<NodeHandle> {
-        self.nodes.write().remove(&id)
+        let handle = self.nodes.write().remove(&id);
+        if handle.is_some() {
+            self.health_statuses.write().remove(&id);
+            self.service_labels.write().remove(&id);
+        }
+        handle
     }
 
     pub fn get_pid(&self, id: Uuid) -> Option<u32> {
         self.nodes.read().get(&id).map(|h| h.pid)
     }
+
+    // ── Health tracking (v1.1) ────────────────────────────────────────────
+
+    pub fn set_health(&self, id: Uuid, status: HealthStatus) {
+        self.health_statuses.write().insert(id, status);
+    }
+
+    pub fn get_health(&self, id: Uuid) -> HealthStatus {
+        self.health_statuses.read().get(&id).copied().unwrap_or_default()
+    }
+
+    // ── Service label tracking (v1.3) ─────────────────────────────────────
+
+    pub fn set_service_label(&self, id: Uuid, service_name: String, replica_index: u32) {
+        self.service_labels.write().insert(id, (service_name, replica_index));
+    }
+
+    pub fn get_service_label(&self, id: Uuid) -> Option<(String, u32)> {
+        self.service_labels.read().get(&id).cloned()
+    }
+
+    // ── Bulk queries ──────────────────────────────────────────────────────
 
     /// Query live CPU and memory usage for every node.
     /// Returns `(node_id, pid, cpu_ms, mem_bytes)` per node.
@@ -170,18 +243,27 @@ impl NodeTable {
     /// so the health loop can call WaitForSingleObject without holding the lock.
     /// On non-Windows, `proc_handle_raw` is always 0.
     pub fn list_live(&self) -> Vec<NodeSummary> {
-        self.nodes.read().values().map(|h| NodeSummary {
-            node_id:         h.node_id,
-            pid:             h.pid,
-            slot_idx:        h.slot_idx,
-            app_name:        h.app_name.clone(),
-            pipe_path:       h.pipe_path.clone(),
-            #[cfg(windows)]
-            proc_handle_raw: h.proc_handle_raw(),
-            #[cfg(not(windows))]
-            proc_handle_raw: 0isize,
-            event_tx:        h.event_tx.clone(),
-            log_tx:          h.log_tx.clone(),
+        let health_guard  = self.health_statuses.read();
+        let service_guard = self.service_labels.read();
+        self.nodes.read().values().map(|h| {
+            let label = service_guard.get(&h.node_id).cloned();
+            NodeSummary {
+                node_id:         h.node_id,
+                pid:             h.pid,
+                slot_idx:        h.slot_idx,
+                app_name:        h.app_name.clone(),
+                pipe_path:       h.pipe_path.clone(),
+                #[cfg(windows)]
+                proc_handle_raw: h.proc_handle_raw(),
+                #[cfg(not(windows))]
+                proc_handle_raw: 0isize,
+                event_tx:        h.event_tx.clone(),
+                log_tx:          h.log_tx.clone(),
+                health:          health_guard.get(&h.node_id).copied().unwrap_or_default(),
+                service_name:    label.as_ref().map(|(n, _)| n.clone()),
+                replica_index:   label.map(|(_, i)| i),
+                health_check:    h.spawn_msg.health_check.clone(),
+            }
         }).collect()
     }
 }
@@ -203,6 +285,14 @@ pub struct NodeSummary {
     pub proc_handle_raw: isize,
     pub event_tx:        tokio::sync::broadcast::Sender<NodeEventMsg>,
     pub log_tx:          tokio::sync::broadcast::Sender<NodeLogChunkMsg>,
+    /// Current health status (from the health-check loop).
+    pub health:          HealthStatus,
+    /// Compose service name, if managed by the reconciler.
+    pub service_name:    Option<String>,
+    /// Replica index within the service.
+    pub replica_index:   Option<u32>,
+    /// Optional health-check probe config (from the original SpawnNodeMsg).
+    pub health_check:    Option<HealthCheck>,
 }
 
 fn data_dir() -> PathBuf {

@@ -113,6 +113,54 @@ pub enum MessageType {
     /// Core → Client: traffic counters snapshot.
     TrafficStatsResult = 0x81,
 
+    // ── Port forwarding (v1.1) ────────────────────────────────
+    /// Client → Core: add a host-port → node-port TCP forward rule.
+    NetAddPortForward    = 0x90,
+    /// Core → Client: forward is live.
+    NetPortForwardAdded  = 0x91,
+    /// Client → Core: remove a port forward rule by name.
+    NetRemovePortForward = 0x92,
+    /// Client → Core: list active port forward rules.
+    NetListPortForwards  = 0x93,
+    /// Core → Client: port forward list response.
+    NetPortForwardList   = 0x94,
+
+    // ── Extended node status (v1.3) ───────────────────────────
+    /// Client → Core: query running node status including health.
+    QueryNodeStatus  = 0xA0,
+    /// Core → Client: extended node status list.
+    NodeStatusResult = 0xA1,
+
+    // ── Desired state / reconciler (v1.3) ─────────────────────
+    /// Client → Core: apply a full desired-state specification.
+    ApplyDesiredState  = 0xB0,
+    /// Core → Client: desired state accepted by reconciler.
+    DesiredStateApplied = 0xB1,
+
+    // ── Named volumes (v1.2) ──────────────────────────────────
+    /// Client → Core: get-or-create a named volume, returns its host path.
+    VolumeRegister   = 0xC0,
+    /// Core → Client: volume path confirmed.
+    VolumeRegistered = 0xC1,
+    /// Client → Core: list all known volumes.
+    VolumeList       = 0xC2,
+    /// Core → Client: volume list response.
+    VolumeListResult = 0xC3,
+
+    // ── Secrets (v1.2) ────────────────────────────────────────
+    /// Client → Core: encrypt and store a named secret (DPAPI-backed).
+    SecretSet        = 0xD0,
+    /// Core → Client: secret stored.
+    SecretSetAck     = 0xD1,
+    /// Client → Core: delete a named secret.
+    SecretDelete     = 0xD2,
+    /// Core → Client: secret deleted.
+    SecretDeleteAck  = 0xD3,
+    /// Client → Core: list known secret names (values never returned).
+    SecretList       = 0xD4,
+    /// Core → Client: secret name list.
+    SecretListResult = 0xD5,
+
     // ── Error ─────────────────────────────────────────────────
     Error           = 0xFF,
 }
@@ -146,6 +194,16 @@ impl TryFrom<u8> for MessageType {
             0x70 => PolicyGetRules,  0x71 => PolicyRulesResult,
             0x72 => PolicyReload,
             0x80 => TrafficQuery,    0x81 => TrafficStatsResult,
+            0x90 => NetAddPortForward,    0x91 => NetPortForwardAdded,
+            0x92 => NetRemovePortForward, 0x93 => NetListPortForwards,
+            0x94 => NetPortForwardList,
+            0xA0 => QueryNodeStatus,      0xA1 => NodeStatusResult,
+            0xB0 => ApplyDesiredState,    0xB1 => DesiredStateApplied,
+            0xC0 => VolumeRegister,       0xC1 => VolumeRegistered,
+            0xC2 => VolumeList,           0xC3 => VolumeListResult,
+            0xD0 => SecretSet,            0xD1 => SecretSetAck,
+            0xD2 => SecretDelete,         0xD3 => SecretDeleteAck,
+            0xD4 => SecretList,           0xD5 => SecretListResult,
             0xFF => Error,
             other => return Err(other),
         })
@@ -284,6 +342,35 @@ pub enum Body {
 
     // Error
     Error(ErrorMsg),
+
+    // ── Port forwarding (v1.1) ────────────────────────────────────────────────
+    NetAddPortForward(NetPortForwardMsg),
+    NetPortForwardAdded(PortForwardEntry),
+    NetRemovePortForward { name: String },
+    NetListPortForwards,
+    NetPortForwardList(Vec<PortForwardEntry>),
+
+    // ── Extended node status (v1.3) ───────────────────────────────────────────
+    QueryNodeStatus,
+    NodeStatusResult(Vec<NodeStatusMsg>),
+
+    // ── Desired state (v1.3) ──────────────────────────────────────────────────
+    ApplyDesiredState(DesiredStateSpec),
+    DesiredStateApplied { name: String },
+
+    // ── Volumes (v1.2) ────────────────────────────────────────────────────────
+    VolumeRegister(VolumeRegisterMsg),
+    VolumeRegistered(VolumeRegisteredMsg),
+    VolumeList,
+    VolumeListResult(Vec<VolumeEntry>),
+
+    // ── Secrets (v1.2) ────────────────────────────────────────────────────────
+    SecretSet(SecretSetMsg),
+    SecretSetAck { name: String },
+    SecretDelete { name: String },
+    SecretDeleteAck { name: String },
+    SecretList,
+    SecretListResult(Vec<String>),
 }
 
 impl Body {
@@ -335,6 +422,30 @@ impl Body {
             MeshPingPeer { .. }    => MessageType::MeshPingPeer,
             MeshPingResult { .. }  => MessageType::MeshPingResult,
             Error(_)               => MessageType::Error,
+            // Port forwarding
+            NetAddPortForward(_)       => MessageType::NetAddPortForward,
+            NetPortForwardAdded(_)     => MessageType::NetPortForwardAdded,
+            NetRemovePortForward{..}   => MessageType::NetRemovePortForward,
+            NetListPortForwards        => MessageType::NetListPortForwards,
+            NetPortForwardList(_)      => MessageType::NetPortForwardList,
+            // Extended status
+            QueryNodeStatus            => MessageType::QueryNodeStatus,
+            NodeStatusResult(_)        => MessageType::NodeStatusResult,
+            // Desired state
+            ApplyDesiredState(_)       => MessageType::ApplyDesiredState,
+            DesiredStateApplied{..}    => MessageType::DesiredStateApplied,
+            // Volumes
+            VolumeRegister(_)          => MessageType::VolumeRegister,
+            VolumeRegistered(_)        => MessageType::VolumeRegistered,
+            VolumeList                 => MessageType::VolumeList,
+            VolumeListResult(_)        => MessageType::VolumeListResult,
+            // Secrets
+            SecretSet(_)               => MessageType::SecretSet,
+            SecretSetAck{..}           => MessageType::SecretSetAck,
+            SecretDelete{..}           => MessageType::SecretDelete,
+            SecretDeleteAck{..}        => MessageType::SecretDeleteAck,
+            SecretList                 => MessageType::SecretList,
+            SecretListResult(_)        => MessageType::SecretListResult,
         }
     }
 }
@@ -377,6 +488,14 @@ pub enum Capability {
     MeshManage,
     /// Hot-reload the policy file from disk.
     PolicyAdmin,
+    /// Read secret names (list); secrets values are never returned over IPC.
+    SecretsRead,
+    /// Set or delete named secrets in the vault.
+    SecretsWrite,
+    /// Add / remove TCP port-forward rules (v1.1).
+    NetPortForward,
+    /// Apply a desired-state spec and trigger the reconciler (v1.3).
+    DesiredStateManage,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -400,6 +519,32 @@ pub struct SpawnNodeMsg {
     /// Falls back to a standard Job-Object spawn if AppContainer creation fails.
     #[serde(default)]
     pub use_appcontainer: bool,
+
+    // ── v1.1 additions ────────────────────────────────────────────────────────
+    /// Optional health-check configuration. The health loop probes this after
+    /// the node starts; transitions to Healthy / Unhealthy update NodeTable.
+    #[serde(default)]
+    pub health_check: Option<HealthCheck>,
+
+    // ── v1.2 additions ────────────────────────────────────────────────────────
+    /// Named volume or bind-mount entries to inject as env vars at spawn.
+    /// Each entry injects `VELOCE_VOLUME_{env_suffix}=<resolved_path>`.
+    #[serde(default)]
+    pub volume_mounts: Vec<VolumeMountSpec>,
+
+    /// Secrets to decrypt and inject as environment variables at spawn.
+    /// Each entry maps a vault secret name to an env var name.
+    #[serde(default)]
+    pub secret_refs: Vec<SecretRef>,
+
+    // ── v1.3 additions ────────────────────────────────────────────────────────
+    /// Which compose service this node belongs to (set by reconciler).
+    #[serde(default)]
+    pub service_name: Option<String>,
+
+    /// Replica index within the service (set by reconciler, 0-based).
+    #[serde(default)]
+    pub replica_index: Option<u32>,
 }
 
 /// Automatic restart policy for nodes that exit unexpectedly.
@@ -484,6 +629,11 @@ pub enum NodeEvent {
     LifetimeExpired,
     /// Node crashed and Core is scheduling a restart.
     Restarting { attempt: u32, delay_secs: u64 },
+    /// Health check probe succeeded and the node has transitioned to Healthy.
+    HealthCheckPassed,
+    /// Health check probe failed. `probe` is a human-readable description of
+    /// the probe type; `reason` explains the failure.
+    HealthCheckFailed { probe: String, reason: String },
 }
 
 /// Which output stream a log chunk came from.
@@ -665,6 +815,199 @@ pub struct TrafficStatsMsg {
     pub hosts:   Vec<HostTrafficMsg>,
     /// Unix epoch milliseconds at the time this snapshot was taken.
     pub ts_ms:   u64,
+}
+
+// ── HEALTH CHECKS (v1.1) ─────────────────────────────────────────────────────
+
+/// How the health loop should probe a node.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HealthCheck {
+    pub probe: HealthProbe,
+    /// Seconds between probe attempts. Default: 10.
+    #[serde(default = "default_hc_interval")]
+    pub interval_secs: u64,
+    /// Seconds before a single probe is declared timed out. Default: 5.
+    #[serde(default = "default_hc_timeout")]
+    pub timeout_secs: u64,
+    /// Consecutive successes required to enter Healthy state. Default: 1.
+    #[serde(default = "default_hc_success_threshold")]
+    pub success_threshold: u32,
+    /// Consecutive failures required to enter Unhealthy state. Default: 3.
+    #[serde(default = "default_hc_failure_threshold")]
+    pub failure_threshold: u32,
+}
+
+fn default_hc_interval()          -> u64 { 10 }
+fn default_hc_timeout()           -> u64 { 5 }
+fn default_hc_success_threshold() -> u32 { 1 }
+fn default_hc_failure_threshold() -> u32 { 3 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum HealthProbe {
+    /// HTTP GET — connects to 127.0.0.1:port, sends a minimal HTTP/1.0 request,
+    /// considers any 2xx response as healthy.
+    Http { port: u16, path: String },
+    /// TCP connect to 127.0.0.1:port succeeds = healthy.
+    Tcp  { port: u16 },
+    /// Run a command; exit code 0 = healthy.
+    Exec { command: String, args: Vec<String> },
+}
+
+/// Observed health state of a node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum HealthStatus {
+    /// No health check configured, or first probe not yet run.
+    #[default]
+    Unknown,
+    /// Node just started; grace period before probing begins.
+    Starting,
+    /// Node is passing health checks.
+    Healthy,
+    /// Node is failing health checks.
+    Unhealthy,
+}
+
+// ── VOLUME MOUNTS (v1.2) ──────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VolumeMountSpec {
+    /// Named volume (managed by VolumeRegistry) or an absolute bind-mount path.
+    pub source: VolumeMountSource,
+    /// Suffix for the injected env var: `VELOCE_VOLUME_{env_suffix}`.
+    pub env_suffix: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum VolumeMountSource {
+    /// A named volume managed by Veloce (created on demand).
+    Named(String),
+    /// A host filesystem path exposed directly to the node.
+    BindPath(String),
+}
+
+// ── SECRET REFERENCES (v1.2) ──────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecretRef {
+    /// Name of the secret in the SecretsVault.
+    pub secret_name: String,
+    /// Environment variable to inject the decrypted plaintext value into.
+    pub env_var: String,
+}
+
+// ── PORT FORWARDING (v1.1) ────────────────────────────────────────────────────
+
+/// Request to add a TCP port-forward rule.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetPortForwardMsg {
+    /// Unique rule name (e.g. `"web:8080"`).
+    pub name: String,
+    /// Host-side port to bind on `0.0.0.0`.
+    pub host_port: u16,
+    /// Node-side port to forward to on `127.0.0.1`.
+    pub target_port: u16,
+    /// Owning node (informational; not enforced).
+    pub node_id: Option<Uuid>,
+}
+
+/// A live port-forward rule.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PortForwardEntry {
+    pub name: String,
+    pub host_port: u16,
+    pub target_port: u16,
+    pub node_id: Option<Uuid>,
+}
+
+// ── EXTENDED NODE STATUS (v1.3) ───────────────────────────────────────────────
+
+/// Extended node info including health state and compose metadata.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeStatusMsg {
+    pub node_id:       Uuid,
+    pub app_name:      String,
+    pub pid:           u32,
+    pub health:        HealthStatus,
+    pub spawned_at:    DateTime<Utc>,
+    /// Compose service this node belongs to, if any.
+    pub service_name:  Option<String>,
+    /// Replica index within the service (0-based), if managed by reconciler.
+    pub replica_index: Option<u32>,
+}
+
+// ── DESIRED STATE (v1.3) ──────────────────────────────────────────────────────
+
+/// Full desired-state specification submitted to the reconciler.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DesiredStateSpec {
+    /// Unique name for this stack (e.g. `"my-app"`).
+    pub name: String,
+    pub services: Vec<ServiceSpec>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceSpec {
+    pub service_name:    String,
+    /// Template for spawning replicas of this service.
+    pub spawn_msg:       SpawnNodeMsg,
+    /// Desired replica count.
+    pub replicas:        u32,
+    pub update_strategy: UpdateStrategy,
+    /// Services that must be ready before this one starts.
+    pub depends_on:      Vec<DependsOnSpec>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum UpdateStrategy {
+    /// Stop all old replicas, then start new ones.
+    Recreate,
+    /// Replace one replica at a time; wait for Healthy before continuing.
+    RollingUpdate { max_unavailable: u32 },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DependsOnSpec {
+    pub service_name: String,
+    pub condition: DependsOnCondition,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum DependsOnCondition {
+    /// Dependency just needs at least one running node.
+    ServiceStarted,
+    /// Dependency must have at least one Healthy node.
+    ServiceHealthy,
+}
+
+// ── VOLUME IPC (v1.2) ─────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VolumeRegisterMsg {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VolumeRegisteredMsg {
+    pub name: String,
+    /// Absolute host path where the volume data lives.
+    pub host_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VolumeEntry {
+    pub name: String,
+    pub host_path: String,
+    pub created_at: DateTime<Utc>,
+}
+
+// ── SECRET IPC (v1.2) ─────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecretSetMsg {
+    pub name: String,
+    /// Plaintext value — Core encrypts this with DPAPI before writing to disk.
+    /// The plaintext is held in memory only for the duration of the IPC call.
+    pub plaintext: String,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
