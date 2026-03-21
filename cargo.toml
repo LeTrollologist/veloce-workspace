@@ -68,8 +68,7 @@ windows         = { version = "0.54", features = [
     "Win32_NetworkManagement_Ndis",
 ] }
 
-# Linux / Unix-specific (target-gated; inert on Windows builds)
-[target.'cfg(unix)'.workspace.dependencies]
+# Linux / Unix-specific (version-pinned here; crates opt-in via [target.'cfg(unix)'.dependencies])
 nix              = { version = "0.29", features = ["socket", "process", "signal", "user"] }
 libc             = "0.2"
 sd-notify        = "0.4"

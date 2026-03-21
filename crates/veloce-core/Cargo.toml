@@ -36,3 +36,9 @@ serde_json         = { workspace = true }
 windows-service = { workspace = true }
 windows         = { workspace = true }
 winreg          = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc             = { workspace = true }
+nix              = { workspace = true }
+sd-notify        = { workspace = true }
+chacha20poly1305 = { workspace = true }
