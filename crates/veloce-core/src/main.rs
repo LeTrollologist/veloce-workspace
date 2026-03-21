@@ -19,6 +19,7 @@ mod policy;
 mod reconciler;
 mod secrets;
 mod service;
+mod session;
 mod state;
 mod volume;
 

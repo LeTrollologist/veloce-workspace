@@ -42,13 +42,36 @@ pub const HEADER_LEN: usize = 12;
 /// Maximum allowed payload size (4 MiB).
 pub const MAX_PAYLOAD: u32 = 4 * 1024 * 1024;
 
-// ── PIPE / ENDPOINT NAMES ─────────────────────────────────────────────────────
+// ── PIPE / ENDPOINT NAMES (Windows) ─────────────────────────────────────────
 
-/// Named pipe used by clients to reach VeloceCore.
+/// Named pipe used by clients to reach VeloceCore (Windows).
 pub const PIPE_NAME: &str = r"\\.\pipe\VeloceCore";
 
-/// Named pipe used for VeloceNet control messages.
+/// Named pipe used for VeloceNet control messages (Windows).
 pub const PIPE_NET: &str = r"\\.\pipe\VeloceNet";
+
+// ── SOCKET / ENDPOINT PATHS (Linux / Unix) ───────────────────────────────────
+
+/// Unix domain socket used by clients to reach VeloceCore (privileged daemon).
+#[cfg(unix)]
+pub const SOCKET_PATH: &str = "/run/veloce/core.sock";
+
+/// Unix domain socket for VeloceNet control messages (privileged daemon).
+#[cfg(unix)]
+pub const SOCKET_NET: &str = "/run/veloce/net.sock";
+
+/// Returns the Unix socket path for user-session connections.
+/// Uses `$XDG_RUNTIME_DIR/veloce/core.sock` when available,
+/// otherwise falls back to `/run/user/{uid}/veloce/core.sock`.
+#[cfg(unix)]
+pub fn socket_path_user() -> std::path::PathBuf {
+    if let Ok(xdg) = std::env::var("XDG_RUNTIME_DIR") {
+        return std::path::PathBuf::from(xdg).join("veloce").join("core.sock");
+    }
+    // Fallback: /run/user/{uid}/veloce/core.sock
+    let uid = unsafe { libc::getuid() };
+    std::path::PathBuf::from(format!("/run/user/{uid}/veloce/core.sock"))
+}
 
 // ── SESSION KEY ────────────────────────────────────────────────────────────────
 
