@@ -104,17 +104,17 @@ fn validate_name(name: &str) -> Result<()> {
 #[cfg(windows)]
 fn dpapi_protect(plaintext: &str) -> Result<Vec<u8>> {
     use windows::Win32::Security::Cryptography::{
-        CryptProtectData, CRYPT_DATA_BLOB,
+        CryptProtectData, CRYPT_INTEGER_BLOB,
     };
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::{LocalFree, HLOCAL};
 
     let bytes = plaintext.as_bytes();
-    let mut in_blob = CRYPT_DATA_BLOB {
+    let mut in_blob = CRYPT_INTEGER_BLOB {
         cbData: bytes.len() as u32,
         pbData: bytes.as_ptr() as *mut u8,
     };
-    let mut out_blob = CRYPT_DATA_BLOB { cbData: 0, pbData: std::ptr::null_mut() };
+    let mut out_blob = CRYPT_INTEGER_BLOB { cbData: 0, pbData: std::ptr::null_mut() };
 
     // Use user-scope (dwFlags = 0) so only the same user can decrypt.
     let ok = unsafe {
@@ -142,14 +142,14 @@ fn dpapi_protect(plaintext: &str) -> Result<Vec<u8>> {
 
 #[cfg(windows)]
 fn dpapi_unprotect(ciphertext: &[u8]) -> Result<String> {
-    use windows::Win32::Security::Cryptography::{CryptUnprotectData, CRYPT_DATA_BLOB};
+    use windows::Win32::Security::Cryptography::{CryptUnprotectData, CRYPT_INTEGER_BLOB};
     use windows::Win32::Foundation::{LocalFree, HLOCAL};
 
-    let mut in_blob = CRYPT_DATA_BLOB {
+    let mut in_blob = CRYPT_INTEGER_BLOB {
         cbData: ciphertext.len() as u32,
         pbData: ciphertext.as_ptr() as *mut u8,
     };
-    let mut out_blob = CRYPT_DATA_BLOB { cbData: 0, pbData: std::ptr::null_mut() };
+    let mut out_blob = CRYPT_INTEGER_BLOB { cbData: 0, pbData: std::ptr::null_mut() };
 
     let ok = unsafe {
         CryptUnprotectData(
