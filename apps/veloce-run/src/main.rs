@@ -263,7 +263,18 @@ async fn main() -> Result<()> {
     match cli.command {
         Some(Commands::Mesh    { action }) => run_mesh(action).await,
         Some(Commands::Policy  { action }) => run_policy(action).await,
-        Some(Commands::Nrpt    { action }) => run_nrpt(action),
+        Some(Commands::Nrpt    { action }) => {
+            #[cfg(windows)]
+            { run_nrpt(action) }
+            #[cfg(not(windows))]
+            {
+                // On Linux, DNS config is managed by veloce-core directly via
+                // /etc/resolv.conf or systemd-resolved; there is no NRPT.
+                let _ = action;
+                eprintln!("Use `veloce-core dns enable/disable` to manage .vln DNS routing on Linux.");
+                Ok(())
+            }
+        }
         Some(Commands::Up   { file, detach }) => run_up(file, detach).await,
         Some(Commands::Down { file })         => run_down(file).await,
         Some(Commands::Ps)                    => run_ps().await,
@@ -573,7 +584,12 @@ fn run_nrpt(action: NrptAction) -> anyhow::Result<()> {
     #[cfg(not(windows))]
     {
         let _ = action;
+        // On Linux, .vln DNS routing is managed by veloce-core via
+        // systemd-resolved or /etc/resolv.conf — not via Windows NRPT.
+        // The VELOCE_SOCKET environment variable points to the Unix socket
+        // (equivalent of VELOCE_PIPE on Windows).
         eprintln!("NRPT is a Windows-only feature.");
+        eprintln!("On Linux, use `veloce-core dns enable/disable` to manage .vln DNS routing.");
         Ok(())
     }
 }

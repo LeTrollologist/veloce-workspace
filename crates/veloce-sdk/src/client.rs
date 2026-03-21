@@ -28,6 +28,11 @@ use veloce_ipc::{
     PIPE_NAME,
 };
 
+// ── Boxed async I/O trait objects ─────────────────────────────────────────────
+
+type BoxWriter = Box<dyn tokio::io::AsyncWrite + Send + Unpin>;
+type BoxReader = Box<dyn tokio::io::AsyncRead  + Send + Unpin>;
+
 // ── REQUEST TABLE ─────────────────────────────────────────────────────────────
 
 type PendingMap = Arc<Mutex<HashMap<Uuid, oneshot::Sender<Body>>>>;
@@ -38,7 +43,7 @@ type LogBus     = Arc<tokio::sync::broadcast::Sender<NodeLogChunkMsg>>;
 
 pub struct VeloceClient {
     /// Write half — protected so concurrent callers can send without races.
-    writer:    Arc<AsyncMutex<tokio::io::WriteHalf<tokio::net::windows::named_pipe::NamedPipeClient>>>,
+    writer:    Arc<AsyncMutex<BoxWriter>>,
     pending:   PendingMap,
     /// Broadcast bus for unsolicited NodeEvent push frames from Core.
     event_bus: EventBus,
@@ -109,62 +114,70 @@ impl VeloceClient {
         sdk_version:  &str,
         capabilities: Vec<Capability>,
     ) -> Result<Self> {
-        #[cfg(not(windows))]
-        {
-            bail!("VeloceClient is only supported on Windows");
-        }
-
         #[cfg(windows)]
-        {
-            use tokio::net::windows::named_pipe::ClientOptions;
-
+        let (writer, reader): (BoxWriter, BoxReader) = {
             // Retry loop — Core might not be up yet
             let pipe = retry_connect(PIPE_NAME, Duration::from_secs(10)).await?;
-            let (reader, writer_half) = tokio::io::split(pipe);
+            let (r, w) = tokio::io::split(pipe);
+            (Box::new(w), Box::new(r))
+        };
 
-            let pending:   PendingMap = Arc::new(Mutex::new(HashMap::new()));
-            let writer     = Arc::new(AsyncMutex::new(writer_half));
-            let (event_tx, _) = tokio::sync::broadcast::channel(128);
-            let event_bus: EventBus = Arc::new(event_tx);
-            let (log_tx, _) = tokio::sync::broadcast::channel(512);
-            let log_bus: LogBus = Arc::new(log_tx);
+        #[cfg(unix)]
+        let (writer, reader): (BoxWriter, BoxReader) = {
+            use tokio::net::UnixStream;
+            let socket_path = veloce_ipc::socket_path_user();
+            let stream = retry_connect_unix(&socket_path, Duration::from_secs(10)).await?;
+            let (r, w) = tokio::io::split(stream);
+            (Box::new(w), Box::new(r))
+        };
 
-            // Spawn background reader
-            let bg_pending   = pending.clone();
-            let bg_event_bus = event_bus.clone();
-            let bg_log_bus   = log_bus.clone();
-            tokio::spawn(async move {
-                if let Err(e) = reader_loop(reader, bg_pending, bg_event_bus, bg_log_bus).await {
-                    tracing::warn!("VeloceClient reader error: {e:#}");
-                }
-            });
-
-            let mut client = Self { writer, pending, event_bus, log_bus, client_id: Uuid::nil() };
-
-            // Read the per-session PSK that Core wrote at startup.
-            let psk_hash = read_psk().context("read session PSK")?;
-
-            // Handshake
-            let ack = client.request(Body::Handshake(
-                veloce_ipc::message::HandshakeMsg {
-                    app_name:    app_name.into(),
-                    sdk_version: sdk_version.into(),
-                    capabilities,
-                    psk_hash: Some(psk_hash),
-                }
-            )).await?;
-
-            match ack {
-                Body::HandshakeAck(a) => {
-                    client.client_id = a.client_id;
-                    tracing::info!(?client.client_id, "VeloceCore handshake OK");
-                }
-                Body::Error(e) => bail!("handshake rejected: {}", e.message),
-                other          => bail!("unexpected handshake reply: {:?}", other.msg_type()),
-            }
-
-            Ok(client)
+        #[cfg(not(any(windows, unix)))]
+        {
+            bail!("VeloceClient is only supported on Windows and Unix platforms");
         }
+
+        let pending:   PendingMap = Arc::new(Mutex::new(HashMap::new()));
+        let writer     = Arc::new(AsyncMutex::new(writer));
+        let (event_tx, _) = tokio::sync::broadcast::channel(128);
+        let event_bus: EventBus = Arc::new(event_tx);
+        let (log_tx, _) = tokio::sync::broadcast::channel(512);
+        let log_bus: LogBus = Arc::new(log_tx);
+
+        // Spawn background reader
+        let bg_pending   = pending.clone();
+        let bg_event_bus = event_bus.clone();
+        let bg_log_bus   = log_bus.clone();
+        tokio::spawn(async move {
+            if let Err(e) = reader_loop(reader, bg_pending, bg_event_bus, bg_log_bus).await {
+                tracing::warn!("VeloceClient reader error: {e:#}");
+            }
+        });
+
+        let mut client = Self { writer, pending, event_bus, log_bus, client_id: Uuid::nil() };
+
+        // Read the per-session PSK that Core wrote at startup.
+        let psk_hash = read_psk().context("read session PSK")?;
+
+        // Handshake
+        let ack = client.request(Body::Handshake(
+            veloce_ipc::message::HandshakeMsg {
+                app_name:    app_name.into(),
+                sdk_version: sdk_version.into(),
+                capabilities,
+                psk_hash: Some(psk_hash),
+            }
+        )).await?;
+
+        match ack {
+            Body::HandshakeAck(a) => {
+                client.client_id = a.client_id;
+                tracing::info!(?client.client_id, "VeloceCore handshake OK");
+            }
+            Body::Error(e) => bail!("handshake rejected: {}", e.message),
+            other          => bail!("unexpected handshake reply: {:?}", other.msg_type()),
+        }
+
+        Ok(client)
     }
 
     // ── Node management ───────────────────────────────────────────────────────
@@ -499,7 +512,7 @@ impl VeloceClient {
 
     // ── Secrets (v1.2) ────────────────────────────────────────────────────────
 
-    /// Encrypt and store a named secret in the DPAPI vault.
+    /// Encrypt and store a named secret in the vault.
     pub async fn secret_set(&mut self, name: &str, plaintext: &str) -> Result<()> {
         match self.request(Body::SecretSet(
             veloce_ipc::message::SecretSetMsg { name: name.into(), plaintext: plaintext.into() }
@@ -580,7 +593,7 @@ impl VeloceClient {
 
         self.writer.lock().await
             .write_all(&frame).await
-            .context("write to pipe")?;
+            .context("write to IPC transport")?;
 
         let reply = tokio::time::timeout(Duration::from_secs(5), rx)
             .await
@@ -593,15 +606,23 @@ impl VeloceClient {
 
 // ── BACKGROUND READER ─────────────────────────────────────────────────────────
 
-#[cfg(windows)]
-async fn reader_loop<R>(
+async fn reader_loop(
+    reader:    BoxReader,
+    pending:   PendingMap,
+    event_bus: EventBus,
+    log_bus:   LogBus,
+) -> Result<()> {
+    reader_loop_impl(reader, pending, event_bus, log_bus).await
+}
+
+async fn reader_loop_impl<R>(
     mut reader: R,
     pending:    PendingMap,
     event_bus:  EventBus,
     log_bus:    LogBus,
 ) -> Result<()>
 where
-    R: AsyncReadExt + Unpin,
+    R: AsyncReadExt + Unpin + Send + 'static,
 {
     let mut buf = [0u8; 8192];
     let mut acc = BytesMut::with_capacity(32 * 1024);
@@ -655,7 +676,7 @@ fn read_psk() -> Result<[u8; 32]> {
     Ok(out)
 }
 
-// ── CONNECT WITH RETRY ────────────────────────────────────────────────────────
+// ── CONNECT WITH RETRY (Windows) ──────────────────────────────────────────────
 
 #[cfg(windows)]
 async fn retry_connect(
@@ -680,6 +701,29 @@ async fn retry_connect(
                 tokio::time::sleep(Duration::from_millis(250)).await;
             }
             Err(e) => return Err(e).context("open named pipe"),
+        }
+    }
+}
+
+// ── CONNECT WITH RETRY (Unix) ─────────────────────────────────────────────────
+
+#[cfg(unix)]
+async fn retry_connect_unix(
+    path: &std::path::Path,
+    timeout: std::time::Duration,
+) -> anyhow::Result<tokio::net::UnixStream> {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        match tokio::net::UnixStream::connect(path).await {
+            Ok(s) => return Ok(s),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound
+                   || e.kind() == std::io::ErrorKind::ConnectionRefused => {
+                if std::time::Instant::now() >= deadline {
+                    anyhow::bail!("timeout waiting for VeloceCore socket {:?}: {e}", path);
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            }
+            Err(e) => return Err(e.into()),
         }
     }
 }

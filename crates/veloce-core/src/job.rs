@@ -67,6 +67,9 @@ use windows::{
 #[cfg(windows)]
 const PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES: usize = 0x0002_0009;
 
+#[cfg(unix)]
+use crate::spawner;
+
 // ── NODE HANDLE ───────────────────────────────────────────────────────────────
 
 /// A live node managed by VeloceCore.
@@ -86,6 +89,12 @@ pub struct NodeHandle {
     job_handle:  SafeHandle,
     #[cfg(windows)]
     proc_handle: SafeHandle,
+    /// Linux: tokio process child handle (replaces Windows proc_handle)
+    #[cfg(unix)]
+    pub child:  Option<Arc<parking_lot::Mutex<tokio::process::Child>>>,
+    /// Linux: cgroup assigned to this node (None if cgroups unavailable)
+    #[cfg(unix)]
+    pub cgroup: Option<Arc<crate::cgroup::CgroupPath>>,
     /// Broadcast channel for node lifecycle events.
     pub event_tx: tokio::sync::broadcast::Sender<NodeEventMsg>,
     /// Broadcast channel for captured stdout/stderr chunks.
@@ -138,8 +147,17 @@ impl NodeHandle {
         (cpu_ms, mem_bytes)
     }
 
-    #[cfg(not(windows))]
-    pub fn query_resources(&self) -> (u64, u64) { (0, 0) }
+    #[cfg(unix)]
+    pub fn query_resources(&self) -> (u64, u64) {
+        let mem = self.cgroup.as_ref()
+            .and_then(|cg| cg.read_memory_current().ok())
+            .unwrap_or(0);
+        let cpu_ms = self.cgroup.as_ref()
+            .and_then(|cg| cg.read_cpu_usage_usec().ok())
+            .map(|usec| usec / 1000)
+            .unwrap_or(0);
+        (cpu_ms, mem)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -841,21 +859,109 @@ fn quote_arg(s: &str) -> String {
     }
 }
 
-// ── STUBS for non-Windows builds ──────────────────────────────────────────────
+// ── Unix implementations ───────────────────────────────────────────────────────
 
-#[cfg(not(windows))]
+#[cfg(unix)]
 pub async fn spawn_node(
-    _msg:               &SpawnNodeMsg,
-    _node_id:           Uuid,
-    _slot_idx:          usize,
-    _core_pipe:         &str,
-    _existing_event_tx: Option<tokio::sync::broadcast::Sender<NodeEventMsg>>,
-    _existing_log_tx:   Option<tokio::sync::broadcast::Sender<NodeLogChunkMsg>>,
+    msg:               &SpawnNodeMsg,
+    node_id:           Uuid,
+    slot_idx:          usize,
+    _core_pipe:        &str,
+    existing_event_tx: Option<tokio::sync::broadcast::Sender<NodeEventMsg>>,
+    existing_log_tx:   Option<tokio::sync::broadcast::Sender<NodeLogChunkMsg>>,
 ) -> Result<NodeHandle> {
-    bail!("Job Object spawning only supported on Windows")
+    spawn_node_unix(msg, node_id, slot_idx, existing_event_tx, existing_log_tx).await
 }
 
-#[cfg(not(windows))]
-pub fn terminate_node(_handle: &NodeHandle, _exit_code: u32) -> Result<()> {
-    bail!("Job Object termination only supported on Windows")
+#[cfg(unix)]
+pub fn terminate_node(handle: &NodeHandle, _exit_code: u32) -> Result<()> {
+    if let Some(child_arc) = &handle.child {
+        let mut child = child_arc.lock();
+        spawner::terminate_process(
+            &mut child,
+            handle.cgroup.as_ref().map(|c| c.as_ref()),
+            handle.pid,
+        );
+    }
+    tracing::info!(node_id = %handle.node_id, "node terminated");
+    Ok(())
+}
+
+/// Unix implementation of node spawning.
+#[cfg(unix)]
+async fn spawn_node_unix(
+    msg:               &SpawnNodeMsg,
+    node_id:           Uuid,
+    slot_idx:          usize,
+    existing_event_tx: Option<tokio::sync::broadcast::Sender<NodeEventMsg>>,
+    existing_log_tx:   Option<tokio::sync::broadcast::Sender<NodeLogChunkMsg>>,
+) -> Result<NodeHandle> {
+    use veloce_ipc::message::LogStream;
+
+    let event_tx = existing_event_tx
+        .unwrap_or_else(|| tokio::sync::broadcast::channel(32).0);
+    let log_tx = existing_log_tx
+        .unwrap_or_else(|| tokio::sync::broadcast::channel(256).0);
+
+    // Volumes and secrets have already been resolved into msg.env by
+    // spawn_node_via_state; no additional env_extras needed here.
+    let env_extras: &[(String, String)] = &[];
+
+    let (mut child, cgroup, pid) =
+        spawner::spawn_process(msg, node_id, env_extras).await?;
+
+    // Wire log readers from the piped stdout/stderr
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+
+    if let Some(out) = stdout {
+        spawn_unix_log_reader(out, node_id, LogStream::Stdout, log_tx.clone());
+    }
+    if let Some(err) = stderr {
+        spawn_unix_log_reader(err, node_id, LogStream::Stderr, log_tx.clone());
+    }
+
+    let pipe_path = format!("/run/veloce/node-{}.sock", node_id.simple());
+
+    tracing::info!(%node_id, pid, app_name = %msg.app_name, "node spawned (unix)");
+
+    Ok(NodeHandle {
+        node_id,
+        slot_idx,
+        pid,
+        app_name:       msg.app_name.clone(),
+        pipe_path,
+        spawn_msg:      msg.clone(),
+        restart_policy: msg.restart_policy.clone(),
+        restart_count:  0,
+        event_tx,
+        log_tx,
+        child:  Some(Arc::new(parking_lot::Mutex::new(child))),
+        cgroup: cgroup.map(Arc::new),
+    })
+}
+
+/// Spawn an async task that reads lines from a piped async reader and
+/// forwards them as `NodeLogChunkMsg` on `log_tx`.
+#[cfg(unix)]
+fn spawn_unix_log_reader(
+    reader:  impl tokio::io::AsyncRead + Send + Unpin + 'static,
+    node_id: Uuid,
+    stream:  veloce_ipc::message::LogStream,
+    log_tx:  tokio::sync::broadcast::Sender<NodeLogChunkMsg>,
+) {
+    use tokio::io::AsyncReadExt;
+    tokio::spawn(async move {
+        let mut reader = reader;
+        let mut buf = vec![0u8; 4096];
+        loop {
+            match reader.read(&mut buf).await {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    let data = buf[..n].to_vec();
+                    let _ = log_tx.send(NodeLogChunkMsg { node_id, stream, data });
+                }
+            }
+        }
+    });
 }

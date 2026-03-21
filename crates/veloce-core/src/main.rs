@@ -3,11 +3,11 @@ VeloceCore — entry point.
 
 Run modes:
   veloce-core run            → foreground (dev)
-  veloce-core install        → register as Windows service
-  veloce-core uninstall      → remove Windows service
-  veloce-core start          → start the service (SCM)
-  veloce-core stop           → stop the service (SCM)
-  [no args / service call]   → service dispatch table (SCM launch)
+  veloce-core install        → register as Windows service / install systemd unit
+  veloce-core uninstall      → remove Windows service / remove systemd unit
+  veloce-core start          → start the service (SCM / systemctl)
+  veloce-core stop           → stop the service (SCM / systemctl)
+  [no args / service call]   → service dispatch table (SCM launch) / systemd launch
 */
 
 mod registry;
@@ -19,14 +19,82 @@ mod policy;
 mod reconciler;
 mod secrets;
 mod service;
-mod session;
 mod state;
 mod volume;
+mod session;
+
+#[cfg(unix)] mod socket_server;
+#[cfg(unix)] mod socket_auth;
+#[cfg(unix)] mod spawner;
+#[cfg(unix)] mod cgroup;
+#[cfg(unix)] mod systemd;
+#[cfg(unix)] mod dns_config;
+#[cfg(unix)] mod keyring;
 
 #[cfg(not(windows))]
 fn main() -> anyhow::Result<()> {
-    eprintln!("VeloceCore only supports Windows targets. Use `cargo build --target x86_64-pc-windows-msvc`.");
-    std::process::exit(1);
+    init_logging();
+    let args: Vec<String> = std::env::args().collect();
+    let cmd = args.get(1).map(|s| s.as_str()).unwrap_or("");
+
+    match cmd {
+        "run" => {
+            let rt = build_tokio_runtime()?;
+            rt.block_on(run_core_unix())
+        }
+        "install" => service::install(),
+        "uninstall" => service::uninstall(),
+        "start" => service::start_service(),
+        "stop" => service::stop_service(),
+        "dns" => {
+            let sub = args.get(2).map(|s| s.as_str()).unwrap_or("status");
+            match sub {
+                "enable" => {
+                    nrpt::install(nrpt::VLN_DNS_ADDR)?;
+                    println!(".vln DNS routing enabled.");
+                    Ok(())
+                }
+                "disable" => {
+                    nrpt::uninstall()?;
+                    println!(".vln DNS routing disabled.");
+                    Ok(())
+                }
+                "status" => {
+                    if nrpt::is_installed() {
+                        println!(".vln DNS routing is enabled ({})", nrpt::installed_addr().unwrap_or_default());
+                    } else {
+                        println!(".vln DNS routing is not configured.");
+                    }
+                    Ok(())
+                }
+                _ => {
+                    eprintln!("Usage: veloce-core dns [enable|disable|status]");
+                    Ok(())
+                }
+            }
+        }
+        // No argument = invoked by systemd
+        _ => {
+            let rt = build_tokio_runtime()?;
+            rt.block_on(run_core_unix())
+        }
+    }
+}
+
+/// Unix entry point for running VeloceCore: sends READY=1 then runs the core loop.
+#[cfg(not(windows))]
+async fn run_core_unix() -> anyhow::Result<()> {
+    // run_core() is the existing cross-platform async function.
+    // Wire the Unix socket server instead of the named pipe server.
+    run_core().await
+}
+
+#[cfg(not(windows))]
+fn build_tokio_runtime() -> anyhow::Result<tokio::runtime::Runtime> {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(Into::into)
 }
 
 #[cfg(windows)]
@@ -109,13 +177,20 @@ pub async fn run_core() -> anyhow::Result<()> {
         }
     });
 
-    // 3. Start IPC named-pipe server
-    let ipc_state = state.clone();
-    tokio::spawn(async move {
-        if let Err(e) = ipc_server::run(ipc_state).await {
-            tracing::error!("IPC server error: {e}");
-        }
-    });
+    // ── IPC server ──────────────────────────────────────────────────────────
+    #[cfg(windows)]
+    let ipc_handle = {
+        let ipc_state = state.clone();
+        tokio::spawn(async move { ipc_server::run(ipc_state).await })
+    };
+    #[cfg(unix)]
+    let ipc_handle = {
+        let ipc_state = state.clone();
+        tokio::spawn(async move { socket_server::run(ipc_state).await })
+    };
+
+    // Suppress unused-variable warning when neither arm applies (shouldn't happen)
+    let _ = ipc_handle;
 
     // 3b. Start the P2P mesh TCP server (if mesh is enabled).
     if let Some(mesh) = state.mesh.clone() {
@@ -167,5 +242,16 @@ fn init_logging() {
         .with_writer(BoxMakeWriter::new(move || {
             file.try_clone().expect("log file clone")
         }))
+        .init();
+}
+
+#[cfg(not(windows))]
+fn init_logging() {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::from_env("VELOCE_LOG")
+                .add_directive(tracing::Level::INFO.into())
+        )
+        .with_writer(std::io::stderr)
         .init();
 }

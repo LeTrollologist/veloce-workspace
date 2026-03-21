@@ -177,13 +177,12 @@ fn dpapi_unprotect(ciphertext: &[u8]) -> Result<String> {
     Ok(result)
 }
 
-// Stub implementations for non-Windows builds (Linux v2.0 track).
 #[cfg(not(windows))]
 fn dpapi_protect(plaintext: &str) -> Result<Vec<u8>> {
-    Ok(plaintext.as_bytes().to_vec())
+    crate::keyring::seal(plaintext)
 }
 
 #[cfg(not(windows))]
 fn dpapi_unprotect(ciphertext: &[u8]) -> Result<String> {
-    Ok(String::from_utf8_lossy(ciphertext).into_owned())
+    crate::keyring::unseal(ciphertext)
 }

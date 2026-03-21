@@ -8,9 +8,13 @@ Handles:
 - Recovery actions: restart on crash x3, then alert
 */
 
+#[cfg(windows)]
 use anyhow::{bail, Context, Result};
+#[cfg(windows)]
 use std::ffi::OsString;
+#[cfg(windows)]
 use std::time::Duration;
+#[cfg(windows)]
 use windows_service::{
     define_windows_service,
     service::{
@@ -23,28 +27,35 @@ use windows_service::{
     service_manager::{ServiceManager, ServiceManagerAccess},
 };
 
+#[cfg(windows)]
 pub const SERVICE_NAME: &str = "VeloceCore";
+#[cfg(windows)]
 pub const SERVICE_DISPLAY: &str = "VeloceCore Runtime";
+#[cfg(windows)]
 pub const SERVICE_DESC: &str =
     "VeloceSolutions privileged runtime — local node orchestration and private network layer.";
 
 // ── SCM DISPATCH ──────────────────────────────────────────────────────────────
 
+#[cfg(windows)]
 define_windows_service!(ffi_service_main, service_main);
 
-pub fn dispatch() -> Result<()> {
+#[cfg(windows)]
+pub fn dispatch() -> anyhow::Result<()> {
     service_dispatcher::start(SERVICE_NAME, ffi_service_main)
         .context("service dispatcher failed")?;
     Ok(())
 }
 
+#[cfg(windows)]
 fn service_main(args: Vec<OsString>) {
     if let Err(e) = run_service(args) {
         tracing::error!("Service fatal error: {e:#}");
     }
 }
 
-fn run_service(_args: Vec<OsString>) -> Result<()> {
+#[cfg(windows)]
+fn run_service(_args: Vec<OsString>) -> anyhow::Result<()> {
     // Channel for the stop signal from SCM → async runtime
     let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
 
@@ -78,7 +89,7 @@ fn run_service(_args: Vec<OsString>) -> Result<()> {
         .build()
         .context("tokio runtime")?;
 
-    let (core_done_tx, core_done_rx) = std::sync::mpsc::channel::<Result<()>>();
+    let (core_done_tx, core_done_rx) = std::sync::mpsc::channel::<anyhow::Result<()>>();
 
     std::thread::spawn(move || {
         let result = rt.block_on(crate::run_core());
@@ -134,9 +145,10 @@ fn run_service(_args: Vec<OsString>) -> Result<()> {
     Ok(())
 }
 
-// ── INSTALL ───────────────────────────────────────────────────────────────────
+// ── INSTALL (Windows) ─────────────────────────────────────────────────────────
 
-pub fn install() -> Result<()> {
+#[cfg(windows)]
+pub fn install() -> anyhow::Result<()> {
     let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CREATE_SERVICE)
         .context("open SCM (run as Administrator)")?;
 
@@ -173,7 +185,8 @@ pub fn install() -> Result<()> {
     Ok(())
 }
 
-pub fn uninstall() -> Result<()> {
+#[cfg(windows)]
+pub fn uninstall() -> anyhow::Result<()> {
     let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
         .context("open SCM")?;
 
@@ -194,7 +207,8 @@ pub fn uninstall() -> Result<()> {
     Ok(())
 }
 
-pub fn start_service() -> Result<()> {
+#[cfg(windows)]
+pub fn start_service() -> anyhow::Result<()> {
     let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
         .context("open SCM")?;
     let service = manager
@@ -205,7 +219,8 @@ pub fn start_service() -> Result<()> {
     Ok(())
 }
 
-pub fn stop_service() -> Result<()> {
+#[cfg(windows)]
+pub fn stop_service() -> anyhow::Result<()> {
     let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
         .context("open SCM")?;
     let service = manager
@@ -216,10 +231,11 @@ pub fn stop_service() -> Result<()> {
     Ok(())
 }
 
-// ── RECOVERY ACTIONS ─────────────────────────────────────────────────────────
+// ── RECOVERY ACTIONS (Windows) ────────────────────────────────────────────────
 
 /// Set recovery policy: restart on first 3 failures (5 s delay each), then log event.
-fn set_recovery_actions(service: &windows_service::service::Service) -> Result<()> {
+#[cfg(windows)]
+fn set_recovery_actions(service: &windows_service::service::Service) -> anyhow::Result<()> {
     use windows_service::service::{
         ServiceActionType, ServiceFailureActions, ServiceFailureResetPeriod,
         ServiceAction,
@@ -239,4 +255,39 @@ fn set_recovery_actions(service: &windows_service::service::Service) -> Result<(
 
     service.update_failure_actions(actions).context("set recovery actions")?;
     Ok(())
+}
+
+// ── Linux / Unix service management ──────────────────────────────────────────
+
+/// Install the VeloceCore systemd unit.
+#[cfg(unix)]
+pub fn install() -> anyhow::Result<()> {
+    let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("/usr/bin/veloce-core"));
+    crate::systemd::install(&exe)
+}
+
+/// Remove the VeloceCore systemd unit.
+#[cfg(unix)]
+pub fn uninstall() -> anyhow::Result<()> {
+    crate::systemd::uninstall()
+}
+
+/// Start VeloceCore via systemctl.
+#[cfg(unix)]
+pub fn start_service() -> anyhow::Result<()> {
+    crate::systemd::start()
+}
+
+/// Stop VeloceCore via systemctl.
+#[cfg(unix)]
+pub fn stop_service() -> anyhow::Result<()> {
+    crate::systemd::stop()
+}
+
+/// On Linux there is no SCM dispatch — systemd invokes the binary directly.
+/// Call `notify_ready()` and then run the core loop.
+#[cfg(unix)]
+pub fn dispatch(run_fn: impl FnOnce() -> anyhow::Result<()>) -> anyhow::Result<()> {
+    crate::systemd::notify_ready();
+    run_fn()
 }

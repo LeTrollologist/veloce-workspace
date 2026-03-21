@@ -1,0 +1,20 @@
+[Unit]
+Description=VeloceCore Runtime
+Documentation=https://github.com/LeTrollologist/VeloceNetwork-Linux
+After=network.target
+
+[Service]
+Type=notify
+ExecStart=/usr/bin/veloce-core run
+ExecStop=/usr/bin/veloce-core stop
+Restart=on-failure
+RestartSec=5
+Delegate=yes
+RuntimeDirectory=veloce
+StateDirectory=veloce
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=veloce-core
+
+[Install]
+WantedBy=multi-user.target
