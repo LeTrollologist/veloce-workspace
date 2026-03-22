@@ -1,0 +1,44 @@
+[package]
+name        = "veloce-core"
+version.workspace   = true
+edition.workspace   = true
+authors.workspace   = true
+license.workspace   = true
+description = "VeloceCore Windows service — mmap registry, Job Object spawner, IPC named-pipe server"
+
+[[bin]]
+name = "veloce-core"
+path = "src/main.rs"
+
+[build-dependencies]
+# build.rs uses only std — no extra deps needed
+
+[dependencies]
+tokio              = { workspace = true }
+anyhow             = { workspace = true }
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde              = { workspace = true }
+bincode            = { workspace = true }
+uuid               = { workspace = true }
+chrono             = { workspace = true }
+memmap2            = { workspace = true }
+parking_lot        = { workspace = true }
+veloce-ipc         = { path = "../veloce-ipc" }
+bytes              = { workspace = true }
+veloce-net         = { path = "../veloce-net" }
+veloce-mesh        = { path = "../veloce-mesh" }
+rand               = "0.8"
+toml               = "0.8"
+serde_json         = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-service = { workspace = true }
+windows         = { workspace = true }
+winreg          = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc             = { workspace = true }
+nix              = { workspace = true }
+sd-notify        = { workspace = true }
+chacha20poly1305 = { workspace = true }

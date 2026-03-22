@@ -1,0 +1,41 @@
+{
+  "productName": "VeloceNetwork Setup",
+  "version":     "1.3.1",
+  "identifier":  "com.velocesolutions.installer",
+  "build": {
+    "frontendDist":      "../dist",
+    "devUrl":            "http://localhost:1421",
+    "beforeDevCommand":  "npm run dev",
+    "beforeBuildCommand":"npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title":       "VeloceNetwork Setup",
+        "width":       780,
+        "height":      520,
+        "resizable":   false,
+        "decorations": false,
+        "center":      true,
+        "shadow":      true,
+        "transparent": false
+      }
+    ],
+    "security": { "csp": null }
+  },
+  "bundle": {
+    "active":    true,
+    "targets":   "nsis",
+    "icon":      [],
+    "resources": [
+      "resources/veloce-core.exe",
+      "resources/veloce-dashboard.exe",
+      "resources/veloce-run.exe",
+      "resources/veloce-launcher.exe",
+      "resources/veloce-shell.exe"
+    ]
+  },
+  "plugins": {
+    "dialog": {}
+  }
+}

@@ -19,9 +19,13 @@ jobs:
           targets: x86_64-pc-windows-msvc
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: Windows
 
       - name: Build workspace
         run: cargo build --workspace
+        working-directory: Windows
 
       - name: Run tests
         run: cargo test --workspace
+        working-directory: Windows

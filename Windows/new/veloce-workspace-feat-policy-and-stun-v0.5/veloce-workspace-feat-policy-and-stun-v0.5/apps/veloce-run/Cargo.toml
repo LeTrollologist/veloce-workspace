@@ -1,0 +1,20 @@
+[package]
+name        = "veloce-run"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Launch any executable into the VeloceNetwork mesh from the command line"
+
+[[bin]]
+name = "veloce-run"
+path = "src/main.rs"
+
+[dependencies]
+veloce-sdk  = { path = "../../crates/veloce-sdk" }
+veloce-ipc  = { path = "../../crates/veloce-ipc" }
+tokio       = { workspace = true }
+anyhow      = { workspace = true }
+clap        = { workspace = true }
+ctrlc       = { workspace = true }
+uuid        = { workspace = true }

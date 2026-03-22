@@ -1,0 +1,29 @@
+{
+  "productName": "VeloceNetwork Dashboard",
+  "version":     "0.2.0",
+  "identifier":  "com.velocesolutions.dashboard",
+  "build": {
+    "frontendDist":      "../dist",
+    "devUrl":            "http://localhost:1420",
+    "beforeDevCommand":  "npm run dev",
+    "beforeBuildCommand":"npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title":     "VeloceNetwork Dashboard",
+        "width":     1100,
+        "height":    720,
+        "minWidth":  800,
+        "minHeight": 560,
+        "resizable": true
+      }
+    ],
+    "security": { "csp": null }
+  },
+  "bundle": {
+    "active":  true,
+    "targets": "all",
+    "icon":    []
+  }
+}

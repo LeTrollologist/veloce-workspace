@@ -1,0 +1,12 @@
+Package: veloce-core
+Version: 1.0.0
+Section: net
+Priority: optional
+Architecture: amd64
+Maintainer: VeloceSolutions <support@velocesolutions.com>
+Depends: libc6 (>= 2.31), systemd (>= 245)
+Description: VeloceNetwork Linux Runtime
+ VeloceCore is the daemon component of VeloceNetwork for Linux.
+ It provides process management with cgroups v2, encrypted secrets via
+ XChaCha20-Poly1305, a .vln private DNS namespace, and Noise_IK mesh
+ P2P networking between nodes.

@@ -1,0 +1,11 @@
+/target/
+**/.DS_Store
+*.pdb
+
+# Tauri signing keys — never commit private keys
+*.key
+*.key.pub
+%USERPROFILE%/
+
+# Local Claude settings
+.claude/settings.local.json

@@ -1,0 +1,76 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/veloce-ipc",
+    "crates/veloce-core",
+    "crates/veloce-net",
+    "crates/veloce-mesh",
+    "crates/veloce-sdk",
+    "apps/dashboard/src-tauri",
+    "apps/installer/src-tauri",
+    "apps/veloce-run",
+]
+
+[workspace.package]
+version     = "0.4.0"
+edition     = "2021"
+authors     = ["VeloceSolutions"]
+license     = "proprietary"
+
+[workspace.dependencies]
+# Async runtime
+tokio       = { version = "1", features = ["full"] }
+
+# Serialisation
+serde       = { version = "1", features = ["derive"] }
+serde_json  = "1"
+bincode     = "1"
+bytes       = "1"
+
+# Error handling
+anyhow      = "1"
+thiserror   = "1"
+
+# Logging
+tracing     = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# CLI
+clap        = { version = "4", features = ["derive"] }
+ctrlc       = "3"
+
+# Utils
+uuid        = { version = "1", features = ["v4", "serde"] }
+chrono      = { version = "0.4", features = ["serde"] }
+memmap2     = "0.9"
+parking_lot = "0.12"
+
+# Windows-specific (declared here for version pinning; crates opt-in via their own Cargo.toml)
+winreg           = "0.52"
+windows-service = "0.6"
+windows         = { version = "0.54", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+    "Win32_System_Memory",
+    "Win32_System_Pipes",
+    "Win32_System_IO",
+    "Win32_Storage_FileSystem",
+    "Win32_Networking_WinSock",
+    "Win32_Security_Isolation",
+] }
+
+[profile.release]
+opt-level     = 3
+lto           = "thin"   # "fat" LTO OOMs on low-RAM machines; thin is still fast
+codegen-units = 4        # parallelise codegen to reduce peak memory
+strip         = true
+
+# Use this profile for a fully-optimised production build on a beefy machine:
+# cargo build --profile release-fat
+[profile.release-fat]
+inherits      = "release"
+lto           = true
+codegen-units = 1

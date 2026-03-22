@@ -1,0 +1,8 @@
+#!/bin/sh
+set -e
+if systemctl is-active --quiet veloce-core; then
+    systemctl stop veloce-core
+fi
+if systemctl is-enabled --quiet veloce-core; then
+    systemctl disable veloce-core
+fi

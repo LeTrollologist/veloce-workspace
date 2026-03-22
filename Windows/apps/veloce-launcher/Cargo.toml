@@ -1,0 +1,15 @@
+[package]
+name    = "veloce-launcher"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "veloce-launcher"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+winreg = { workspace = true }
