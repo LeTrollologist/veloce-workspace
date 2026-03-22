@@ -1,6 +1,29 @@
+# VeloceNetwork — Dev Workspace
+
+> **This repository is the single source of truth for both platforms.**
+> All development happens here. Production repos are mirrors pushed via `make sync-prod`.
+
+## Repository Layout
+
+| Repository | Role |
+|---|---|
+| **[veloce-workspace](https://github.com/LeTrollologist/veloce-workspace)** ← *you are here* | Active development — unified Windows + Linux codebase |
+| [VeloceNetwork-Windows](https://github.com/LeTrollologist/VeloceNetwork-Windows) | Windows v2.0 production mirror |
+| [VeloceNetwork-Linux](https://github.com/LeTrollologist/VeloceNetwork-Linux) | Linux v1.0 production mirror |
+
+To sync changes to both production repos:
+
+```bash
+make sync-prod               # push origin + windows + linux, then pull local clones
+make release-windows TAG=v2.1.0
+make release-linux   TAG=v1.1.0
+```
+
+---
+
 # VeloceNetwork
 
-**VeloceNetwork** is a Windows-native runtime platform for launching, managing, and privately networking isolated application nodes — all without kernel drivers, VPNs, or elevated privileges beyond a single background service.
+**VeloceNetwork** is a cross-platform runtime for launching, managing, and privately networking isolated application nodes — all without kernel drivers, VPNs, or elevated privileges beyond a single background service.
 
 ---
 
