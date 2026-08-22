@@ -34,6 +34,9 @@ use veloce_net::registry::NetRegistry;
 
 use parking_lot::Mutex as ParkingMutex;
 
+pub mod control;
+pub use control::{ClusterCoordinator, ClusterRole};
+
 use identity::MachineIdentity;
 use peer::{AclFn, GossipEntry, OwnerFn, PeerConnection, PeerMsg};
 
@@ -59,10 +62,12 @@ pub struct MeshState {
     pub identity:    MachineIdentity,
     pub peers:       RwLock<HashMap<Uuid, Arc<PeerConnection>>>,
     pub listen_port: u16,
+    pub coordinator: Arc<ClusterCoordinator>,
     net_registry:    Arc<NetRegistry>,
     /// Cache of the current join code (starts as VM1/LAN, upgraded to VM2 once
     /// STUN resolves the WAN IP in a background task).
     join_code_cache: Arc<RwLock<String>>,
+    addrs_cache:     Arc<RwLock<Vec<SocketAddr>>>,
     /// Optional mesh ACL callback injected by `veloce-core`.  Called as
     /// `f(hostname, peer_name) -> bool` for each gossip entry; returning
     /// `false` prevents the entry from being installed locally.
@@ -97,18 +102,21 @@ impl MeshState {
         let lan_addr = SocketAddr::new(lan_ip, listen_port);
         let initial_code = identity.join_code(lan_addr);
         let join_code_cache = Arc::new(RwLock::new(initial_code));
+        let addrs_cache     = Arc::new(RwLock::new(vec![lan_addr]));
 
         // Spawn background STUN discovery unless LAN-only mode was requested.
         if mesh_mode != MeshMode::LanOnly {
-            let cache_clone = Arc::clone(&join_code_cache);
-            let pub_key     = identity.pub_key;
-            let mode        = mesh_mode.clone();
+            let cache_clone       = Arc::clone(&join_code_cache);
+            let addrs_cache_clone = Arc::clone(&addrs_cache);
+            let pub_key           = identity.pub_key;
+            let mode              = mesh_mode.clone();
             tokio::spawn(async move {
                 match stun::discover_external_ip(&stun_servers).await {
                     Some(wan_ip) if wan_ip != lan_ip => {
                         let wan_addr  = SocketAddr::new(wan_ip, listen_port);
                         let vm2_code  = build_vm2_code(&pub_key, &[lan_addr, wan_addr]);
                         *cache_clone.write().await = vm2_code;
+                        *addrs_cache_clone.write().await = vec![lan_addr, wan_addr];
                         tracing::info!(
                             "STUN WAN IP discovered: {wan_ip} — join code upgraded to VM2"
                         );
@@ -135,12 +143,16 @@ impl MeshState {
             tracing::info!("mesh: LAN-only mode — STUN discovery disabled");
         }
 
+        let coordinator = Arc::new(ClusterCoordinator::new(identity.machine_id));
+
         Arc::new(Self {
             identity,
             peers: RwLock::new(HashMap::new()),
             listen_port,
+            coordinator,
             net_registry,
             join_code_cache,
+            addrs_cache,
             mesh_acl_fn,
             gossip_interval_secs,
             used_nonces: Mutex::new(HashSet::new()),
@@ -154,6 +166,12 @@ impl MeshState {
     /// the background STUN task completes.
     pub fn join_code(&self) -> String {
         self.join_code_cache.blocking_read().clone()
+    }
+
+    /// Generate a VM3 join code with custom TTL and one-time flag.
+    pub fn join_code_v3(&self, ttl_mins: u16, one_time: bool) -> String {
+        let addrs = self.addrs_cache.blocking_read().clone();
+        self.identity.join_code_v3(&addrs, ttl_mins, one_time)
     }
 
     /// Snapshot for IPC responses.

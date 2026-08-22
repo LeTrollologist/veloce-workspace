@@ -21,25 +21,38 @@ pub mod socks5;
 pub mod registry;
 pub mod error;
 pub mod port_forward;
+pub mod ingress;
 
 pub use registry::NetRegistry;
 pub use error::NetError;
 pub use port_forward::PortForwardTable;
+pub use ingress::IngressRouter;
 
 use anyhow::Result;
 use std::sync::Arc;
 
-pub const DEFAULT_DNS_PORT:   u16 = 5354;
-pub const DEFAULT_SOCKS_PORT: u16 = 1055;
+pub const DEFAULT_DNS_PORT:     u16 = 5354;
+pub const DEFAULT_SOCKS_PORT:   u16 = 1055;
+pub const DEFAULT_INGRESS_PORT: u16 = 8080;
 
-/// Start DNS, SOCKS5, and the TTL GC loop.  Runs until any task errors.
+/// Start DNS, SOCKS5, Ingress HTTP proxy, and the TTL GC loop.
 pub async fn start(registry: Arc<NetRegistry>) -> Result<()> {
+    start_with_ingress(registry, Arc::new(IngressRouter::new())).await
+}
+
+/// Start DNS, SOCKS5, Ingress with custom router, and the TTL GC loop.
+pub async fn start_with_ingress(
+    registry:       Arc<NetRegistry>,
+    ingress_router: Arc<IngressRouter>,
+) -> Result<()> {
     let dns_registry   = registry.clone();
     let socks_registry = registry.clone();
     let gc_registry    = registry.clone();
 
-    let dns_port   = port_from_env("VLN_DNS_PORT",   DEFAULT_DNS_PORT);
-    let socks_port = port_from_env("VLN_SOCKS_PORT", DEFAULT_SOCKS_PORT);
+    let dns_port     = port_from_env("VLN_DNS_PORT",     DEFAULT_DNS_PORT);
+    let socks_port   = port_from_env("VLN_SOCKS_PORT",   DEFAULT_SOCKS_PORT);
+    let ingress_port = port_from_env("VLN_INGRESS_PORT", DEFAULT_INGRESS_PORT);
+
     // VLN_DNS_BIND: interface the DNS server binds to.
     // Default: 127.0.0.1 (localhost only).  Set to 0.0.0.0 for LAN-wide resolution.
     let dns_bind = std::env::var("VLN_DNS_BIND")
@@ -52,6 +65,9 @@ pub async fn start(registry: Arc<NetRegistry>) -> Result<()> {
     let socks_task = tokio::spawn(async move {
         socks5::serve(socks_registry, socks_port).await
     });
+    let ingress_task = tokio::spawn(async move {
+        ingress::serve(ingress_router, "127.0.0.1", ingress_port).await
+    });
     // Evict expired TTL entries every 60 seconds
     let gc_task = tokio::spawn(async move {
         loop {
@@ -63,14 +79,16 @@ pub async fn start(registry: Arc<NetRegistry>) -> Result<()> {
         Ok::<(), anyhow::Error>(())
     });
 
-    tracing::info!("VeloceNet DNS    → {dns_bind_log}:{dns_port}");
-    tracing::info!("VeloceNet SOCKS5 → 127.0.0.1:{socks_port}");
-    tracing::info!("VeloceNet GC     → every 60s");
+    tracing::info!("VeloceNet DNS     → {dns_bind_log}:{dns_port}");
+    tracing::info!("VeloceNet SOCKS5  → 127.0.0.1:{socks_port}");
+    tracing::info!("VeloceNet Ingress → 127.0.0.1:{ingress_port}");
+    tracing::info!("VeloceNet GC      → every 60s");
 
     tokio::select! {
-        r = dns_task   => { r??; }
-        r = socks_task => { r??; }
-        r = gc_task    => { r??; }
+        r = dns_task     => { r??; }
+        r = socks_task   => { r??; }
+        r = ingress_task => { r??; }
+        r = gc_task      => { r??; }
     }
 
     Ok(())

@@ -98,6 +98,10 @@ pub enum MessageType {
     MeshPingPeer        = 0x58,
     /// Core → Client: RTT result — `None` if peer UUID is not found.
     MeshPingResult      = 0x59,
+    /// Client → Core: generate a VM3 join code with custom TTL and one-time flag.
+    MeshGetJoinCodeV3   = 0x5C,
+    /// Core → Client: VM3 join code response.
+    MeshJoinCodeV3Result = 0x5D,
 
     // ── Policy engine ─────────────────────────────────────────
     /// Client → Core: query the currently loaded policy rules.
@@ -161,6 +165,18 @@ pub enum MessageType {
     /// Core → Client: secret name list.
     SecretListResult = 0xD5,
 
+    // ── Ingress (v2.1) ────────────────────────────────────────
+    /// Client → Core: register or update an HTTP ingress routing rule.
+    NetAddIngress        = 0xE0,
+    /// Core → Client: ingress rule added/updated.
+    NetIngressAdded      = 0xE1,
+    /// Client → Core: remove an ingress rule by hostname.
+    NetRemoveIngress     = 0xE2,
+    /// Client → Core: list all active ingress rules.
+    NetListIngresses     = 0xE3,
+    /// Core → Client: ingress rule list response.
+    NetIngressList       = 0xE4,
+
     // ── Error ─────────────────────────────────────────────────
     Error           = 0xFF,
 }
@@ -191,6 +207,7 @@ impl TryFrom<u8> for MessageType {
             0x54 => MeshPeerList,    0x55 => MeshPeerListResult,
             0x56 => MeshDisconnect,  0x57 => MeshPeerGone,
             0x58 => MeshPingPeer,    0x59 => MeshPingResult,
+            0x5C => MeshGetJoinCodeV3,0x5D => MeshJoinCodeV3Result,
             0x70 => PolicyGetRules,  0x71 => PolicyRulesResult,
             0x72 => PolicyReload,
             0x80 => TrafficQuery,    0x81 => TrafficStatsResult,
@@ -204,6 +221,9 @@ impl TryFrom<u8> for MessageType {
             0xD0 => SecretSet,            0xD1 => SecretSetAck,
             0xD2 => SecretDelete,         0xD3 => SecretDeleteAck,
             0xD4 => SecretList,           0xD5 => SecretListResult,
+            0xE0 => NetAddIngress,        0xE1 => NetIngressAdded,
+            0xE2 => NetRemoveIngress,     0xE3 => NetListIngresses,
+            0xE4 => NetIngressList,
             0xFF => Error,
             other => return Err(other),
         })
@@ -339,6 +359,10 @@ pub enum Body {
     /// RTT measurement result (Core → client).  `latency_ms` is `None` if the
     /// peer UUID was not found or no latency sample has been recorded yet.
     MeshPingResult { peer_id: Uuid, latency_ms: Option<u32> },
+    /// Request Core to generate a VM3 join code with custom TTL and one-time flag.
+    MeshGetJoinCodeV3(MeshGetJoinCodeV3Msg),
+    /// Result containing the generated VM3 join code.
+    MeshJoinCodeV3Result(MeshJoinCodeV3ResultMsg),
 
     // Error
     Error(ErrorMsg),
@@ -371,6 +395,13 @@ pub enum Body {
     SecretDeleteAck { name: String },
     SecretList,
     SecretListResult(Vec<String>),
+
+    // ── Ingress (v2.1) ────────────────────────────────────────────────────────
+    NetAddIngress(NetAddIngressMsg),
+    NetIngressAdded { host: String },
+    NetRemoveIngress { host: String },
+    NetListIngresses,
+    NetIngressList(Vec<IngressRule>),
 }
 
 impl Body {
@@ -421,6 +452,8 @@ impl Body {
             MeshPeerGone(_)        => MessageType::MeshPeerGone,
             MeshPingPeer { .. }    => MessageType::MeshPingPeer,
             MeshPingResult { .. }  => MessageType::MeshPingResult,
+            MeshGetJoinCodeV3(_)   => MessageType::MeshGetJoinCodeV3,
+            MeshJoinCodeV3Result(_)=> MessageType::MeshJoinCodeV3Result,
             Error(_)               => MessageType::Error,
             // Port forwarding
             NetAddPortForward(_)       => MessageType::NetAddPortForward,
@@ -446,6 +479,12 @@ impl Body {
             SecretDeleteAck{..}        => MessageType::SecretDeleteAck,
             SecretList                 => MessageType::SecretList,
             SecretListResult(_)        => MessageType::SecretListResult,
+            // Ingress
+            NetAddIngress(_)           => MessageType::NetAddIngress,
+            NetIngressAdded{..}        => MessageType::NetIngressAdded,
+            NetRemoveIngress{..}       => MessageType::NetRemoveIngress,
+            NetListIngresses           => MessageType::NetListIngresses,
+            NetIngressList(_)          => MessageType::NetIngressList,
         }
     }
 }
@@ -738,6 +777,19 @@ pub struct MeshConnectResultMsg {
     pub peer_name: String,
 }
 
+/// Request Core to generate a VM3 join code with custom TTL and one-time flag.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MeshGetJoinCodeV3Msg {
+    pub ttl_mins: u16,
+    pub one_time: bool,
+}
+
+/// Result containing the generated VM3 join code.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MeshJoinCodeV3ResultMsg {
+    pub join_code: String,
+}
+
 /// Disconnect from a specific peer.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MeshDisconnectMsg {
@@ -1008,6 +1060,27 @@ pub struct SecretSetMsg {
     /// Plaintext value — Core encrypts this with DPAPI before writing to disk.
     /// The plaintext is held in memory only for the duration of the IPC call.
     pub plaintext: String,
+}
+
+// ── INGRESS (v2.1) ───────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IngressPathRule {
+    pub path_prefix: String,
+    pub target_port: u16,
+    pub strip_prefix: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IngressRule {
+    pub host: String,
+    pub paths: Vec<IngressPathRule>,
+    pub default_port: Option<u16>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetAddIngressMsg {
+    pub rule: IngressRule,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

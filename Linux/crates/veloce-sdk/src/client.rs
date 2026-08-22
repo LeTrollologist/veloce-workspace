@@ -20,7 +20,8 @@ use veloce_ipc::{
     Codec,
     message::{
         Body, Capability, DesiredStateSpec, Envelope, Flags,
-        MeshConnectMsg, MeshConnectResultMsg, MeshDisconnectMsg, MeshInfoMsg,
+        IngressPathRule, IngressRule, MeshConnectMsg, MeshConnectResultMsg, MeshDisconnectMsg,
+        MeshGetJoinCodeV3Msg, MeshInfoMsg, NetAddIngressMsg,
         NetPortForwardMsg, NodeLogChunkMsg, NodeSpawnedMsg, NodeStatusMsg,
         NodeEventMsg, PeerInfoMsg, PolicyRulesMsg, PortForwardEntry, SpawnNodeMsg,
         TrafficStatsMsg, VolumeEntry, VolumeRegisteredMsg,
@@ -391,6 +392,14 @@ impl VeloceClient {
         }
     }
 
+    /// Request Core to generate a VM3 join code with custom TTL and one-time flag.
+    pub async fn mesh_get_join_code_v3(&mut self, ttl_mins: u16, one_time: bool) -> Result<String> {
+        match self.request(Body::MeshGetJoinCodeV3(MeshGetJoinCodeV3Msg { ttl_mins, one_time })).await? {
+            Body::MeshJoinCodeV3Result(r) => Ok(r.join_code),
+            other => bail!("mesh_get_join_code_v3: unexpected response {:?}", other.msg_type()),
+        }
+    }
+
     /// Connect to a remote peer using a join code from `mesh identity`.
     pub async fn mesh_connect(&mut self, join_code: &str) -> Result<MeshConnectResultMsg> {
         match self.request(Body::MeshConnect(MeshConnectMsg {
@@ -485,6 +494,35 @@ impl VeloceClient {
             Body::NetPortForwardList(v) => Ok(v),
             Body::Error(e)              => bail!("list_port_forwards: {}", e.message),
             other                       => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    // ── Ingress (v2.1) ────────────────────────────────────────────────────────
+
+    /// Register or update an HTTP ingress routing rule.
+    pub async fn ingress_add(&mut self, rule: IngressRule) -> Result<String> {
+        match self.request(Body::NetAddIngress(NetAddIngressMsg { rule })).await? {
+            Body::NetIngressAdded { host } => Ok(host),
+            Body::Error(e)                 => bail!("ingress_add: {}", e.message),
+            other                          => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// Remove an HTTP ingress routing rule by hostname.
+    pub async fn ingress_remove(&mut self, host: &str) -> Result<()> {
+        match self.request(Body::NetRemoveIngress { host: host.into() }).await? {
+            Body::NetRemoveIngress { .. } => Ok(()),
+            Body::Error(e)                => bail!("ingress_remove: {}", e.message),
+            other                         => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// List all active HTTP ingress routing rules.
+    pub async fn ingress_list(&mut self) -> Result<Vec<IngressRule>> {
+        match self.request(Body::NetListIngresses).await? {
+            Body::NetIngressList(v) => Ok(v),
+            Body::Error(e)          => bail!("ingress_list: {}", e.message),
+            other                   => bail!("unexpected: {:?}", other.msg_type()),
         }
     }
 

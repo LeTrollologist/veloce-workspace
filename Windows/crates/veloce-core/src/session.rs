@@ -18,8 +18,8 @@ use veloce_ipc::{
     Codec,
     message::{
         Body, Capability, Envelope, ErrorCode, ErrorMsg, Flags,
-        HandshakeAckMsg, MeshConnectMsg, MeshDisconnectMsg,
-        NodeEventMsg, NodeInfo, NodeKilledMsg, NodeListMsg,
+        HandshakeAckMsg, MeshConnectMsg, MeshDisconnectMsg, MeshGetJoinCodeV3Msg, MeshJoinCodeV3ResultMsg,
+        NetAddIngressMsg, NodeEventMsg, NodeInfo, NodeKilledMsg, NodeListMsg,
         NodeLogChunkMsg, NodeResourceMsg, NodeSpawnedMsg, NodeStatus as IpcNodeStatus,
         NodeStatusMsg, TrafficStatsMsg,
     },
@@ -472,6 +472,14 @@ where
                 self.send_reply(cid, Body::MeshInfo(info)).await?;
             }
 
+            Body::MeshGetJoinCodeV3(MeshGetJoinCodeV3Msg { ttl_mins, one_time }) => {
+                self.require_cap(Capability::MeshManage)?;
+                let join_code = self.state.mesh.as_ref()
+                    .map(|m| m.join_code_v3(ttl_mins, one_time))
+                    .ok_or_else(|| anyhow::anyhow!("mesh not initialised"))?;
+                self.send_reply(cid, Body::MeshJoinCodeV3Result(MeshJoinCodeV3ResultMsg { join_code })).await?;
+            }
+
             Body::MeshConnect(MeshConnectMsg { join_code }) => {
                 self.require_cap(Capability::MeshManage)?;
                 let mesh = self.state.mesh.as_ref()
@@ -645,6 +653,25 @@ where
                 let name = spec.name.clone();
                 self.state.reconciler().apply(spec);
                 self.send_reply(cid, Body::DesiredStateApplied { name }).await?;
+            }
+
+            // ── Ingress (v2.1) ─────────────────────────────────────────────
+            Body::NetAddIngress(NetAddIngressMsg { rule }) => {
+                self.require_cap(Capability::NetRegister)?;
+                let host = rule.host.clone();
+                self.state.ingress_router().add_rule(rule).await;
+                self.send_reply(cid, Body::NetIngressAdded { host }).await?;
+            }
+
+            Body::NetRemoveIngress { host } => {
+                self.require_cap(Capability::NetRegister)?;
+                self.state.ingress_router().remove_rule(&host).await;
+                self.send_reply(cid, Body::NetRemoveIngress { host }).await?;
+            }
+
+            Body::NetListIngresses => {
+                let rules = self.state.ingress_router().list_rules().await;
+                self.send_reply(cid, Body::NetIngressList(rules)).await?;
             }
 
             // ── Extended node status (v1.3) ────────────────────────────────

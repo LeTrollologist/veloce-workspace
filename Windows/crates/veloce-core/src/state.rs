@@ -49,6 +49,10 @@ pub struct CoreState {
     // ── v1.3 ──────────────────────────────────────────────────────────────────
     /// Desired-state reconciler.  The background task is started in `run_core`.
     pub reconciler: Arc<Reconciler>,
+
+    // ── v2.1 ──────────────────────────────────────────────────────────────────
+    /// Layer-7 HTTP Ingress router.
+    pub ingress_router: Arc<veloce_net::IngressRouter>,
 }
 
 impl CoreState {
@@ -102,6 +106,7 @@ impl CoreState {
         };
 
         let port_forward_table = Arc::new(PortForwardTable::new());
+        let ingress_router     = Arc::new(veloce_net::IngressRouter::new());
         let volume_registry    = VolumeRegistry::new(&dir);
         let secrets_vault      = SecretsVault::new(&dir);
         let node_table         = Arc::new(NodeTable::new());
@@ -123,19 +128,21 @@ impl CoreState {
             shutdown:     AtomicBool::new(false),
             psk,
             port_forward_table,
+            ingress_router,
             volume_registry,
             secrets_vault,
             reconciler,
         })
     }
 
-    pub fn registry(&self)            -> &Registry              { &self.registry }
-    pub fn node_table(&self)          -> &Arc<NodeTable>        { &self.node_table }
-    pub fn net_registry(&self)        -> &Arc<NetRegistry>      { &self.net_registry }
-    pub fn port_forward_table(&self)  -> &Arc<PortForwardTable> { &self.port_forward_table }
-    pub fn volume_registry(&self)     -> &Arc<VolumeRegistry>   { &self.volume_registry }
-    pub fn secrets_vault(&self)       -> &Arc<SecretsVault>     { &self.secrets_vault }
-    pub fn reconciler(&self)          -> &Arc<Reconciler>       { &self.reconciler }
+    pub fn registry(&self)            -> &Registry                    { &self.registry }
+    pub fn node_table(&self)          -> &Arc<NodeTable>              { &self.node_table }
+    pub fn net_registry(&self)        -> &Arc<NetRegistry>            { &self.net_registry }
+    pub fn port_forward_table(&self)  -> &Arc<PortForwardTable>       { &self.port_forward_table }
+    pub fn ingress_router(&self)      -> &Arc<veloce_net::IngressRouter> { &self.ingress_router }
+    pub fn volume_registry(&self)     -> &Arc<VolumeRegistry>         { &self.volume_registry }
+    pub fn secrets_vault(&self)       -> &Arc<SecretsVault>           { &self.secrets_vault }
+    pub fn reconciler(&self)          -> &Arc<Reconciler>             { &self.reconciler }
     /// The current session's PSK bytes.  Clients must send these verbatim.
     pub fn psk(&self) -> &[u8; 32] { &self.psk }
 

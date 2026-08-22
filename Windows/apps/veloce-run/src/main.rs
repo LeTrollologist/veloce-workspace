@@ -161,8 +161,39 @@ enum Commands {
         #[command(subcommand)]
         action: SecretAction,
     },
+    /// Manage Layer-7 HTTP Ingress routing rules (v2.1)
+    Ingress {
+        #[command(subcommand)]
+        action: IngressAction,
+    },
     /// Print version information
     Version,
+}
+
+#[derive(Subcommand, Debug)]
+enum IngressAction {
+    /// Add or update an HTTP ingress route
+    Add {
+        /// Hostname to match (e.g. app.vln, api.vln)
+        #[arg(short = 'H', long, value_name = "HOST")]
+        host: String,
+        /// Path prefix to route (e.g. /api)
+        #[arg(short = 'p', long, default_value = "/", value_name = "PREFIX")]
+        path: String,
+        /// Target backend port (e.g. 3000)
+        #[arg(short = 't', long, value_name = "PORT")]
+        target_port: u16,
+        /// Strip prefix before forwarding to backend
+        #[arg(long)]
+        strip_prefix: bool,
+    },
+    /// Remove an HTTP ingress route by hostname
+    Rm {
+        /// Hostname to remove
+        host: String,
+    },
+    /// List all active HTTP ingress routes
+    List,
 }
 
 #[derive(Subcommand, Debug)]
@@ -279,6 +310,7 @@ async fn main() -> Result<()> {
         Some(Commands::Down { file })         => run_down(file).await,
         Some(Commands::Ps)                    => run_ps().await,
         Some(Commands::Secret { action })     => run_secret(action).await,
+        Some(Commands::Ingress { action })    => run_ingress(action).await,
         Some(Commands::Version)               => { run_version(); Ok(()) }
         None => {
             let executable = cli.executable.expect("clap ensures executable is set when no subcommand");
@@ -298,15 +330,11 @@ async fn run_mesh(action: MeshAction) -> Result<()> {
     match action {
         MeshAction::Identity { ttl, one_time } => {
             let info = client.mesh_info().await?;
-            // The core returns the current join code in info.join_code (VM1 or VM2).
-            // We print a VM3 code (with TTL/one-time) using the same addresses but
-            // note that the actual VM3 encoding must be done server-side since the
-            // private key is not available here.  For now, print the existing join code
-            // with advisory TTL information so operators know what they're distributing.
-            //
-            // TODO: add a `MeshGetJoinCodeV3` IPC message to let Core generate VM3 codes.
-            //       Until then we display the current join code plus TTL advisory.
-            let join_code = &info.join_code;
+            let join_code = if ttl != 15 || one_time {
+                client.mesh_get_join_code_v3(ttl, one_time).await?
+            } else {
+                info.join_code.clone()
+            };
             println!("{join_code}");
             eprintln!("machine_id:    {}", info.machine_id);
             eprintln!("listen_port:   {}", info.listen_port);
@@ -317,10 +345,10 @@ async fn run_mesh(action: MeshAction) -> Result<()> {
                     info.listen_port);
             }
             if one_time {
-                eprintln!("⚠  --one-time: VM3 code generation not yet wired to Core IPC");
-                eprintln!("   This code above is NOT single-use.  Support is planned for v0.9.1.");
-            } else if ttl != 15 {
-                eprintln!("TTL hint:      {ttl}min  (advisory — not enforced by this code format)");
+                eprintln!("access:        single-use (one-time nonce)");
+            }
+            if ttl != 0 && join_code.starts_with("VM3:") {
+                eprintln!("TTL:           {ttl}min");
             }
         }
 
@@ -888,6 +916,44 @@ async fn run_spawn(
                 let _ = client.kill_node(spawned.node_id).await;
                 eprintln!("veloce-run: node killed.");
                 break;
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn run_ingress(action: IngressAction) -> Result<()> {
+    let mut client = connect_client("veloce-run-ingress", vec![Capability::NetRegister]).await?;
+    match action {
+        IngressAction::Add { host, path, target_port, strip_prefix } => {
+            let rule = veloce_ipc::message::IngressRule {
+                host: host.clone(),
+                paths: vec![veloce_ipc::message::IngressPathRule {
+                    path_prefix: path.clone(),
+                    target_port,
+                    strip_prefix,
+                }],
+                default_port: Some(target_port),
+            };
+            let confirmed = client.ingress_add(rule).await?;
+            println!("✓ ingress route added: http://{confirmed}{path} → 127.0.0.1:{target_port}");
+        }
+        IngressAction::Rm { host } => {
+            client.ingress_remove(&host).await?;
+            println!("✓ ingress route removed for {host}");
+        }
+        IngressAction::List => {
+            let rules = client.ingress_list().await?;
+            if rules.is_empty() {
+                println!("No active ingress routes. Use `veloce-run ingress add` to create one.");
+            } else {
+                println!("{:<25} {:<15} {:<12} {}", "HOST", "PATH PREFIX", "TARGET PORT", "STRIP PREFIX");
+                println!("{}", "─".repeat(65));
+                for r in rules {
+                    for p in r.paths {
+                        println!("{:<25} {:<15} {:<12} {}", r.host, p.path_prefix, p.target_port, p.strip_prefix);
+                    }
+                }
             }
         }
     }
