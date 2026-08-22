@@ -27,7 +27,8 @@ fn embed_manifest() {
     // linker can find the file regardless of where Cargo invokes link.exe from.
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
     let manifest_path = std::path::Path::new(&manifest_dir).join("windows.manifest");
-    if manifest_path.exists() {
+    let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
+    if target_env == "msvc" && manifest_path.exists() {
         // Embed compatibility + longPathAware sections from our manifest file.
         println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
         println!(

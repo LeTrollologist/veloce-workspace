@@ -394,3 +394,4 @@ This phase dedicated three sequential releases to security, correctness, and sta
 **Future Roadmap** 📋
 - **v2.2 — Autoscaling & Scheduling**: Horizontal Process Autoscaler (HPA), CronJobs, and DaemonSet-equivalent scheduling
 - **v2.3 — Veloce Hub Package Manager**: Signed `.vpack` bundles with Helm-style parameter templating and lifecycle hooks
+- **Standalone Distribution**: Portable self-contained binaries (`.exe` / `.tar.gz`) with manual and offline release artifacts, bypassing third-party cloud billing dependencies.

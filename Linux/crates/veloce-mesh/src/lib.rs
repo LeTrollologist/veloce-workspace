@@ -9,6 +9,7 @@
 //! 2. Machine B: `veloce-run mesh join <code>` → connects; both machines can now
 //!    resolve each other's `.vln` hostnames transparently.
 
+pub mod control;
 pub mod forward;
 pub mod identity;
 pub mod noise;
