@@ -60,11 +60,12 @@ Windows service under the SYSTEM account. Clients connect over a named pipe.
 
 | Boundary | What crosses it | Protections |
 |---|---|---|
-| Named pipe (IPC) | Client ↔ VeloceCore | SID ACL (kernel-enforced), OsRng PSK, pre-auth state machine |
+| Named pipe / Unix socket (IPC) | Client ↔ VeloceCore | SID ACL (kernel-enforced) / UID check, OsRng PSK, pre-auth state machine |
 | Mesh TCP `:7474` | Peer VeloceCore ↔ VeloceCore | Noise_IK mutual authentication, 10 s handshake timeout, join-code TTL/one-time |
 | DNS UDP `:5354` | Local app ↔ VeloceNet | Localhost-only bind; upstream response source + transaction-ID validation |
 | SOCKS5 TCP `:1055` | Local app ↔ VeloceNet | Localhost-only bind; `.vln`/`.veloce` scope restriction |
-| Gossip (in-mesh) | Remote peer hostname updates | LWW clock-skew guard, ownership tracking, message size cap |
+| Ingress HTTP `:8080` | Local app ↔ VeloceNet Ingress | Localhost-only bind; longest-prefix match, `NetRegister` capability required |
+| Gossip & Control Plane | Multi-node cluster coordination | LWW clock-skew guard, ownership tracking, term monotonicity validation |
 
 ### Actors
 

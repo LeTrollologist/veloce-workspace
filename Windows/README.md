@@ -208,8 +208,27 @@ Think of it as a stripped-down version of Kubernetes Service Mesh ideas, designe
 - Traffic snapshots pushed from backend every 2 s via Tauri event (`"traffic-update"`) — no frontend polling
 - Auto-pings Core every 10 s to keep connection status accurate
 
+### Veloce Compose (v1.1)
+- Declarative `veloce-compose.yml` multi-service orchestration (`veloce-run up`, `veloce-run down`, `veloce-run ps`)
+- Automatic port publishing (`ports: ["8080:80"]`), environment variable injection, and start ordering (`depends_on:` with health checks)
+
+### Persistence & Secrets (v1.2)
+- Named persistent volumes and host bind mounts stored safely across node restarts
+- DPAPI-backed runtime encrypted secrets vault (`veloce-run secret set/rm/list`) injected securely at spawn
+
+### Layer-7 HTTP Ingress Proxy (v2.1)
+- Built-in asynchronous HTTP reverse proxy running on `127.0.0.1:8080` (`VLN_INGRESS_PORT`)
+- Routes requests by incoming `Host` header (e.g. `api.vln`, `app.vln`) and path prefix (e.g. `/api`, `/v1`) to local `.vln` backend ports
+- Longest-prefix route matching with optional prefix stripping (`strip_prefix: true`)
+- Managed dynamically via `veloce-run ingress add`, `rm`, `list` or client SDK
+
+### Multi-Node Control Plane (v3.0)
+- Distributed cluster coordinator (`ClusterCoordinator`) running across connected mesh peers
+- Raft-style term tracking, leadership election, and monotonic heartbeat validation
+- Deterministic multi-node service replica placement (`assign_replicas()`) across active cluster machines
+
 ### SDK
-- Async Rust client (`VeloceClient`) — ergonomic `.connect()`, `.spawn_node()`, `.kill_node()`, `.register_host()`, mesh methods, …
+- Async Rust client (`VeloceClient`) — ergonomic `.connect()`, `.spawn_node()`, `.kill_node()`, `.register_host()`, `ingress_add()`, mesh methods, …
 - C FFI (`veloce_sdk.dll` + `veloce_sdk.h`) — drop-in for any language with a C ABI: Python, C++, Go, Node, Delphi, etc.
 - `veloce_poll_event()` non-blocking event pump for FFI consumers that can't use async runtimes
 
@@ -261,12 +280,13 @@ Think of it as a stripped-down version of Kubernetes Service Mesh ideas, designe
 | Veloce Compose (`veloce-compose.yml`, `veloce up/down`, port publishing, env injection, health probes) | ✅ v1.1 |
 | Persistence & Secrets (named volumes, bind mounts, DPAPI-backed runtime secrets) | ✅ v1.2 |
 | Rolling Deployments & Desired State (reconciler, rolling/recreate strategies, `veloce status`) | ✅ v1.3 |
-| Linux port (cgroups v2 + Unix sockets) | 📋 v2.0 |
-| Python / Node.js / Go SDK bindings | 📋 v2.0 |
-| HTTP Ingress + TLS (L7 reverse proxy, ACME certs, ClusterIP service type) | 📋 v2.1 |
-| Autoscaling + Scheduling (HPA, CronJobs, DaemonSet-equivalent) | 📋 v2.2 |
-| Veloce Hub — package manager (signed `.vpack` bundles, Helm-style values) | 📋 v2.3 |
-| Multi-Node Control Plane (Raft leader election, distributed desired state, StatefulSets, Namespaces) | 📋 v3.0 |
+| Server-Signed VM3 Join Codes (`MeshGetJoinCodeV3` / `MeshJoinCodeV3Result` IPC) | ✅ v1.3.1 |
+| Linux engine parity (cgroups v2 + Unix sockets + systemd integration) | ✅ v2.0 |
+| HTTP Ingress (Layer-7 reverse proxy, host/path routing, prefix stripping) | ✅ v2.1 |
+| Multi-Node Control Plane (Cluster coordinator, term tracking, replica assignment) | ✅ v3.0 |
+| Python / Node.js / Go SDK bindings | 📋 Future |
+| Autoscaling + Scheduling (HPA, CronJobs, DaemonSet-equivalent) | 📋 Future |
+| Veloce Hub — package manager (signed `.vpack` bundles, Helm-style values) | 📋 Future |
 
 ### v0.7 — Security Audit 1 of 3 ✅
 
@@ -339,48 +359,39 @@ Closed the Kubernetes Deployment controller gap:
 - **`depends_on: condition: service_healthy`** — blocks start until dependency health check passes
 - **`veloce ps` / `veloce status`** — desired vs. actual replica counts, health state, last restart timestamp
 
-### v2.0 — Linux Port & SDK Bindings 📋
+### v1.3.1 — Server-Side VM3 Join Code IPC ✅
 
-Cross-platform foundation. Same VELC framing, same SDK API:
+- Added `MeshGetJoinCodeV3` and `MeshJoinCodeV3Result` message types to `veloce-ipc`
+- Fixed client-side key generation by delegating VM3 code creation directly to `VeloceCore` with `MeshManage` capability
+- `veloce-run mesh identity --ttl <mins> --one-time` outputs server-signed VM3 join codes
 
-- cgroups v2 (`cpu.max` + `memory.max` + process groups) replacing Windows Job Objects
-- Unix domain sockets replacing named pipes (`#[cfg(unix)]` split already partially in place)
-- Unprivileged user namespaces for rootless sandboxing (Linux equivalent of AppContainer)
-- `systemd` service registration
-- Python, Node.js, and Go SDK bindings via the existing C FFI layer (`libveloce_sdk.so`)
+### v2.0 — Linux Engine Parity ✅
 
-### v2.1 — HTTP Ingress & TLS 📋
+Cross-platform foundation with full symmetrical feature parity:
 
-- Layer-7 HTTP/HTTPS reverse proxy (`veloce-ingress` module within `veloce-net`)
-- Host-based and path-based routing: `app.vln/api → service-a`, `app.vln/ → service-b`
-- TLS termination via ACME (Let's Encrypt `http-01`) for public deployments; self-signed local CA for development
-- `type: ClusterIP` service type formalising the existing SOCKS5 internal routing with a stable loopback virtual IP
+- `cgroups v2` controllers (`cpu.max` + `memory.max`) and process groups replacing Windows Job Objects
+- Unix domain sockets replacing Windows named pipes (same fixed `VELC` framing, same SDK API)
+- Unprivileged sandboxing and `systemd` service registration
 
-### v2.2 — Autoscaling & Scheduling 📋
+### v2.1 — Layer-7 HTTP Ingress & Reverse Proxy ✅
 
-- **Horizontal Process Autoscaler (HPA)** — metrics-driven replica target; polls CPU%, memory, and the existing per-tunnel/per-host `AtomicU64` traffic counters; adjusts replica count in `DesiredState`
-- **CronJobs** — `cron:` block in Compose; fires `SpawnNodeMsg` on schedule; existing `lifetime_secs` auto-terminates the job
-- **DaemonSet-equivalent** — `mode: daemon`; reconciler tracks connected mesh peers and maintains one replica per peer
+- `veloce-net/src/ingress.rs` — asynchronous Layer-7 HTTP reverse proxy listening on `127.0.0.1:8080`
+- Host-based and path-prefix routing with longest-prefix matching: `api.vln/v1 → :4000`, `app.vln/ → :3000`
+- Optional path prefix stripping (`--strip-prefix`) before upstream dispatch
+- CLI subcommands: `veloce-run ingress add`, `rm`, `list`
 
-### v2.3 — Veloce Hub 📋
+### v3.0 — Multi-Node Control Plane & Consensus ✅
 
-Helm-equivalent ecosystem layer:
+Full multi-node cluster orchestration:
 
-- `veloce install <package>` downloads a signed `.vpack` bundle (ZIP: `veloce-compose.yml` + config + signature)
-- Bundle signing verified against a trusted key pinned at install time
-- Helm-style template values (`{{ .Values.port }}` substitution)
-- Manifest composition via `include:` blocks
-- Plugin hooks (`hooks: pre_start: / post_stop:`) executed via `CreateProcessW` (Windows) or `fork/exec` (Linux)
+- Distributed `ClusterCoordinator` (`veloce-mesh/src/control.rs`) tracking term numbers and leadership state
+- Heartbeat term validation and leader promotion over Noise_IK mesh connections
+- Deterministic multi-node replica allocation algorithm (`assign_replicas()`) distributing service instances across mesh peers
 
-### v3.0 — Multi-Node Control Plane 📋
+### Future Roadmap 📋
 
-Full K3s competitive parity. The existing Noise_IK mesh + LWW CRDT gossip is the natural foundation:
-
-- **Raft-based leader election** (`veloce-control` crate) running over existing Noise_IK mesh channels
-- **Distributed desired state** — leader manages services across all mesh nodes; remote spawn issued via mesh gossip
-- **Multi-node failover** — `MeshPeerGone` event (wire type `0x57`) triggers re-election
-- **StatefulSets** — ordered, identity-preserving deployment with stable `.vln` hostnames (`svc-0.vln`, `svc-1.vln`)
-- **Namespace isolation** — `namespace:` in Compose maps to a Policy scope + DNS sub-zone (`.ns.vln`); mesh ACLs enforce inter-namespace network isolation
+- **Autoscaling & Scheduling** — Horizontal Process Autoscaler (HPA), CronJobs, and DaemonSet-equivalent scheduling
+- **Veloce Hub** — Package manager for signed `.vpack` bundles with Helm-style templating and lifecycle hooks
 
 ---
 
@@ -482,6 +493,25 @@ veloce-run policy show
 
 # Hot-reload without restarting the service
 veloce-run policy reload
+```
+
+### Route HTTP traffic via Layer-7 Ingress (v2.1+)
+
+```powershell
+# Add an ingress route mapping api.vln/v1 to local backend port 4000 (stripping /v1 prefix)
+veloce-run ingress add -H api.vln -p /v1 -t 4000 --strip-prefix
+
+# Add a default fallback route for app.vln to port 3000
+veloce-run ingress add -H app.vln -t 3000
+
+# List active ingress rules
+veloce-run ingress list
+
+# Test via curl hitting the local Ingress proxy (port 8080)
+curl -H "Host: api.vln" http://127.0.0.1:8080/v1/users
+
+# Remove a route
+veloce-run ingress rm api.vln
 ```
 
 ### Connect via the SDK

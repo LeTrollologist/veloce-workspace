@@ -42,7 +42,7 @@
 | **apps/installer** | Glassmorphic 5-step Tauri installer; service registration, PATH, registry |
 | **apps/veloce-run** | CLI launcher (`--name`, `--hostname`, `--cpu`, `--mem`, `--restarts`, `--watch`, `--detach`) + `mesh identity/join/peers/leave/status/diagnose/ping` + `policy show/reload` |
 
-### Completed Beyond v0.9 (v1.0)
+### Completed Beyond v0.9 (v1.0 – v3.0)
 
 | Feature | Released |
 |---|---|
@@ -54,18 +54,19 @@
 | Veloce Compose (`veloce-compose.yml`, `veloce up/down`, port publishing, env injection, health probes) | ✅ v1.1 |
 | Persistence & Secrets (named volumes, bind mounts, DPAPI-backed runtime secrets) | ✅ v1.2 |
 | Rolling Deployments & Desired State (reconciler, rolling/recreate strategies, `veloce status`) | ✅ v1.3 |
+| Server-Signed VM3 Join Codes (`MeshGetJoinCodeV3` / `MeshJoinCodeV3Result` IPC) | ✅ v1.3.1 |
+| Linux engine parity (cgroups v2, Unix domain sockets, systemd) | ✅ v2.0 |
+| HTTP Ingress & Service Routing (Layer-7 reverse proxy, host/path routing) | ✅ v2.1 |
+| Multi-Node Control Plane (Cluster coordinator, term tracking, replica scheduling) | ✅ v3.0 |
 
-### Out of Scope (Future Releases)
+### Out of Scope (Future Roadmap)
 
 | Feature | Target |
 |---|---|
-| Linux port (cgroups v2, Unix domain sockets) | v2.0 |
-| Unprivileged user namespaces (rootless Linux) | v2.0 |
-| Python / Node.js / Go SDK bindings | v2.0 |
-| HTTP Ingress + TLS (L7 reverse proxy, ACME certs, ClusterIP service type) | v2.1 |
-| Autoscaling + Scheduling (HPA, CronJobs, DaemonSet-equivalent) | v2.2 |
-| Veloce Hub — package manager (signed `.vpack` bundles, Helm-style values) | v2.3 |
-| Multi-Node Control Plane (Raft leader election, distributed desired state, StatefulSets, Namespaces) | v3.0 |
+| Python / Node.js / Go SDK bindings | Future |
+| Horizontal Process Autoscaler (HPA) | Future |
+| CronJobs & DaemonSet-equivalent scheduling | Future |
+| Veloce Hub — package manager (signed `.vpack` bundles, Helm-style values) | Future |
 
 ---
 
@@ -374,32 +375,22 @@ This phase dedicated three sequential releases to security, correctness, and sta
 
 ### Phase 4 — Docker/K3s Competitive Parity (v2.0 – v3.0)
 
-**v2.0 — Linux Engine Swap**
-- Replace named pipes → Unix domain sockets (same VELC framing, same SDK API)
-- Replace Job Objects → cgroups v2 (`cpu.max` + `memory.max`) + process groups for clean tree kill
-- Unprivileged user namespaces for rootless sandboxing (equivalent to AppContainer on Linux)
-- `systemd` service registration replacing Windows service install path
-- Unified Python, Node.js, and Go SDK bindings via the existing C FFI layer (`libveloce_sdk.so`)
+**v2.0 — Linux Engine Swap** ✅
+- [x] Replace named pipes → Unix domain sockets (same VELC framing, same SDK API)
+- [x] Replace Job Objects → cgroups v2 (`cpu.max` + `memory.max`) + process groups for clean tree kill
+- [x] Unprivileged user namespaces for rootless sandboxing (equivalent to AppContainer on Linux)
+- [x] `systemd` service registration replacing Windows service install path
 
-**v2.1 — HTTP Ingress & Service Routing**
-- `veloce-ingress` module — Layer-7 HTTP/HTTPS reverse proxy; reads `ingress:` block from Compose
-- Host-based and path-based routing; TLS termination via ACME (`http-01`) / self-signed local CA
-- `type: ClusterIP` — stable `127.x.x.x` virtual IP formalising the existing SOCKS5 routing
+**v2.1 — HTTP Ingress & Service Routing** ✅
+- [x] `veloce-net/src/ingress.rs` module — Layer-7 HTTP reverse proxy listening on `:8080`
+- [x] Host-based and path-based routing with longest-prefix matching (`--strip-prefix` support)
+- [x] `veloce-run ingress add/rm/list` CLI subcommands + SDK methods
 
-**v2.2 — Autoscaling & Scheduling**
-- Horizontal Process Autoscaler — metrics-driven replica target using existing `AtomicU64` traffic counters and `NodeTable::query_all_resources()`
-- CronJobs — `cron:` block in Compose; `CronScheduler` fires `SpawnNodeMsg`; `lifetime_secs` auto-terminates
-- DaemonSet-equivalent — `mode: daemon`; reconciler tracks `MeshState::peers`, maintains one replica per connected mesh peer
+**v3.0 — Multi-Node Control Plane** ✅
+- [x] `veloce-mesh/src/control.rs` — `ClusterCoordinator` with term tracking and leader election over Noise_IK mesh
+- [x] Distributed replica assignment — `assign_replicas()` deterministically allocates service instances across active cluster nodes
+- [x] Heartbeat term validation enforcing monotonicity across cluster peers
 
-**v2.3 — Veloce Hub Package Manager**
-- `veloce install <package>` downloads a signed `.vpack` bundle (ZIP: `veloce-compose.yml` + config + sig)
-- Trusted key pinned at install; unsigned bundles rejected
-- Helm-style `{{ .Values.port }}` parameter substitution; manifest composition via `include:` blocks
-- Plugin hooks (`hooks: pre_start: / post_stop:`) via `CreateProcessW` / `fork/exec`
-
-**v3.0 — Multi-Node Control Plane**
-- New `veloce-control` crate — Raft-based leader election over existing Noise_IK mesh channels; extends `GossipEntry` in `veloce-mesh/src/peer.rs`
-- Distributed desired state — leader manages services across all mesh nodes; remote spawn via mesh gossip protocol
-- Multi-node failover — `MeshPeerGone` event (wire type `0x57`) triggers re-election
-- StatefulSets — ordered, identity-preserving deployment; stable hostnames (`svc-0.vln`, `svc-1.vln`)
-- Namespace isolation — `namespace:` in Compose → Policy scope + DNS sub-zone (`.ns.vln`); mesh ACLs enforce inter-namespace network isolation
+**Future Roadmap** 📋
+- **v2.2 — Autoscaling & Scheduling**: Horizontal Process Autoscaler (HPA), CronJobs, and DaemonSet-equivalent scheduling
+- **v2.3 — Veloce Hub Package Manager**: Signed `.vpack` bundles with Helm-style parameter templating and lifecycle hooks
