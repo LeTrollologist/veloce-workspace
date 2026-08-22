@@ -9,4 +9,5 @@ target/
 %USERPROFILE%/
 
 # Local Claude settings
-.claude/settings.local.json
+.claude/
+**/.claude/
