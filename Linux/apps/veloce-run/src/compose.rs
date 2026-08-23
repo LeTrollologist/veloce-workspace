@@ -53,7 +53,33 @@ pub struct ComposeService {
     pub cpu: Option<u8>,
     #[serde(default)]
     pub mem: Option<u64>,
+    #[serde(default)]
+    pub autoscaling: Option<ComposeAutoscaling>,
+    #[serde(default)]
+    pub cron: Option<ComposeCron>,
 }
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ComposeAutoscaling {
+    #[serde(default = "default_min_replicas")]
+    pub min_replicas: u32,
+    #[serde(default = "default_max_replicas")]
+    pub max_replicas: u32,
+    pub target_cpu: Option<u32>,
+    pub target_memory_mb: Option<u64>,
+}
+
+fn default_min_replicas() -> u32 { 1 }
+fn default_max_replicas() -> u32 { 5 }
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ComposeCron {
+    pub schedule: String,
+    #[serde(default = "default_concurrency")]
+    pub concurrency: String,
+}
+
+fn default_concurrency() -> String { "Allow".into() }
 
 /// `depends_on` accepts either a list of strings or a map.
 #[derive(Debug, Deserialize, Default)]

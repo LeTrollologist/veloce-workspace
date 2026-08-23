@@ -334,6 +334,11 @@ impl From<TemplateSpec> for SpawnNodeMsg {
                 max_delay_secs:  60,
             }),
             use_appcontainer: t.use_appcontainer,
+            health_check:     None,
+            volume_mounts:    vec![],
+            secret_refs:      vec![],
+            service_name:     None,
+            replica_index:    None,
         }
     }
 }

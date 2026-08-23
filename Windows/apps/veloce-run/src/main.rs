@@ -166,6 +166,16 @@ enum Commands {
         #[command(subcommand)]
         action: IngressAction,
     },
+    /// Manage Horizontal Process Autoscaler (HPA) policies (v3.1)
+    Autoscale {
+        #[command(subcommand)]
+        action: AutoscaleAction,
+    },
+    /// Manage scheduled tasks and CronJobs (v3.1)
+    Cron {
+        #[command(subcommand)]
+        action: CronAction,
+    },
     /// Print version information
     Version,
 }
@@ -194,6 +204,75 @@ enum IngressAction {
     },
     /// List all active HTTP ingress routes
     List,
+}
+
+#[derive(Subcommand, Debug)]
+enum AutoscaleAction {
+    /// Attach or update an HPA autoscaling policy on a service
+    Set {
+        /// Service name to autoscale
+        service: String,
+        /// Minimum replicas
+        #[arg(long, default_value = "1")]
+        min: u32,
+        /// Maximum replicas
+        #[arg(long, default_value = "5")]
+        max: u32,
+        /// Target CPU percentage (1-100)
+        #[arg(long)]
+        cpu: Option<u32>,
+        /// Target memory usage in megabytes
+        #[arg(long)]
+        mem: Option<u64>,
+        /// Scale-up cooldown period in seconds
+        #[arg(long, default_value = "30")]
+        scale_up_cooldown: u32,
+        /// Scale-down cooldown period in seconds
+        #[arg(long, default_value = "60")]
+        scale_down_cooldown: u32,
+    },
+    /// Get HPA status and live metrics for a service
+    Get {
+        /// Service name
+        service: String,
+    },
+    /// Remove HPA autoscaling policy from a service
+    Rm {
+        /// Service name
+        service: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum CronAction {
+    /// Create a scheduled task (Cron job)
+    Create {
+        /// Task name
+        name: String,
+        /// Schedule expression (e.g. "*/5 * * * *", "@hourly", "@daily", "@every 30s")
+        #[arg(short = 's', long)]
+        schedule: String,
+        /// Concurrency policy ("Allow", "Forbid", "Replace")
+        #[arg(long, default_value = "Allow")]
+        concurrency: String,
+        /// Executable command to run
+        executable: String,
+        /// Arguments for the command
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// List all scheduled tasks
+    List,
+    /// Trigger a scheduled task immediately
+    Run {
+        /// Task name
+        name: String,
+    },
+    /// Delete a scheduled task
+    Rm {
+        /// Task name
+        name: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -311,6 +390,8 @@ async fn main() -> Result<()> {
         Some(Commands::Ps)                    => run_ps().await,
         Some(Commands::Secret { action })     => run_secret(action).await,
         Some(Commands::Ingress { action })    => run_ingress(action).await,
+        Some(Commands::Autoscale { action })  => run_autoscale(action).await,
+        Some(Commands::Cron { action })       => run_cron(action).await,
         Some(Commands::Version)               => { run_version(); Ok(()) }
         None => {
             let executable = cli.executable.expect("clap ensures executable is set when no subcommand");
@@ -955,6 +1036,91 @@ async fn run_ingress(action: IngressAction) -> Result<()> {
                     }
                 }
             }
+        }
+    }
+    Ok(())
+}
+
+async fn run_autoscale(action: AutoscaleAction) -> Result<()> {
+    let mut client = connect_client("veloce-run-autoscale", vec![Capability::DesiredStateManage]).await?;
+    match action {
+        AutoscaleAction::Set { service, min, max, cpu, mem, scale_up_cooldown, scale_down_cooldown } => {
+            let policy = veloce_ipc::message::AutoscalePolicyMsg {
+                service_name: service.clone(),
+                min_replicas: min,
+                max_replicas: max,
+                target_cpu_percent: cpu,
+                target_memory_mb: mem,
+                scale_up_cooldown_secs: scale_up_cooldown,
+                scale_down_cooldown_secs: scale_down_cooldown,
+            };
+            let info = client.autoscale_set(policy).await?;
+            println!("✓ HPA policy configured for service '{service}' (min: {min}, max: {max})");
+            if let Some(inf) = info {
+                println!("  current replicas: {}, target cpu: {:?}%, target mem: {:?}MB", inf.current_replicas, inf.target_cpu_percent, inf.target_memory_mb);
+            }
+        }
+        AutoscaleAction::Get { service } => {
+            let info = client.autoscale_get(&service).await?;
+            if let Some(inf) = info {
+                println!("─── HPA Status: {} ────────────────────────────", inf.service_name);
+                println!("  Min Replicas : {}", inf.min_replicas);
+                println!("  Max Replicas : {}", inf.max_replicas);
+                println!("  Current      : {} replicas", inf.current_replicas);
+                println!("  Target CPU   : {:?}", inf.target_cpu_percent);
+                println!("  Target Mem   : {:?}", inf.target_memory_mb);
+                println!("  Current CPU  : {:.1}%", inf.current_cpu_percent);
+                println!("  Current Mem  : {} MB", inf.current_memory_mb);
+            } else {
+                println!("No HPA policy found for service '{service}'.");
+            }
+        }
+        AutoscaleAction::Rm { service } => {
+            client.autoscale_remove(&service).await?;
+            println!("✓ HPA policy removed for service '{service}'");
+        }
+    }
+    Ok(())
+}
+
+async fn run_cron(action: CronAction) -> Result<()> {
+    let mut client = connect_client("veloce-run-cron", vec![Capability::SpawnNodes]).await?;
+    match action {
+        CronAction::Create { name, schedule, concurrency, executable, args } => {
+            let job = veloce_ipc::message::CronJobMsg {
+                name: name.clone(),
+                schedule: schedule.clone(),
+                executable,
+                args,
+                concurrency_policy: concurrency,
+                enabled: true,
+                last_run_timestamp_secs: None,
+                last_run_status: None,
+                next_run_timestamp_secs: None,
+            };
+            client.cron_create(job).await?;
+            println!("✓ Scheduled task '{name}' created with schedule '{schedule}'");
+        }
+        CronAction::List => {
+            let jobs = client.cron_list().await?;
+            if jobs.is_empty() {
+                println!("No scheduled tasks found. Use `veloce-run cron create` to register one.");
+            } else {
+                println!("{:<20} {:<15} {:<12} {:<12} {}", "NAME", "SCHEDULE", "POLICY", "LAST STATUS", "COMMAND");
+                println!("{}", "─".repeat(75));
+                for j in jobs {
+                    let status = j.last_run_status.as_deref().unwrap_or("Never Run");
+                    println!("{:<20} {:<15} {:<12} {:<12} {} {}", j.name, j.schedule, j.concurrency_policy, status, j.executable, j.args.join(" "));
+                }
+            }
+        }
+        CronAction::Run { name } => {
+            client.cron_trigger(&name).await?;
+            println!("✓ Scheduled task '{name}' triggered for immediate execution");
+        }
+        CronAction::Rm { name } => {
+            client.cron_remove(&name).await?;
+            println!("✓ Scheduled task '{name}' removed");
         }
     }
     Ok(())

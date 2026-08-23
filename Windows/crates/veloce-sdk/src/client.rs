@@ -19,8 +19,9 @@ use uuid::Uuid;
 use veloce_ipc::{
     Codec,
     message::{
+        AutoscaleInfoMsg, AutoscalePolicyMsg, CronJobMsg,
         Body, Capability, DesiredStateSpec, Envelope, Flags,
-        IngressPathRule, IngressRule, MeshConnectMsg, MeshConnectResultMsg, MeshDisconnectMsg,
+        IngressRule, MeshConnectMsg, MeshConnectResultMsg, MeshDisconnectMsg,
         MeshGetJoinCodeV3Msg, MeshInfoMsg, NetAddIngressMsg,
         NetPortForwardMsg, NodeLogChunkMsg, NodeSpawnedMsg, NodeStatusMsg,
         NodeEventMsg, PeerInfoMsg, PolicyRulesMsg, PortForwardEntry, SpawnNodeMsg,
@@ -596,6 +597,71 @@ impl VeloceClient {
             Body::NodeStatusResult(v) => Ok(v),
             Body::Error(e)            => bail!("query_node_status: {}", e.message),
             other                     => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    // ── Autoscaling & Cron (v3.1) ─────────────────────────────────────────────
+
+    /// Attach or update an HPA autoscaling policy on a named service.
+    pub async fn autoscale_set(&mut self, policy: AutoscalePolicyMsg) -> Result<Option<AutoscaleInfoMsg>> {
+        match self.request(Body::AutoscaleSet(policy)).await? {
+            Body::AutoscaleInfo(v) => Ok(v),
+            Body::Error(e)         => bail!("autoscale_set: {}", e.message),
+            other                  => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// Get HPA autoscaling status and live metrics for a named service.
+    pub async fn autoscale_get(&mut self, service: &str) -> Result<Option<AutoscaleInfoMsg>> {
+        match self.request(Body::AutoscaleGet { service: service.into() }).await? {
+            Body::AutoscaleInfo(v) => Ok(v),
+            Body::Error(e)         => bail!("autoscale_get: {}", e.message),
+            other                  => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// Detach an HPA autoscaling policy from a service.
+    pub async fn autoscale_remove(&mut self, service: &str) -> Result<()> {
+        match self.request(Body::AutoscaleRemove { service: service.into() }).await? {
+            Body::AutoscaleRemove { .. } => Ok(()),
+            Body::Error(e)               => bail!("autoscale_remove: {}", e.message),
+            other                        => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// Register a new scheduled task (Cron job).
+    pub async fn cron_create(&mut self, job: CronJobMsg) -> Result<()> {
+        match self.request(Body::CronCreate(job)).await? {
+            Body::CronRemove { .. } => Ok(()),
+            Body::Error(e)          => bail!("cron_create: {}", e.message),
+            other                   => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// List all scheduled tasks (Cron jobs).
+    pub async fn cron_list(&mut self) -> Result<Vec<CronJobMsg>> {
+        match self.request(Body::CronList).await? {
+            Body::CronListResult(v) => Ok(v),
+            Body::Error(e)          => bail!("cron_list: {}", e.message),
+            other                   => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// Delete a scheduled task (Cron job).
+    pub async fn cron_remove(&mut self, name: &str) -> Result<()> {
+        match self.request(Body::CronRemove { name: name.into() }).await? {
+            Body::CronRemove { .. } => Ok(()),
+            Body::Error(e)          => bail!("cron_remove: {}", e.message),
+            other                   => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// Trigger a scheduled task immediately.
+    pub async fn cron_trigger(&mut self, name: &str) -> Result<()> {
+        match self.request(Body::CronTrigger { name: name.into() }).await? {
+            Body::CronTrigger { .. } => Ok(()),
+            Body::Error(e)           => bail!("cron_trigger: {}", e.message),
+            other                    => bail!("unexpected: {:?}", other.msg_type()),
         }
     }
 

@@ -53,6 +53,12 @@ pub struct CoreState {
     // ── v2.1 ──────────────────────────────────────────────────────────────────
     /// Layer-7 HTTP Ingress router.
     pub ingress_router: Arc<veloce_net::IngressRouter>,
+
+    // ── v3.1 ──────────────────────────────────────────────────────────────────
+    /// Horizontal Process Autoscaler (HPA) engine.
+    pub autoscale: Arc<crate::autoscale::AutoscaleEngine>,
+    /// CronJob task scheduler.
+    pub cron: Arc<crate::cron::CronScheduler>,
 }
 
 impl CoreState {
@@ -118,6 +124,8 @@ impl CoreState {
         // a OnceLock-based approach: Reconciler takes Arc<CoreState> in its
         // `run` call, not at construction.
         let reconciler = Arc::new(crate::reconciler::Reconciler::new_detached());
+        let autoscale  = crate::autoscale::AutoscaleEngine::new();
+        let cron       = crate::cron::CronScheduler::new();
 
         Ok(Self {
             registry,
@@ -132,6 +140,8 @@ impl CoreState {
             volume_registry,
             secrets_vault,
             reconciler,
+            autoscale,
+            cron,
         })
     }
 
@@ -142,6 +152,8 @@ impl CoreState {
     pub fn ingress_router(&self)      -> &Arc<veloce_net::IngressRouter> { &self.ingress_router }
     pub fn volume_registry(&self)     -> &Arc<VolumeRegistry>         { &self.volume_registry }
     pub fn secrets_vault(&self)       -> &Arc<SecretsVault>           { &self.secrets_vault }
+    pub fn autoscale(&self)           -> &Arc<crate::autoscale::AutoscaleEngine> { &self.autoscale }
+    pub fn cron(&self)                -> &Arc<crate::cron::CronScheduler> { &self.cron }
     pub fn reconciler(&self)          -> &Arc<Reconciler>             { &self.reconciler }
     /// The current session's PSK bytes.  Clients must send these verbatim.
     pub fn psk(&self) -> &[u8; 32] { &self.psk }

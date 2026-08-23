@@ -177,6 +177,26 @@ pub enum MessageType {
     /// Core → Client: ingress rule list response.
     NetIngressList       = 0xE4,
 
+    // ── Autoscaling & Cron (v3.1) ─────────────────────────────
+    /// Client → Core: attach or update an HPA autoscaling policy on a service.
+    AutoscaleSet         = 0xF0,
+    /// Client → Core: get HPA status and metrics for a service.
+    AutoscaleGet         = 0xF1,
+    /// Core → Client: HPA status and metrics response.
+    AutoscaleInfo        = 0xF2,
+    /// Client → Core: remove an HPA policy from a service.
+    AutoscaleRemove      = 0xF3,
+    /// Client → Core: create or update a scheduled Cron job.
+    CronCreate           = 0xF4,
+    /// Client → Core: list scheduled Cron jobs.
+    CronList             = 0xF5,
+    /// Core → Client: Cron job list response.
+    CronListResult       = 0xF6,
+    /// Client → Core: delete a scheduled Cron job.
+    CronRemove           = 0xF7,
+    /// Client → Core: trigger a Cron job immediately.
+    CronTrigger          = 0xF8,
+
     // ── Error ─────────────────────────────────────────────────
     Error           = 0xFF,
 }
@@ -224,6 +244,11 @@ impl TryFrom<u8> for MessageType {
             0xE0 => NetAddIngress,        0xE1 => NetIngressAdded,
             0xE2 => NetRemoveIngress,     0xE3 => NetListIngresses,
             0xE4 => NetIngressList,
+            0xF0 => AutoscaleSet,         0xF1 => AutoscaleGet,
+            0xF2 => AutoscaleInfo,        0xF3 => AutoscaleRemove,
+            0xF4 => CronCreate,           0xF5 => CronList,
+            0xF6 => CronListResult,       0xF7 => CronRemove,
+            0xF8 => CronTrigger,
             0xFF => Error,
             other => return Err(other),
         })
@@ -402,6 +427,17 @@ pub enum Body {
     NetRemoveIngress { host: String },
     NetListIngresses,
     NetIngressList(Vec<IngressRule>),
+
+    // ── Autoscaling & Cron (v3.1) ─────────────────────────────
+    AutoscaleSet(AutoscalePolicyMsg),
+    AutoscaleGet { service: String },
+    AutoscaleInfo(Option<AutoscaleInfoMsg>),
+    AutoscaleRemove { service: String },
+    CronCreate(CronJobMsg),
+    CronList,
+    CronListResult(Vec<CronJobMsg>),
+    CronRemove { name: String },
+    CronTrigger { name: String },
 }
 
 impl Body {
@@ -485,6 +521,16 @@ impl Body {
             NetRemoveIngress{..}       => MessageType::NetRemoveIngress,
             NetListIngresses           => MessageType::NetListIngresses,
             NetIngressList(_)          => MessageType::NetIngressList,
+            // Autoscaling & Cron (v3.1)
+            AutoscaleSet(_)            => MessageType::AutoscaleSet,
+            AutoscaleGet{..}           => MessageType::AutoscaleGet,
+            AutoscaleInfo(_)           => MessageType::AutoscaleInfo,
+            AutoscaleRemove{..}        => MessageType::AutoscaleRemove,
+            CronCreate(_)              => MessageType::CronCreate,
+            CronList                   => MessageType::CronList,
+            CronListResult(_)          => MessageType::CronListResult,
+            CronRemove{..}             => MessageType::CronRemove,
+            CronTrigger{..}            => MessageType::CronTrigger,
         }
     }
 }
@@ -1081,6 +1127,45 @@ pub struct IngressRule {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetAddIngressMsg {
     pub rule: IngressRule,
+}
+
+// ── AUTOSCALING & CRON (v3.1) ────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AutoscalePolicyMsg {
+    pub service_name: String,
+    pub min_replicas: u32,
+    pub max_replicas: u32,
+    pub target_cpu_percent: Option<u32>,
+    pub target_memory_mb: Option<u64>,
+    pub scale_up_cooldown_secs: u32,
+    pub scale_down_cooldown_secs: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AutoscaleInfoMsg {
+    pub service_name: String,
+    pub min_replicas: u32,
+    pub max_replicas: u32,
+    pub target_cpu_percent: Option<u32>,
+    pub target_memory_mb: Option<u64>,
+    pub current_replicas: u32,
+    pub current_cpu_percent: f32,
+    pub current_memory_mb: u64,
+    pub last_scale_time_secs: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CronJobMsg {
+    pub name: String,
+    pub schedule: String,
+    pub executable: String,
+    pub args: Vec<String>,
+    pub concurrency_policy: String, // "Allow", "Forbid", "Replace"
+    pub enabled: bool,
+    pub last_run_timestamp_secs: Option<u64>,
+    pub last_run_status: Option<String>, // "Success", "Failed", "Running"
+    pub next_run_timestamp_secs: Option<u64>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

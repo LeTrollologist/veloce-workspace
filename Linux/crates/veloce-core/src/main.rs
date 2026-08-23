@@ -10,6 +10,8 @@ Run modes:
   [no args / service call]   → service dispatch table (SCM launch) / systemd launch
 */
 
+mod autoscale;
+mod cron;
 mod registry;
 mod job;
 mod ipc_server;

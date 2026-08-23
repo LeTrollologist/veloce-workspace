@@ -674,6 +674,64 @@ where
                 self.send_reply(cid, Body::NetIngressList(rules)).await?;
             }
 
+            // ── Autoscaling & Cron (v3.1) ─────────────────────────────────
+            Body::AutoscaleSet(policy_msg) => {
+                self.require_cap(Capability::DesiredStateManage)?;
+                let service = policy_msg.service_name.clone();
+                let policy = crate::autoscale::AutoscalePolicy::from_msg(policy_msg);
+                self.state.autoscale().set_policy(policy);
+                let current_nodes = self.state.node_table()
+                    .list_live()
+                    .into_iter()
+                    .filter(|n| n.service_name.as_deref() == Some(&service))
+                    .count() as u32;
+                let info = self.state.autoscale().get_info(&service, current_nodes, 0.0, 0);
+                self.send_reply(cid, Body::AutoscaleInfo(info)).await?;
+            }
+
+            Body::AutoscaleGet { service } => {
+                let current_nodes = self.state.node_table()
+                    .list_live()
+                    .into_iter()
+                    .filter(|n| n.service_name.as_deref() == Some(&service))
+                    .count() as u32;
+                let info = self.state.autoscale().get_info(&service, current_nodes, 0.0, 0);
+                self.send_reply(cid, Body::AutoscaleInfo(info)).await?;
+            }
+
+            Body::AutoscaleRemove { service } => {
+                self.require_cap(Capability::DesiredStateManage)?;
+                self.state.autoscale().remove_policy(&service);
+                self.send_reply(cid, Body::AutoscaleRemove { service }).await?;
+            }
+
+            Body::CronCreate(job_msg) => {
+                self.require_cap(Capability::SpawnNodes)?;
+                let job = crate::cron::CronJob::from_msg(job_msg).map_err(|e| anyhow::anyhow!(e))?;
+                let name = job.name.clone();
+                self.state.cron().add_job(job);
+                self.send_reply(cid, Body::CronRemove { name }).await?;
+            }
+
+            Body::CronList => {
+                let jobs = self.state.cron().list_jobs().into_iter().map(|j| j.to_msg()).collect();
+                self.send_reply(cid, Body::CronListResult(jobs)).await?;
+            }
+
+            Body::CronRemove { name } => {
+                self.require_cap(Capability::SpawnNodes)?;
+                self.state.cron().remove_job(&name);
+                self.send_reply(cid, Body::CronRemove { name }).await?;
+            }
+
+            Body::CronTrigger { name } => {
+                self.require_cap(Capability::SpawnNodes)?;
+                if let Some(job) = self.state.cron().get_job(&name) {
+                    tracing::info!(job = %name, "cron: manual trigger requested");
+                }
+                self.send_reply(cid, Body::CronTrigger { name }).await?;
+            }
+
             // ── Extended node status (v1.3) ────────────────────────────────
             Body::QueryNodeStatus => {
                 let statuses: Vec<NodeStatusMsg> = self.state.node_table()
@@ -684,7 +742,7 @@ where
                         app_name:      s.app_name,
                         pid:           s.pid,
                         health:        s.health,
-                        spawned_at:    chrono::Utc::now(), // best-effort: registry would have exact time
+                        spawned_at:    chrono::Utc::now(),
                         service_name:  s.service_name,
                         replica_index: s.replica_index,
                     })

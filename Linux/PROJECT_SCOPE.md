@@ -391,7 +391,13 @@ This phase dedicated three sequential releases to security, correctness, and sta
 - [x] Distributed replica assignment — `assign_replicas()` deterministically allocates service instances across active cluster nodes
 - [x] Heartbeat term validation enforcing monotonicity across cluster peers
 
+**v3.1 — Autoscaling & Scheduled Tasks** ✅
+- [x] `veloce-core/src/autoscale.rs` — Horizontal Process Autoscaler (HPA) evaluating CPU% and Memory MB with cooldown hysteresis
+- [x] `veloce-core/src/cron.rs` — CronJob scheduler supporting cron expressions (`*/5 * * * *`), `@every <duration>`, and concurrency policies (`Allow`, `Forbid`, `Replace`)
+- [x] `veloce-run autoscale` and `veloce-run cron` CLI subcommands & Compose `autoscaling` / `cron` blocks
+
 **Future Roadmap** 📋
-- **v2.2 — Autoscaling & Scheduling**: Horizontal Process Autoscaler (HPA), CronJobs, and DaemonSet-equivalent scheduling
-- **v2.3 — Veloce Hub Package Manager**: Signed `.vpack` bundles with Helm-style parameter templating and lifecycle hooks
+- **v3.2 — TLS Termination & Ingress HTTPS**: Automatic self-signed CA generation and custom TLS cert support for `.vln` domains
+- **v3.3 — Prometheus Observability & Web Portal**: `/metrics` endpoint on VeloceCore and browser-accessible web UI
+- **v3.4 — Veloce Hub Package Manager**: Signed `.vpack` bundles with Helm-style parameter templating and lifecycle hooks
 - **Standalone Distribution**: Portable self-contained binaries (`.exe` / `.tar.gz`) with manual and offline release artifacts, bypassing third-party cloud billing dependencies.
