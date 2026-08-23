@@ -13,8 +13,12 @@ tracing     = { workspace = true }
 parking_lot = { workspace = true }
 uuid        = { workspace = true }
 chrono      = { workspace = true }
-thiserror   = { workspace = true }
-veloce-ipc  = { path = "../veloce-ipc" }
+thiserror        = { workspace = true }
+veloce-ipc       = { path = "../veloce-ipc" }
+tokio-rustls     = { workspace = true }
+rustls-pki-types = { workspace = true }
+rcgen            = { workspace = true }
+rustls-pemfile   = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true }

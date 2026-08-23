@@ -196,6 +196,15 @@ enum IngressAction {
         /// Strip prefix before forwarding to backend
         #[arg(long)]
         strip_prefix: bool,
+        /// Enable TLS termination on HTTPS port 8443
+        #[arg(long)]
+        tls: bool,
+        /// Path to custom TLS certificate in PEM format
+        #[arg(long, value_name = "CERT_FILE")]
+        cert: Option<PathBuf>,
+        /// Path to custom TLS private key in PEM format
+        #[arg(long, value_name = "KEY_FILE")]
+        key: Option<PathBuf>,
     },
     /// Remove an HTTP ingress route by hostname
     Rm {
@@ -1006,7 +1015,21 @@ async fn run_spawn(
 async fn run_ingress(action: IngressAction) -> Result<()> {
     let mut client = connect_client("veloce-run-ingress", vec![Capability::NetRegister]).await?;
     match action {
-        IngressAction::Add { host, path, target_port, strip_prefix } => {
+        IngressAction::Add { host, path, target_port, strip_prefix, tls, cert, key } => {
+            let (cert_pem, key_pem) = match (cert, key) {
+                (Some(c), Some(k)) => {
+                    let c_str = std::fs::read_to_string(&c).with_context(|| format!("read cert file {:?}", c))?;
+                    let k_str = std::fs::read_to_string(&k).with_context(|| format!("read key file {:?}", k))?;
+                    (Some(c_str), Some(k_str))
+                }
+                (Some(_), None) | (None, Some(_)) => {
+                    anyhow::bail!("both --cert and --key must be specified together");
+                }
+                (None, None) => (None, None),
+            };
+
+            let is_tls = tls || cert_pem.is_some();
+
             let rule = veloce_ipc::message::IngressRule {
                 host: host.clone(),
                 paths: vec![veloce_ipc::message::IngressPathRule {
@@ -1015,9 +1038,14 @@ async fn run_ingress(action: IngressAction) -> Result<()> {
                     strip_prefix,
                 }],
                 default_port: Some(target_port),
+                tls_enabled: is_tls,
+                tls_cert_pem: cert_pem,
+                tls_key_pem: key_pem,
             };
             let confirmed = client.ingress_add(rule).await?;
-            println!("✓ ingress route added: http://{confirmed}{path} → 127.0.0.1:{target_port}");
+            let proto = if is_tls { "https" } else { "http" };
+            let port = if is_tls { 8443 } else { 8080 };
+            println!("✓ ingress route added: {proto}://{confirmed}:{port}{path} → 127.0.0.1:{target_port}");
         }
         IngressAction::Rm { host } => {
             client.ingress_remove(&host).await?;
@@ -1028,11 +1056,12 @@ async fn run_ingress(action: IngressAction) -> Result<()> {
             if rules.is_empty() {
                 println!("No active ingress routes. Use `veloce-run ingress add` to create one.");
             } else {
-                println!("{:<25} {:<15} {:<12} {}", "HOST", "PATH PREFIX", "TARGET PORT", "STRIP PREFIX");
-                println!("{}", "─".repeat(65));
+                println!("{:<25} {:<15} {:<12} {:<8} {}", "HOST", "PATH PREFIX", "TARGET PORT", "TLS", "STRIP PREFIX");
+                println!("{}", "─".repeat(75));
                 for r in rules {
+                    let tls_str = if r.tls_enabled { "yes" } else { "no" };
                     for p in r.paths {
-                        println!("{:<25} {:<15} {:<12} {}", r.host, p.path_prefix, p.target_port, p.strip_prefix);
+                        println!("{:<25} {:<15} {:<12} {:<8} {}", r.host, p.path_prefix, p.target_port, tls_str, p.strip_prefix);
                     }
                 }
             }

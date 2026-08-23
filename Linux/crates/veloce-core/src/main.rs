@@ -171,12 +171,13 @@ pub async fn run_core() -> anyhow::Result<()> {
     // Wire the reconciler to CoreState (breaks the construction-time circular ref).
     state.reconciler().wire_state(state.clone());
 
-    // 2. Start VeloceNet (DNS + routing + Ingress)
+    // 2. Start VeloceNet (DNS + routing + Ingress HTTP/HTTPS)
     let net_state = state.clone();
     tokio::spawn(async move {
-        if let Err(e) = veloce_net::start_with_ingress(
+        if let Err(e) = veloce_net::start_with_ingress_and_tls(
             net_state.net_registry().clone(),
             net_state.ingress_router().clone(),
+            net_state.tls_manager().clone(),
         ).await {
             tracing::error!("VeloceNet error: {e}");
         }

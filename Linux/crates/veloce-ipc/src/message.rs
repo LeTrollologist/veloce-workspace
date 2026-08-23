@@ -1122,6 +1122,12 @@ pub struct IngressRule {
     pub host: String,
     pub paths: Vec<IngressPathRule>,
     pub default_port: Option<u16>,
+    #[serde(default)]
+    pub tls_enabled: bool,
+    #[serde(default)]
+    pub tls_cert_pem: Option<String>,
+    #[serde(default)]
+    pub tls_key_pem: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

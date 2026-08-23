@@ -6,6 +6,8 @@ members = [
     "crates/veloce-net",
     "crates/veloce-mesh",
     "crates/veloce-sdk",
+    "apps/dashboard/src-tauri",
+    "apps/installer/src-tauri",
     "apps/veloce-run",
     "apps/veloce-launcher",
     "apps/veloce-shell",
@@ -46,10 +48,16 @@ chrono      = { version = "0.4", features = ["serde"] }
 memmap2     = "0.9"
 parking_lot = "0.12"
 
-# Windows-specific (kept for version pinning; only used by Windows cfg-gated code)
+# TLS & Certificates (v3.2)
+tokio-rustls     = { version = "0.26", default-features = false, features = ["ring", "logging", "tls12"] }
+rustls-pki-types = "1"
+rcgen            = { version = "0.13", default-features = false, features = ["ring", "pem"] }
+rustls-pemfile   = "2"
+
+# Windows-specific (declared here for version pinning; crates opt-in via their own Cargo.toml)
 winreg           = "0.52"
-windows-service  = "0.6"
-windows          = { version = "0.54", features = [
+windows-service = "0.6"
+windows         = { version = "0.54", features = [
     "Win32_Foundation",
     "Win32_Security",
     "Win32_Security_Authorization",
@@ -66,7 +74,7 @@ windows          = { version = "0.54", features = [
     "Win32_NetworkManagement_Ndis",
 ] }
 
-# Linux-specific (only used by Linux cfg-gated code)
+# Linux / Unix-specific (version-pinned here; crates opt-in via [target.'cfg(unix)'.dependencies])
 nix              = { version = "0.29", features = ["socket", "process", "signal", "user"] }
 libc             = "0.2"
 sd-notify        = "0.4"
@@ -74,10 +82,12 @@ chacha20poly1305 = "0.10"
 
 [profile.release]
 opt-level     = 3
-lto           = "thin"
-codegen-units = 4
+lto           = "thin"   # "fat" LTO OOMs on low-RAM machines; thin is still fast
+codegen-units = 4        # parallelise codegen to reduce peak memory
 strip         = true
 
+# Use this profile for a fully-optimised production build on a beefy machine:
+# cargo build --profile release-fat
 [profile.release-fat]
 inherits      = "release"
 lto           = true

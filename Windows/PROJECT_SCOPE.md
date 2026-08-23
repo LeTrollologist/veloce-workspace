@@ -396,8 +396,12 @@ This phase dedicated three sequential releases to security, correctness, and sta
 - [x] `veloce-core/src/cron.rs` — CronJob scheduler supporting cron expressions (`*/5 * * * *`), `@every <duration>`, and concurrency policies (`Allow`, `Forbid`, `Replace`)
 - [x] `veloce-run autoscale` and `veloce-run cron` CLI subcommands & Compose `autoscaling` / `cron` blocks
 
+**v3.2 — TLS Termination & Ingress HTTPS** ✅
+- [x] `veloce-net/src/tls.rs` — Ephemeral self-signed CA & certificate generation with SANs for `*.vln`, custom PEM cert/key loading, and dynamic SNI resolution
+- [x] `veloce-net/src/ingress.rs` — Ingress HTTPS reverse proxy listening on `:8443` with TLS termination and bidirectional streaming
+- [x] `veloce-run ingress add --tls [--cert <path>] [--key <path>]` CLI support and `ingress.tls` Compose schema
+
 **Future Roadmap** 📋
-- **v3.2 — TLS Termination & Ingress HTTPS**: Automatic self-signed CA generation and custom TLS cert support for `.vln` domains
 - **v3.3 — Prometheus Observability & Web Portal**: `/metrics` endpoint on VeloceCore and browser-accessible web UI
 - **v3.4 — Veloce Hub Package Manager**: Signed `.vpack` bundles with Helm-style parameter templating and lifecycle hooks
 - **Standalone Distribution**: Portable self-contained binaries (`.exe` / `.tar.gz`) with manual and offline release artifacts, bypassing third-party cloud billing dependencies.

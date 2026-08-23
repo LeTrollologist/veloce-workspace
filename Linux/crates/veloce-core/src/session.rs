@@ -655,16 +655,22 @@ where
                 self.send_reply(cid, Body::DesiredStateApplied { name }).await?;
             }
 
-            // ── Ingress (v2.1) ─────────────────────────────────────────────
+            // ── Ingress (v2.1 / v3.2) ──────────────────────────────────────
             Body::NetAddIngress(NetAddIngressMsg { rule }) => {
                 self.require_cap(Capability::NetRegister)?;
                 let host = rule.host.clone();
+                if let (Some(cert_pem), Some(key_pem)) = (&rule.tls_cert_pem, &rule.tls_key_pem) {
+                    if let Err(e) = self.state.tls_manager().add_custom_cert(&host, cert_pem, key_pem) {
+                        tracing::warn!(host = %host, "tls: failed to register custom cert: {e}");
+                    }
+                }
                 self.state.ingress_router().add_rule(rule).await;
                 self.send_reply(cid, Body::NetIngressAdded { host }).await?;
             }
 
             Body::NetRemoveIngress { host } => {
                 self.require_cap(Capability::NetRegister)?;
+                self.state.tls_manager().remove_custom_cert(&host);
                 self.state.ingress_router().remove_rule(&host).await;
                 self.send_reply(cid, Body::NetRemoveIngress { host }).await?;
             }

@@ -59,6 +59,10 @@ pub struct CoreState {
     pub autoscale: Arc<crate::autoscale::AutoscaleEngine>,
     /// CronJob task scheduler.
     pub cron: Arc<crate::cron::CronScheduler>,
+
+    // ── v3.2 ──────────────────────────────────────────────────────────────────
+    /// Ingress TLS engine with dynamic SNI and self-signed CA for *.vln.
+    pub tls_manager: Arc<veloce_net::TlsManager>,
 }
 
 impl CoreState {
@@ -126,6 +130,7 @@ impl CoreState {
         let reconciler = Arc::new(crate::reconciler::Reconciler::new_detached());
         let autoscale  = crate::autoscale::AutoscaleEngine::new();
         let cron       = crate::cron::CronScheduler::new();
+        let tls_manager = Arc::new(veloce_net::TlsManager::new_self_signed()?);
 
         Ok(Self {
             registry,
@@ -142,6 +147,7 @@ impl CoreState {
             reconciler,
             autoscale,
             cron,
+            tls_manager,
         })
     }
 
@@ -154,6 +160,7 @@ impl CoreState {
     pub fn secrets_vault(&self)       -> &Arc<SecretsVault>           { &self.secrets_vault }
     pub fn autoscale(&self)           -> &Arc<crate::autoscale::AutoscaleEngine> { &self.autoscale }
     pub fn cron(&self)                -> &Arc<crate::cron::CronScheduler> { &self.cron }
+    pub fn tls_manager(&self)         -> &Arc<veloce_net::TlsManager> { &self.tls_manager }
     pub fn reconciler(&self)          -> &Arc<Reconciler>             { &self.reconciler }
     /// The current session's PSK bytes.  Clients must send these verbatim.
     pub fn psk(&self) -> &[u8; 32] { &self.psk }

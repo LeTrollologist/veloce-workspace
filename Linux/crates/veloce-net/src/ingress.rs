@@ -108,6 +108,128 @@ pub async fn serve(router: Arc<IngressRouter>, bind_addr: &str, port: u16) -> Re
     }
 }
 
+/// Run the Ingress HTTPS reverse proxy listener on `{bind_addr}:{port}` with TLS termination.
+pub async fn serve_tls(
+    router: Arc<IngressRouter>,
+    bind_addr: &str,
+    port: u16,
+    tls_manager: Arc<crate::tls::TlsManager>,
+) -> Result<()> {
+    let listener = TcpListener::bind(format!("{bind_addr}:{port}"))
+        .await
+        .with_context(|| format!("bind Ingress HTTPS proxy to {bind_addr}:{port}"))?;
+
+    tracing::info!("VeloceNet Ingress HTTPS proxy listening on {bind_addr}:{port} with TLS termination");
+
+    let acceptor = tls_manager.acceptor();
+
+    loop {
+        let (client_stream, client_addr) = match listener.accept().await {
+            Ok(pair) => pair,
+            Err(e) => {
+                tracing::warn!("Ingress HTTPS accept error: {e}");
+                continue;
+            }
+        };
+
+        let router = Arc::clone(&router);
+        let acceptor = Arc::clone(&acceptor);
+
+        tokio::spawn(async move {
+            let tls_stream = match acceptor.accept(client_stream).await {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::debug!("Ingress TLS handshake ({client_addr}) error: {e}");
+                    return;
+                }
+            };
+
+            if let Err(e) = handle_ingress_tls_client(tls_stream, router).await {
+                tracing::debug!("Ingress TLS client ({client_addr}) error: {e}");
+            }
+        });
+    }
+}
+
+async fn handle_ingress_tls_client(
+    mut client: tokio_rustls::server::TlsStream<TcpStream>,
+    router: Arc<IngressRouter>,
+) -> Result<()> {
+    let mut buf = [0u8; 4096];
+    let n = client.read(&mut buf).await.context("read initial request")?;
+    if n == 0 {
+        return Ok(());
+    }
+
+    let raw_req = String::from_utf8_lossy(&buf[..n]);
+    let mut lines = raw_req.lines();
+
+    let request_line = match lines.next() {
+        Some(l) => l,
+        None => return Ok(()),
+    };
+
+    let mut parts = request_line.split_whitespace();
+    let method = parts.next().unwrap_or("GET");
+    let path = parts.next().unwrap_or("/");
+    let http_ver = parts.next().unwrap_or("HTTP/1.1");
+
+    let mut host = String::new();
+    for line in lines {
+        if line.is_empty() {
+            break;
+        }
+        if let Some(h) = line.strip_prefix("Host:").or_else(|| line.strip_prefix("host:")) {
+            let h = h.trim();
+            host = h.split(':').next().unwrap_or(h).to_string();
+            break;
+        }
+    }
+
+    let route = router.match_route(&host, path).await;
+    match route {
+        Some((target_port, rewritten_path)) => {
+            let mut backend = match TcpStream::connect(format!("127.0.0.1:{target_port}")).await {
+                Ok(b) => b,
+                Err(e) => {
+                    let err_body = format!("{{\"error\":\"upstream backend port {target_port} unreachable: {e}\"}}");
+                    let resp = format!(
+                        "HTTP/1.1 502 Bad Gateway\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        err_body.len(), err_body
+                    );
+                    let _ = client.write_all(resp.as_bytes()).await;
+                    return Ok(());
+                }
+            };
+
+            // If path was rewritten, reconstruct the first line
+            if let Some(new_path) = rewritten_path {
+                let new_first_line = format!("{method} {new_path} {http_ver}\r\n");
+                let rest_of_buf = match raw_req.find("\r\n") {
+                    Some(idx) => &buf[idx + 2..n],
+                    None => &buf[..0],
+                };
+                backend.write_all(new_first_line.as_bytes()).await?;
+                backend.write_all(rest_of_buf).await?;
+            } else {
+                backend.write_all(&buf[..n]).await?;
+            }
+
+            let _ = tokio::io::copy_bidirectional(&mut client, &mut backend).await;
+        }
+        None => {
+            let not_found_body = format!("{{\"error\":\"no ingress route configured for host '{host}'\"}}");
+            let resp = format!(
+                "HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                not_found_body.len(), not_found_body
+            );
+            client.write_all(resp.as_bytes()).await?;
+        }
+    }
+
+    Ok(())
+}
+
 async fn handle_ingress_client(
     mut client: TcpStream,
     router: Arc<IngressRouter>,
@@ -210,6 +332,9 @@ mod tests {
                 },
             ],
             default_port: Some(8000),
+            tls_enabled: false,
+            tls_cert_pem: None,
+            tls_key_pem: None,
         };
         router.add_rule(rule).await;
 
@@ -243,6 +368,9 @@ mod tests {
             host: "web.vln".into(),
             paths: vec![],
             default_port: Some(3000),
+            tls_enabled: true,
+            tls_cert_pem: None,
+            tls_key_pem: None,
         };
         router.add_rule(rule).await;
         assert!(router.match_route("web.vln", "/").await.is_some());

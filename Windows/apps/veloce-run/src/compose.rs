@@ -57,7 +57,24 @@ pub struct ComposeService {
     pub autoscaling: Option<ComposeAutoscaling>,
     #[serde(default)]
     pub cron: Option<ComposeCron>,
+    #[serde(default)]
+    pub ingress: Option<ComposeIngress>,
 }
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ComposeIngress {
+    pub host: String,
+    #[serde(default = "default_ingress_path")]
+    pub path: String,
+    #[serde(default)]
+    pub strip_prefix: bool,
+    #[serde(default)]
+    pub tls: bool,
+    pub cert: Option<String>,
+    pub key: Option<String>,
+}
+
+fn default_ingress_path() -> String { "/".into() }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ComposeAutoscaling {
