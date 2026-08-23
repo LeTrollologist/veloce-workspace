@@ -12,6 +12,8 @@ Run modes:
 
 mod autoscale;
 mod cron;
+mod metrics;
+mod portal;
 mod registry;
 mod job;
 mod ipc_server;
@@ -218,6 +220,20 @@ pub async fn run_core() -> anyhow::Result<()> {
     let rec = state.reconciler().clone();
     tokio::spawn(async move {
         rec.run().await;
+    });
+
+    // 6. Web Status Portal & Prometheus Metrics server (:9090) (v3.3)
+    let portal_state = state.clone();
+    let portal_port = std::env::var("VLN_PORTAL_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(portal::DEFAULT_PORTAL_PORT);
+    let portal_bind = std::env::var("VLN_PORTAL_BIND")
+        .unwrap_or_else(|_| "127.0.0.1".to_string());
+    tokio::spawn(async move {
+        if let Err(e) = portal::serve_portal(portal_state, &portal_bind, portal_port).await {
+            tracing::error!("VeloceNet Web Portal error: {e}");
+        }
     });
 
     tracing::info!("VeloceCore online — pipe: {}", veloce_ipc::PIPE_NAME);

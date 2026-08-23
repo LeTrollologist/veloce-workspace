@@ -322,6 +322,9 @@ pub struct NodeSummary {
 }
 
 fn data_dir() -> PathBuf {
+    if let Ok(custom) = std::env::var("VELOCE_DATA_DIR") {
+        return PathBuf::from(custom);
+    }
     // %PROGRAMDATA%\VeloceSolutions\VeloceCore   (Windows)
     // /var/lib/veloce-core                        (Linux fallback)
     #[cfg(windows)]

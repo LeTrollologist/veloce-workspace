@@ -176,6 +176,18 @@ enum Commands {
         #[command(subcommand)]
         action: CronAction,
     },
+    /// Open the embedded Web Status Portal in the default web browser (v3.3)
+    Portal {
+        /// Port the portal is listening on [default: 9090]
+        #[arg(short, long, default_value = "9090")]
+        port: u16,
+    },
+    /// Fetch and display Prometheus metrics from VeloceCore (v3.3)
+    Metrics {
+        /// Port the metrics endpoint is listening on [default: 9090]
+        #[arg(short, long, default_value = "9090")]
+        port: u16,
+    },
     /// Print version information
     Version,
 }
@@ -401,6 +413,8 @@ async fn main() -> Result<()> {
         Some(Commands::Ingress { action })    => run_ingress(action).await,
         Some(Commands::Autoscale { action })  => run_autoscale(action).await,
         Some(Commands::Cron { action })       => run_cron(action).await,
+        Some(Commands::Portal { port })       => run_portal(port).await,
+        Some(Commands::Metrics { port })      => run_metrics(port).await,
         Some(Commands::Version)               => { run_version(); Ok(()) }
         None => {
             let executable = cli.executable.expect("clap ensures executable is set when no subcommand");
@@ -1151,6 +1165,45 @@ async fn run_cron(action: CronAction) -> Result<()> {
             client.cron_remove(&name).await?;
             println!("✓ Scheduled task '{name}' removed");
         }
+    }
+    Ok(())
+}
+
+async fn run_portal(port: u16) -> Result<()> {
+    let url = format!("http://127.0.0.1:{port}");
+    println!("Opening VeloceNetwork Web Status Portal at {url} …");
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("cmd").args(["/C", "start", &url]).spawn();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("open").arg(&url).spawn();
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+    }
+    Ok(())
+}
+
+async fn run_metrics(port: u16) -> Result<()> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
+        .await
+        .with_context(|| format!("connect to metrics endpoint on 127.0.0.1:{port} — is VeloceCore running?"))?;
+
+    let req = format!("GET /metrics HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
+    stream.write_all(req.as_bytes()).await?;
+
+    let mut buf = Vec::new();
+    stream.read_to_end(&mut buf).await?;
+    let resp = String::from_utf8_lossy(&buf);
+
+    if let Some(idx) = resp.find("\r\n\r\n") {
+        print!("{}", &resp[idx + 4..]);
+    } else {
+        print!("{}", resp);
     }
     Ok(())
 }

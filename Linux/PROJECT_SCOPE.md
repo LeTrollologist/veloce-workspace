@@ -401,7 +401,11 @@ This phase dedicated three sequential releases to security, correctness, and sta
 - [x] `veloce-net/src/ingress.rs` — Ingress HTTPS reverse proxy listening on `:8443` with TLS termination and bidirectional streaming
 - [x] `veloce-run ingress add --tls [--cert <path>] [--key <path>]` CLI support and `ingress.tls` Compose schema
 
+**v3.3 — Prometheus Observability & Web Status Portal** ✅
+- [x] `veloce-core/src/metrics.rs` — Prometheus metrics exposition engine (`/metrics` on `:9090`) exporting node resource metrics, mesh peer latencies/traffic, ingress routes, and autoscaler status
+- [x] `veloce-core/src/portal.rs` — Embedded zero-dependency responsive dark-mode web dashboard (`/` on `:9090`) and live JSON API (`/api/status`)
+- [x] `veloce-run portal` and `veloce-run metrics` CLI subcommands
+
 **Future Roadmap** 📋
-- **v3.3 — Prometheus Observability & Web Portal**: `/metrics` endpoint on VeloceCore and browser-accessible web UI
 - **v3.4 — Veloce Hub Package Manager**: Signed `.vpack` bundles with Helm-style parameter templating and lifecycle hooks
 - **Standalone Distribution**: Portable self-contained binaries (`.exe` / `.tar.gz`) with manual and offline release artifacts, bypassing third-party cloud billing dependencies.

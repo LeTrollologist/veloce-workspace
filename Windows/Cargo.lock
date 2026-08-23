@@ -4591,7 +4591,7 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
 name = "veloce-core"
-version = "3.2.0"
+version = "3.3.0"
 dependencies = [
  "anyhow",
  "bincode",
@@ -4652,7 +4652,7 @@ dependencies = [
 
 [[package]]
 name = "veloce-ipc"
-version = "3.2.0"
+version = "3.3.0"
 dependencies = [
  "bincode",
  "bitflags 2.13.1",
@@ -4666,7 +4666,7 @@ dependencies = [
 
 [[package]]
 name = "veloce-launcher"
-version = "3.2.0"
+version = "3.3.0"
 dependencies = [
  "anyhow",
  "winreg 0.52.0",
@@ -4674,7 +4674,7 @@ dependencies = [
 
 [[package]]
 name = "veloce-mesh"
-version = "3.2.0"
+version = "3.3.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -4697,7 +4697,7 @@ dependencies = [
 
 [[package]]
 name = "veloce-net"
-version = "3.2.0"
+version = "3.3.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -4716,7 +4716,7 @@ dependencies = [
 
 [[package]]
 name = "veloce-run"
-version = "3.2.0"
+version = "3.3.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -4732,7 +4732,7 @@ dependencies = [
 
 [[package]]
 name = "veloce-sdk"
-version = "3.2.0"
+version = "3.3.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4748,7 +4748,7 @@ dependencies = [
 
 [[package]]
 name = "veloce-shell"
-version = "3.2.0"
+version = "3.3.0"
 dependencies = [
  "anyhow",
  "winreg 0.52.0",
