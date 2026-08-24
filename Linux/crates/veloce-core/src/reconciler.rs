@@ -28,6 +28,7 @@ pub struct Reconciler {
 }
 
 impl Reconciler {
+    #[allow(dead_code)]
     pub fn new(state: Arc<CoreState>) -> Arc<Self> {
         let r = Arc::new(Self { state: OnceLock::new(), desired: RwLock::new(None) });
         let _ = r.state.set(state);
@@ -57,6 +58,7 @@ impl Reconciler {
     }
 
     /// Clear the desired state — the reconciler will stop managing nodes.
+    #[allow(dead_code)]
     pub fn clear(&self) {
         *self.desired.write() = None;
     }

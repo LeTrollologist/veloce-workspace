@@ -86,6 +86,7 @@ pub fn installed_addr() -> Option<String> {
 
 /// Restart the system DNS cache (resolved or dnsmasq).
 /// Called `restart_dnscache` for API compat with the Windows nrpt.rs.
+#[allow(dead_code)]
 pub fn restart_dnscache() {
     if systemd_resolved_active() {
         restart_resolved();

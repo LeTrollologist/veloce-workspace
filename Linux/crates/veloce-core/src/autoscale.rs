@@ -72,6 +72,7 @@ impl AutoscaleEngine {
         self.policies.write().insert(policy.service_name.clone(), policy);
     }
 
+    #[allow(dead_code)]
     pub fn get_policy(&self, service: &str) -> Option<AutoscalePolicy> {
         self.policies.read().get(service).cloned()
     }
@@ -90,6 +91,7 @@ impl AutoscaleEngine {
 
     /// Evaluates current metrics and computes whether replicas should scale.
     /// Returns `Some(target_replicas)` if scaling should occur, or `None` if no change / in cooldown.
+    #[allow(dead_code)]
     pub fn evaluate(
         &self,
         service: &str,

@@ -776,6 +776,7 @@ async fn run_policy(action: PolicyAction) -> Result<()> {
 
 // ── NRPT subcommand ───────────────────────────────────────────────────────────
 
+#[cfg(windows)]
 fn run_nrpt(action: NrptAction) -> anyhow::Result<()> {
     #[cfg(windows)]
     {

@@ -218,6 +218,7 @@ impl CronScheduler {
 
     /// Checks which enabled jobs are due for execution at `now_secs`.
     /// Updates their `next_run_timestamp_secs` and returns the due jobs.
+    #[allow(dead_code)]
     pub fn poll_due_jobs(&self, now_secs: u64) -> Vec<CronJob> {
         let mut due = Vec::new();
         let mut jobs = self.jobs.write();
@@ -247,12 +248,14 @@ impl CronScheduler {
         due
     }
 
+    #[allow(dead_code)]
     pub fn record_start(&self, name: &str, node_id: Uuid) {
         if let Some(job) = self.jobs.write().get_mut(name) {
             job.active_node_id = Some(node_id);
         }
     }
 
+    #[allow(dead_code)]
     pub fn record_completion(&self, name: &str, success: bool) {
         if let Some(job) = self.jobs.write().get_mut(name) {
             job.active_node_id = None;

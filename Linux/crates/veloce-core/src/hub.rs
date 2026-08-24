@@ -95,6 +95,7 @@ impl HubCatalogEngine {
     }
 
     /// Search catalog applications by name, description, or category keyword.
+    #[allow(dead_code)]
     pub fn search(&self, query: &str) -> Vec<HubAppMsg> {
         let q = query.to_lowercase();
         let map = self.apps.read();

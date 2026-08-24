@@ -205,6 +205,7 @@ impl Registry {
     }
 
     /// Free a node slot (mark as empty).
+    #[allow(dead_code)]
     pub fn free_node(&self, slot_idx: usize) -> Result<()> {
         let mut g = self.inner.lock();
         let offset = HEADER_SIZE + slot_idx * NODE_SLOT_SIZE;
@@ -426,6 +427,7 @@ fn kv_write(mmap: &mut MmapMut, key: &[u8], value: &[u8]) -> Result<()> {
 // ── TYPES ─────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct NodeEntry {
     pub slot_idx:   usize,
     pub node_id:    Uuid,

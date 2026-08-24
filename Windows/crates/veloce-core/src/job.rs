@@ -19,9 +19,10 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 use uuid::Uuid;
 
 use veloce_ipc::message::{
-    HealthProbe, HealthStatus, LogStream, NodeEvent, NodeLimits,
-    NodeLogChunkMsg, RestartPolicy, SpawnNodeMsg, VolumeMountSource,
+    HealthProbe, NodeEvent, NodeLogChunkMsg, RestartPolicy, SpawnNodeMsg, VolumeMountSource,
 };
+#[cfg(windows)]
+use veloce_ipc::message::{HealthStatus, LogStream, NodeLimits};
 
 use crate::state::CoreState;
 
@@ -73,6 +74,7 @@ use crate::spawner;
 // ── NODE HANDLE ───────────────────────────────────────────────────────────────
 
 /// A live node managed by VeloceCore.
+#[allow(dead_code)]
 pub struct NodeHandle {
     pub node_id:        Uuid,
     pub slot_idx:       usize,
@@ -107,6 +109,7 @@ impl NodeHandle {
         self.proc_handle.0 .0 as isize
     }
     #[cfg(not(windows))]
+    #[allow(dead_code)]
     pub fn proc_handle_raw(&self) -> isize { 0 }
 
     /// Returns `(cpu_ms, mem_bytes)` — cumulative CPU time and peak job memory.
@@ -549,6 +552,7 @@ pub async fn spawn_node_via_state(
 // ── HEALTH MONITOR ────────────────────────────────────────────────────────────
 
 /// Per-node health-probe tracking state.
+#[allow(dead_code)]
 struct NodeHealthState {
     next_check_at: std::time::Instant,
     consec_pass:   u32,
@@ -698,6 +702,7 @@ async fn check_nodes(state: &Arc<CoreState>, health_map: &mut HashMap<Uuid, Node
 }
 
 /// Run a single health-check probe.  Returns `true` if the probe passes.
+#[allow(dead_code)]
 async fn run_health_check(probe: &HealthProbe, timeout_secs: u64) -> bool {
     use tokio::time::timeout;
     let dur = std::time::Duration::from_secs(timeout_secs.max(1));
@@ -745,6 +750,7 @@ async fn run_health_check(probe: &HealthProbe, timeout_secs: u64) -> bool {
 }
 
 /// Exponential back-off: `min(base * 2^count, max_delay)`.
+#[allow(dead_code)]
 fn back_off_secs(policy: &RestartPolicy, count: u32) -> u64 {
     let delay = policy.base_delay_secs.saturating_mul(1u64 << count.min(10));
     delay.min(policy.max_delay_secs)

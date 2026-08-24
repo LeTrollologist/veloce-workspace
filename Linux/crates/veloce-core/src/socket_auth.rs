@@ -51,6 +51,7 @@ pub fn assert_client_is_owner(stream: &UnixStream) -> Result<(String, u32)> {
 // ── Low-level SO_PEERCRED ─────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
 pub struct PeerCred {
     pub pid: u32,
     pub uid: u32,

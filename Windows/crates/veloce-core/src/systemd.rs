@@ -18,6 +18,7 @@ const UNIT_PATH: &str  = "/etc/systemd/system/veloce-core.service";
 
 /// Send `READY=1` to systemd via the `NOTIFY_SOCKET` mechanism.
 /// No-op if not running under systemd (returns silently).
+#[allow(dead_code)]
 pub fn notify_ready() {
     let _ = sd_notify::notify(false, &[sd_notify::NotifyState::Ready]);
 }
@@ -84,6 +85,7 @@ pub fn stop() -> Result<()> {
 }
 
 /// Returns `true` if the VeloceCore service is currently active.
+#[allow(dead_code)]
 pub fn status() -> bool {
     Command::new("systemctl")
         .args(["is-active", "--quiet", UNIT_NAME])

@@ -8,7 +8,6 @@
 
 use anyhow::{Context, Result};
 use std::process::Stdio;
-use std::sync::Arc;
 use tokio::process::Command;
 use uuid::Uuid;
 
@@ -17,6 +16,7 @@ use veloce_ipc::message::SpawnNodeMsg;
 use crate::cgroup::{self, CgroupPath};
 
 /// All Linux-specific fields added to `NodeHandle`.
+#[allow(dead_code)]
 pub struct LinuxHandle {
     pub child:  tokio::process::Child,
     pub cgroup: Option<CgroupPath>,
@@ -38,7 +38,7 @@ pub async fn spawn_process(
 ) -> Result<(tokio::process::Child, Option<CgroupPath>, u32)> {
     let mut cmd = build_command(msg, node_id, env_extras)?;
 
-    let mut child = cmd.spawn().context("spawn child process")?;
+    let child = cmd.spawn().context("spawn child process")?;
     let pid = child.id().context("child has no PID")?;
 
     // ── cgroup assignment ─────────────────────────────────────────────────
@@ -113,6 +113,7 @@ pub fn terminate_process(
 }
 
 /// Non-blocking check whether the child is still alive.
+#[allow(dead_code)]
 pub fn is_alive(child: &mut tokio::process::Child) -> bool {
     matches!(child.try_wait(), Ok(None))
 }

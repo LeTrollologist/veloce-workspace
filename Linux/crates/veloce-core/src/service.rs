@@ -287,6 +287,7 @@ pub fn stop_service() -> anyhow::Result<()> {
 /// On Linux there is no SCM dispatch — systemd invokes the binary directly.
 /// Call `notify_ready()` and then run the core loop.
 #[cfg(unix)]
+#[allow(dead_code)]
 pub fn dispatch(run_fn: impl FnOnce() -> anyhow::Result<()>) -> anyhow::Result<()> {
     crate::systemd::notify_ready();
     run_fn()

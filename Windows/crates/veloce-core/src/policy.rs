@@ -197,6 +197,7 @@ impl PolicyEngine {
     ///
     /// Convenience wrapper around [`compute_max_caps`] for single-capability
     /// checks — primarily used in tests.
+    #[allow(dead_code)]
     pub fn check_capability(&self, exe_path: &str, cap_name: &str) -> bool {
         self.compute_max_caps(exe_path)
             .iter()

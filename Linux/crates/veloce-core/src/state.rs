@@ -236,12 +236,14 @@ impl NodeTable {
         handle
     }
 
+    #[allow(dead_code)]
     pub fn get_pid(&self, id: Uuid) -> Option<u32> {
         self.nodes.read().get(&id).map(|h| h.pid)
     }
 
     // ── Health tracking (v1.1) ────────────────────────────────────────────
 
+    #[allow(dead_code)]
     pub fn set_health(&self, id: Uuid, status: HealthStatus) {
         self.health_statuses.write().insert(id, status);
     }
@@ -256,6 +258,7 @@ impl NodeTable {
         self.service_labels.write().insert(id, (service_name, replica_index));
     }
 
+    #[allow(dead_code)]
     pub fn get_service_label(&self, id: Uuid) -> Option<(String, u32)> {
         self.service_labels.read().get(&id).cloned()
     }
@@ -302,6 +305,7 @@ impl NodeTable {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct NodeSummary {
     pub node_id:         Uuid,
     pub pid:             u32,

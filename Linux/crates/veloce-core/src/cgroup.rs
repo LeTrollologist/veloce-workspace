@@ -89,6 +89,7 @@ impl CgroupPath {
     }
 
     /// Remove the cgroup directory (only works when all processes have exited).
+    #[allow(dead_code)]
     pub fn cleanup(&self) -> Result<()> {
         // The dir can only be removed once it's empty of processes
         std::fs::remove_dir(&self.0)
@@ -96,6 +97,7 @@ impl CgroupPath {
     }
 
     /// Return the path to this cgroup directory.
+    #[allow(dead_code)]
     pub fn path(&self) -> &Path {
         &self.0
     }
