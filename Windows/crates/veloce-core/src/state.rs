@@ -9,6 +9,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
+use anyhow::Context;
 use parking_lot::RwLock;
 use uuid::Uuid;
 
@@ -71,10 +72,7 @@ pub struct CoreState {
 
 impl CoreState {
     pub fn new() -> anyhow::Result<Self> {
-        let dir = data_dir();
-        let db_path = dir.join("veloce-registry.bin");
-        std::fs::create_dir_all(&dir)?;
-        let registry = Registry::open(&db_path)?;
+        let (dir, registry) = Self::open_registry_and_dir()?;
 
         let psk = generate_and_persist_psk()?;
         let net_registry = Arc::new(NetRegistry::new());
@@ -332,47 +330,60 @@ pub struct NodeSummary {
     pub health_check:    Option<HealthCheck>,
 }
 
-fn data_dir() -> PathBuf {
-    if let Ok(custom) = std::env::var("VELOCE_DATA_DIR") {
-        return PathBuf::from(custom);
+impl CoreState {
+    fn open_registry_and_dir() -> anyhow::Result<(PathBuf, Registry)> {
+        if let Ok(custom) = std::env::var("VELOCE_DATA_DIR") {
+            let dir = PathBuf::from(custom);
+            let _ = std::fs::create_dir_all(&dir);
+            let reg = Registry::open(dir.join("veloce-registry.bin"))?;
+            return Ok((dir, reg));
+        }
+
+        // 1. Try system directory first
+        let sys_dir = primary_system_data_dir();
+        if std::fs::create_dir_all(&sys_dir).is_ok() {
+            if let Ok(reg) = Registry::open(sys_dir.join("veloce-registry.bin")) {
+                tracing::info!("Using system data directory: {}", sys_dir.display());
+                return Ok((sys_dir, reg));
+            }
+        }
+
+        // 2. Fall back to user local AppData directory
+        let user_dir = user_data_dir();
+        std::fs::create_dir_all(&user_dir)
+            .with_context(|| format!("failed to create user data directory in {}", user_dir.display()))?;
+        let reg = Registry::open(user_dir.join("veloce-registry.bin"))
+            .with_context(|| format!("failed to open registry in {}", user_dir.display()))?;
+        tracing::info!("Using user data directory: {}", user_dir.display());
+        Ok((user_dir, reg))
     }
-    // %PROGRAMDATA%\VeloceSolutions\VeloceCore   (Windows Service / Admin)
-    // %LOCALAPPDATA%\VeloceSolutions\VeloceCore  (Windows User fallback)
-    // /var/lib/veloce-core                        (Linux Service / Root)
-    // ~/.local/share/veloce/core                  (Linux User fallback)
+}
+
+pub fn primary_system_data_dir() -> PathBuf {
     #[cfg(windows)]
     {
         let pd = std::env::var("PROGRAMDATA").unwrap_or_else(|_| "C:\\ProgramData".into());
-        let sys_dir = PathBuf::from(pd).join("VeloceSolutions").join("VeloceCore");
-        if std::fs::create_dir_all(&sys_dir).is_ok() {
-            let test_file = sys_dir.join(".write_test");
-            if std::fs::OpenOptions::new().read(true).write(true).create(true).open(&test_file).is_ok() {
-                let _ = std::fs::remove_file(&test_file);
-                return sys_dir;
-            }
-        }
+        PathBuf::from(pd).join("VeloceSolutions").join("VeloceCore")
+    }
+    #[cfg(not(windows))]
+    {
+        PathBuf::from("/var/lib/veloce-core")
+    }
+}
+
+pub fn user_data_dir() -> PathBuf {
+    #[cfg(windows)]
+    {
         let lad = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| {
             std::env::var("USERPROFILE")
                 .map(|p| format!("{p}\\AppData\\Local"))
                 .unwrap_or_else(|_| ".".into())
         });
-        let user_dir = PathBuf::from(lad).join("VeloceSolutions").join("VeloceCore");
-        let _ = std::fs::create_dir_all(&user_dir);
-        user_dir
+        PathBuf::from(lad).join("VeloceSolutions").join("VeloceCore")
     }
     #[cfg(not(windows))]
     {
-        let sys_dir = PathBuf::from("/var/lib/veloce-core");
-        if std::fs::create_dir_all(&sys_dir).is_ok() {
-            let test_file = sys_dir.join(".write_test");
-            if std::fs::OpenOptions::new().read(true).write(true).create(true).open(&test_file).is_ok() {
-                let _ = std::fs::remove_file(&test_file);
-                return sys_dir;
-            }
-        }
         let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-        let user_dir = PathBuf::from(home).join(".local").join("share").join("veloce").join("core");
-        let _ = std::fs::create_dir_all(&user_dir);
-        user_dir
+        PathBuf::from(home).join(".local").join("share").join("veloce").join("core")
     }
 }
