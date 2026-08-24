@@ -94,15 +94,6 @@ pub fn psk_path() -> std::path::PathBuf {
     }
     #[cfg(not(windows))]
     {
-        // Privileged daemon mode: use /run/veloce/session.key
-        // User mode: use $XDG_RUNTIME_DIR/veloce/session.key
-        let privileged = std::path::Path::new("/run/veloce");
-        if privileged.exists() {
-            return privileged.join("session.key");
-        }
-        if let Ok(xdg) = std::env::var("XDG_RUNTIME_DIR") {
-            return std::path::PathBuf::from(xdg).join("veloce").join("session.key");
-        }
         std::env::temp_dir().join("veloce-session.key")
     }
 }

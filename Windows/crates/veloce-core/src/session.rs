@@ -19,9 +19,9 @@ use veloce_ipc::{
     message::{
         Body, Capability, Envelope, ErrorCode, ErrorMsg, Flags,
         HandshakeAckMsg, MeshConnectMsg, MeshDisconnectMsg, MeshGetJoinCodeV3Msg, MeshJoinCodeV3ResultMsg,
-        NetAddIngressMsg, NodeEventMsg, NodeInfo, NodeKilledMsg, NodeListMsg,
+        NetAddIngressMsg, NodeEventMsg, NodeInfo, NodeKilledMsg, NodeLimits, NodeListMsg,
         NodeLogChunkMsg, NodeResourceMsg, NodeSpawnedMsg, NodeStatus as IpcNodeStatus,
-        NodeStatusMsg, TrafficStatsMsg,
+        NodeStatusMsg, RestartPolicy, SpawnNodeMsg, TrafficStatsMsg,
     },
 };
 
@@ -754,6 +754,114 @@ where
                     })
                     .collect();
                 self.send_reply(cid, Body::NodeStatusResult(statuses)).await?;
+            }
+
+            // ── Veloce Hub (v3.4) ─────────────────────────────────────────
+            Body::HubPublish(app) => {
+                self.require_cap(Capability::HubManage)?;
+                self.state.hub().publish(app)?;
+                self.send_reply(cid, Body::Ping).await?;
+            }
+
+            Body::HubList => {
+                let apps = self.state.hub().list();
+                self.send_reply(cid, Body::HubListResult(apps)).await?;
+            }
+
+            Body::HubGet { name } => {
+                let app = self.state.hub().get(&name);
+                self.send_reply(cid, Body::HubInfo(app)).await?;
+            }
+
+            Body::HubRemove { name } => {
+                self.require_cap(Capability::HubManage)?;
+                self.state.hub().remove(&name);
+                self.send_reply(cid, Body::Ping).await?;
+            }
+
+            Body::HubDeploy { name } => {
+                self.require_cap(Capability::SpawnNodes)?;
+                let app = self.state.hub().get(&name)
+                    .ok_or_else(|| anyhow::anyhow!("application '{name}' not found in Hub catalog"))?;
+
+                let node_id = uuid::Uuid::new_v4();
+                let limits = if app.cpu.is_some() || app.mem.is_some() {
+                    Some(NodeLimits {
+                        cpu_pct: app.cpu.map(|c| c as u32),
+                        mem_mb: app.mem,
+                        max_lifetime_secs: None,
+                    })
+                } else {
+                    None
+                };
+
+                let restart_policy = if app.auto_restart {
+                    Some(RestartPolicy {
+                        max_restarts: 5,
+                        base_delay_secs: 2,
+                        max_delay_secs: 30,
+                    })
+                } else {
+                    None
+                };
+
+                let spawn_msg = SpawnNodeMsg {
+                    app_name: app.name.clone(),
+                    executable: app.executable.clone(),
+                    args: app.args.clone(),
+                    env: app.env.clone(),
+                    limits,
+                    auto_kill: false,
+                    restart_policy,
+                    use_appcontainer: false,
+                    health_check: None,
+                    volume_mounts: vec![],
+                    secret_refs: vec![],
+                    service_name: Some(app.name.clone()),
+                    replica_index: Some(0),
+                };
+
+                // Register hostname if configured
+                if let (Some(hostname), Some(port)) = (&app.hostname, app.port) {
+                    self.state.net_registry().register(hostname.clone(), node_id, port, 0);
+                    if app.tls {
+                        let rule = veloce_ipc::message::IngressRule {
+                            host: hostname.clone(),
+                            paths: vec![veloce_ipc::message::IngressPathRule {
+                                path_prefix: "/".into(),
+                                target_port: port,
+                                strip_prefix: false,
+                            }],
+                            default_port: Some(port),
+                            tls_enabled: true,
+                            tls_cert_pem: None,
+                            tls_key_pem: None,
+                        };
+                        self.state.ingress_router().add_rule(rule).await;
+                    }
+                }
+
+                // Allocate registry slot & spawn
+                let pipe = node_socket_path(node_id);
+                let slot = self.state.registry()
+                    .alloc_node(node_id, &spawn_msg.app_name, &pipe)
+                    .context("alloc registry slot")?;
+
+                match job::spawn_node(&spawn_msg, node_id, slot, &pipe, None, None).await {
+                    Ok(handle) => {
+                        let pid = handle.pid;
+                        let pipe_path = handle.pipe_path.clone();
+                        self.state.registry().set_node_pid(slot, pid)?;
+                        self.state.node_table().insert(handle);
+                        let spawned_at = chrono::Utc::now();
+                        self.send_reply(cid, Body::NodeSpawned(NodeSpawnedMsg {
+                            node_id, pid, node_pipe: pipe_path, spawned_at,
+                        })).await?;
+                    }
+                    Err(e) => {
+                        self.send_error(Some(cid), ErrorCode::NodeStartFailed, e.to_string()).await?;
+                    }
+                }
             }
 
             other => {

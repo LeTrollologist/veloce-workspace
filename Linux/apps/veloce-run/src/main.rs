@@ -188,6 +188,11 @@ enum Commands {
         #[arg(short, long, default_value = "9090")]
         port: u16,
     },
+    /// Discover, publish, and deploy applications from Veloce Hub (v3.4)
+    Hub {
+        #[command(subcommand)]
+        action: HubAction,
+    },
     /// Print version information
     Version,
 }
@@ -292,6 +297,61 @@ enum CronAction {
     /// Delete a scheduled task
     Rm {
         /// Task name
+        name: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum HubAction {
+    /// List all applications available in the Veloce Hub catalog
+    List,
+    /// Search applications in the Hub catalog by keyword
+    Search {
+        /// Keyword to match against name, category, or description
+        query: String,
+    },
+    /// Publish or register an application in the Hub catalog
+    Publish {
+        /// Application name
+        name: String,
+        /// Application category (e.g. Web, API, Database, Tools)
+        #[arg(short = 'c', long, default_value = "Custom")]
+        category: String,
+        /// Description of the application
+        #[arg(short = 'd', long, default_value = "")]
+        description: String,
+        /// Author / organization
+        #[arg(short = 'a', long, default_value = "Community")]
+        author: String,
+        /// Executable command
+        executable: String,
+        /// Arguments for the command
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+        /// Optional .vln hostname to register
+        #[arg(short = 'H', long)]
+        hostname: Option<String>,
+        /// Optional port to expose
+        #[arg(short = 'p', long)]
+        port: Option<u16>,
+        /// CPU limit in percent (1-100)
+        #[arg(long)]
+        cpu: Option<u8>,
+        /// Memory limit in megabytes
+        #[arg(long)]
+        mem: Option<u64>,
+        /// Enable TLS on HTTPS port 8443
+        #[arg(long)]
+        tls: bool,
+    },
+    /// Deploy an application directly from the Hub catalog into the mesh
+    Deploy {
+        /// Application name in the Hub catalog
+        name: String,
+    },
+    /// Remove an application from the Hub catalog
+    Rm {
+        /// Application name to remove
         name: String,
     },
 }
@@ -415,6 +475,7 @@ async fn main() -> Result<()> {
         Some(Commands::Cron { action })       => run_cron(action).await,
         Some(Commands::Portal { port })       => run_portal(port).await,
         Some(Commands::Metrics { port })      => run_metrics(port).await,
+        Some(Commands::Hub { action })        => run_hub(action).await,
         Some(Commands::Version)               => { run_version(); Ok(()) }
         None => {
             let executable = cli.executable.expect("clap ensures executable is set when no subcommand");
@@ -1207,3 +1268,73 @@ async fn run_metrics(port: u16) -> Result<()> {
     }
     Ok(())
 }
+
+async fn run_hub(action: HubAction) -> Result<()> {
+    let mut client = connect_client("veloce-run-hub", vec![Capability::HubManage, Capability::SpawnNodes, Capability::NetRegister]).await?;
+    match action {
+        HubAction::List => {
+            let apps = client.hub_list().await?;
+            if apps.is_empty() {
+                println!("No applications found in Veloce Hub catalog.");
+            } else {
+                println!("{:<18} {:<10} {:<10} {:<18} {}", "APP NAME", "CATEGORY", "VERSION", "HOSTNAME", "DESCRIPTION");
+                println!("{}", "─".repeat(80));
+                for a in apps {
+                    let host = a.hostname.as_deref().unwrap_or("-");
+                    println!("{:<18} {:<10} {:<10} {:<18} {}", a.name, a.category, a.version, host, a.description);
+                }
+            }
+        }
+        HubAction::Search { query } => {
+            let apps = client.hub_list().await?;
+            let q = query.to_lowercase();
+            let matches: Vec<_> = apps.into_iter().filter(|a| {
+                a.name.to_lowercase().contains(&q)
+                    || a.description.to_lowercase().contains(&q)
+                    || a.category.to_lowercase().contains(&q)
+                    || a.author.to_lowercase().contains(&q)
+            }).collect();
+            if matches.is_empty() {
+                println!("No applications matching '{query}' found in Veloce Hub.");
+            } else {
+                println!("{:<18} {:<10} {:<10} {:<18} {}", "APP NAME", "CATEGORY", "VERSION", "HOSTNAME", "DESCRIPTION");
+                println!("{}", "─".repeat(80));
+                for a in matches {
+                    let host = a.hostname.as_deref().unwrap_or("-");
+                    println!("{:<18} {:<10} {:<10} {:<18} {}", a.name, a.category, a.version, host, a.description);
+                }
+            }
+        }
+        HubAction::Publish { name, category, description, author, executable, args, hostname, port, cpu, mem, tls } => {
+            let app = veloce_ipc::message::HubAppMsg {
+                name: name.clone(),
+                version: "1.0.0".into(),
+                description,
+                category,
+                author,
+                executable,
+                args,
+                env: vec![],
+                port,
+                hostname,
+                cpu,
+                mem,
+                replicas: 1,
+                auto_restart: true,
+                tls,
+            };
+            client.hub_publish(app).await?;
+            println!("✓ Application '{name}' published to Veloce Hub catalog");
+        }
+        HubAction::Deploy { name } => {
+            let node_id = client.hub_deploy(&name).await?;
+            println!("✓ Deployed application '{name}' from Veloce Hub (node_id={node_id})");
+        }
+        HubAction::Rm { name } => {
+            client.hub_remove(&name).await?;
+            println!("✓ Application '{name}' removed from Veloce Hub catalog");
+        }
+    }
+    Ok(())
+}
+

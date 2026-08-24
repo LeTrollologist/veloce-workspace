@@ -12,6 +12,7 @@ Run modes:
 
 mod autoscale;
 mod cron;
+mod hub;
 mod metrics;
 mod portal;
 mod registry;

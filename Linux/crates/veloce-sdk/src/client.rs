@@ -19,7 +19,7 @@ use uuid::Uuid;
 use veloce_ipc::{
     Codec,
     message::{
-        AutoscaleInfoMsg, AutoscalePolicyMsg, CronJobMsg,
+        AutoscaleInfoMsg, AutoscalePolicyMsg, CronJobMsg, HubAppMsg,
         Body, Capability, DesiredStateSpec, Envelope, Flags,
         IngressRule, MeshConnectMsg, MeshConnectResultMsg, MeshDisconnectMsg,
         MeshGetJoinCodeV3Msg, MeshInfoMsg, NetAddIngressMsg,
@@ -662,6 +662,53 @@ impl VeloceClient {
             Body::CronTrigger { .. } => Ok(()),
             Body::Error(e)           => bail!("cron_trigger: {}", e.message),
             other                    => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    // ── Veloce Hub (v3.4) ─────────────────────────────────────────────────────
+
+    /// Publish or register an application in the Veloce Hub catalog.
+    pub async fn hub_publish(&mut self, app: HubAppMsg) -> Result<()> {
+        match self.request(Body::HubPublish(app)).await? {
+            Body::Ping => Ok(()),
+            Body::Error(e) => bail!("hub_publish: {}", e.message),
+            other => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// List all applications currently available in the Veloce Hub catalog.
+    pub async fn hub_list(&mut self) -> Result<Vec<HubAppMsg>> {
+        match self.request(Body::HubList).await? {
+            Body::HubListResult(v) => Ok(v),
+            Body::Error(e) => bail!("hub_list: {}", e.message),
+            other => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// Get details of an application from the Hub catalog.
+    pub async fn hub_get(&mut self, name: &str) -> Result<Option<HubAppMsg>> {
+        match self.request(Body::HubGet { name: name.into() }).await? {
+            Body::HubInfo(v) => Ok(v),
+            Body::Error(e) => bail!("hub_get: {}", e.message),
+            other => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// Remove an application from the Hub catalog.
+    pub async fn hub_remove(&mut self, name: &str) -> Result<()> {
+        match self.request(Body::HubRemove { name: name.into() }).await? {
+            Body::Ping => Ok(()),
+            Body::Error(e) => bail!("hub_remove: {}", e.message),
+            other => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// Deploy an application directly from the Hub catalog into the mesh.
+    pub async fn hub_deploy(&mut self, name: &str) -> Result<Uuid> {
+        match self.request(Body::HubDeploy { name: name.into() }).await? {
+            Body::NodeSpawned(msg) => Ok(msg.node_id),
+            Body::Error(e) => bail!("hub_deploy: {}", e.message),
+            other => bail!("unexpected: {:?}", other.msg_type()),
         }
     }
 

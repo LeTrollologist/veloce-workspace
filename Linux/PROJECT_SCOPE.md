@@ -406,6 +406,12 @@ This phase dedicated three sequential releases to security, correctness, and sta
 - [x] `veloce-core/src/portal.rs` — Embedded zero-dependency responsive dark-mode web dashboard (`/` on `:9090`) and live JSON API (`/api/status`)
 - [x] `veloce-run portal` and `veloce-run metrics` CLI subcommands
 
+**v3.4 — Veloce Hub Application Registry & 1-Click Browser Deployment** ✅
+- [x] `veloce-core/src/hub.rs` — Pure userspace application registry & catalog engine with persistent storage, keyword search, and curated starter templates
+- [x] `veloce-core/src/portal.rs` — Interactive 1-click application deployment grid in the embedded Web Status Portal (`http://127.0.0.1:9090`)
+- [x] `veloce-run hub` — CLI subcommands (`list`, `search`, `publish`, `deploy`, `rm`)
+- [x] Cross-platform releases for Windows and Linux (glibc 2.17+) compiled locally with `cargo-zigbuild`
+
 **Future Roadmap** 📋
-- **v3.4 — Veloce Hub Package Manager**: Signed `.vpack` bundles with Helm-style parameter templating and lifecycle hooks
+- **v3.5 — Userspace `.vpack` Application Packager**: Self-contained single-file archives (`.vpack`) bundling binaries, configs, environment defaults, lifecycle hooks, and Ed25519 publisher signatures.
 - **Standalone Distribution**: Portable self-contained binaries (`.exe` / `.tar.gz`) with manual and offline release artifacts, bypassing third-party cloud billing dependencies.

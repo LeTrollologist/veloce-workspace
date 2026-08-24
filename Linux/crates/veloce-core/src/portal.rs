@@ -100,6 +100,13 @@ const DASHBOARD_HTML: &str = r#"<!DOCTYPE html>
         </div>
 
         <div class="section">
+            <div class="section-title"><span>Veloce Hub & App Catalog</span> <span class="badge" style="color:var(--accent-green)">1-Click Deploy</span></div>
+            <div id="hub-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px;">
+                <div class="empty">Loading Hub catalog…</div>
+            </div>
+        </div>
+
+        <div class="section">
             <div class="section-title"><span>Scheduled Tasks & CronJobs</span></div>
             <table>
                 <thead><tr><th>Task Name</th><th>Schedule</th><th>Concurrency</th><th>Last Status</th><th>Executable</th></tr></thead>
@@ -109,6 +116,21 @@ const DASHBOARD_HTML: &str = r#"<!DOCTYPE html>
     </div>
 
     <script>
+        async function deployApp(name) {
+            try {
+                const res = await fetch('/api/hub/deploy?name=' + encodeURIComponent(name), { method: 'POST' });
+                if (res.ok) {
+                    alert('✓ Deployed ' + name + ' successfully!');
+                    refresh();
+                } else {
+                    const err = await res.text();
+                    alert('Deployment failed: ' + err);
+                }
+            } catch (e) {
+                alert('Error deploying: ' + e);
+            }
+        }
+
         async function refresh() {
             try {
                 const res = await fetch('/api/status');
@@ -143,6 +165,29 @@ const DASHBOARD_HTML: &str = r#"<!DOCTYPE html>
                         else r.paths.forEach(p => rows.push(`<tr><td><strong>${r.host}</strong></td><td>${p.path_prefix}</td><td>127.0.0.1:${p.target_port}</td><td>${tls}</td></tr>`));
                     });
                     ib.innerHTML = rows.join('');
+                }
+
+                // Hub Catalog
+                const hg = document.getElementById('hub-grid');
+                if (d.hub && d.hub.length > 0) {
+                    hg.innerHTML = d.hub.map(app => `
+                        <div class="card" style="display:flex; flex-direction:column; justify-content:space-between; gap:12px;">
+                            <div>
+                                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                                    <strong style="font-size:16px; color:#fff">${app.name}</strong>
+                                    <span class="pill pill-blue">${app.category}</span>
+                                </div>
+                                <p style="font-size:13px; color:var(--text-muted); margin-bottom:8px;">${app.description}</p>
+                                <div style="font-size:12px; color:var(--text-muted);">
+                                    ${app.hostname ? `🌐 <code>${app.hostname}</code>` : ''} 
+                                    ${app.port ? `• Port <code>${app.port}</code>` : ''}
+                                </div>
+                            </div>
+                            <button onclick="deployApp('${app.name}')" style="background:#238636; color:#fff; border:none; padding:8px 14px; border-radius:6px; font-weight:600; cursor:pointer; width:100%;">🚀 1-Click Deploy</button>
+                        </div>
+                    `).join('');
+                } else {
+                    hg.innerHTML = '<div class="empty">No catalog applications available</div>';
                 }
 
                 // Cron
@@ -198,76 +243,135 @@ async fn handle_portal_client(mut client: TcpStream, state: Arc<CoreState>) -> R
     let _method = parts.next().unwrap_or("GET");
     let path = parts.next().unwrap_or("/");
 
-    match path {
-        "/" | "/index.html" => {
-            let resp = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                DASHBOARD_HTML.len(),
-                DASHBOARD_HTML
-            );
-            client.write_all(resp.as_bytes()).await?;
-        }
-        "/metrics" => {
-            let metrics_text = render_prometheus_metrics(&state).await;
-            let resp = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: text/plain; version=0.0.4; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                metrics_text.len(),
-                metrics_text
-            );
-            client.write_all(resp.as_bytes()).await?;
-        }
-        "/api/status" => {
-            let live_nodes = state.node_table().list_live().into_iter().map(|n| {
-                serde_json::json!({
-                    "node_id": n.node_id,
-                    "app_name": n.app_name,
-                    "service_name": n.service_name,
-                    "pid": n.pid,
-                    "health": format!("{:?}", n.health),
-                })
-            }).collect::<Vec<_>>();
+    if path == "/" || path == "/index.html" {
+        let resp = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            DASHBOARD_HTML.len(),
+            DASHBOARD_HTML
+        );
+        client.write_all(resp.as_bytes()).await?;
+    } else if path == "/metrics" {
+        let metrics_text = render_prometheus_metrics(&state).await;
+        let resp = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/plain; version=0.0.4; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            metrics_text.len(),
+            metrics_text
+        );
+        client.write_all(resp.as_bytes()).await?;
+    } else if path == "/api/status" {
+        let live_nodes = state.node_table().list_live().into_iter().map(|n| {
+            serde_json::json!({
+                "node_id": n.node_id,
+                "app_name": n.app_name,
+                "service_name": n.service_name,
+                "pid": n.pid,
+                "health": format!("{:?}", n.health),
+            })
+        }).collect::<Vec<_>>();
 
-            let peers = if let Some(mesh) = &state.mesh {
-                let map = mesh.peers.read().await;
-                map.values().map(|p| {
-                    let (tx, rx) = p.traffic_snapshot();
-                    serde_json::json!({
-                        "peer_id": p.peer_id,
-                        "peer_name": p.peer_name,
-                        "latency_ms": p.latency_ms.load(std::sync::atomic::Ordering::Relaxed),
-                        "tx_bytes": tx,
-                        "rx_bytes": rx,
-                    })
-                }).collect::<Vec<_>>()
+        let peers = if let Some(mesh) = &state.mesh {
+            let map = mesh.peers.read().await;
+            map.values().map(|p| {
+                let (tx, rx) = p.traffic_snapshot();
+                serde_json::json!({
+                    "peer_id": p.peer_id,
+                    "peer_name": p.peer_name,
+                    "latency_ms": p.latency_ms.load(std::sync::atomic::Ordering::Relaxed),
+                    "tx_bytes": tx,
+                    "rx_bytes": rx,
+                })
+            }).collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+
+        let ingress = state.ingress_router().list_rules().await;
+        let hpa = state.autoscale().list_policies().into_iter().map(|p| p.to_msg()).collect::<Vec<_>>();
+        let cron = state.cron().list_jobs().into_iter().map(|c| c.to_msg()).collect::<Vec<_>>();
+        let hub = state.hub().list();
+
+        let status_json = serde_json::json!({
+            "version": env!("CARGO_PKG_VERSION"),
+            "nodes": live_nodes,
+            "peers": peers,
+            "ingress": ingress,
+            "hpa": hpa,
+            "cron": cron,
+            "hub": hub,
+        });
+
+        let body = status_json.to_string();
+        let resp = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        client.write_all(resp.as_bytes()).await?;
+    } else if path.starts_with("/api/hub/deploy") {
+        // Parse query parameter ?name=...
+        let app_name = path.split('?').nth(1)
+            .and_then(|q| q.split('&').find(|param| param.starts_with("name=")))
+            .and_then(|param| param.strip_prefix("name="))
+            .unwrap_or("");
+
+        if let Some(app) = state.hub().get(app_name) {
+            let node_id = uuid::Uuid::new_v4();
+            let limits = if app.cpu.is_some() || app.mem.is_some() {
+                Some(veloce_ipc::message::NodeLimits {
+                    cpu_pct: app.cpu.map(|c| c as u32),
+                    mem_mb: app.mem,
+                    max_lifetime_secs: None,
+                })
             } else {
-                Vec::new()
+                None
             };
 
-            let ingress = state.ingress_router().list_rules().await;
-            let hpa = state.autoscale().list_policies().into_iter().map(|p| p.to_msg()).collect::<Vec<_>>();
-            let cron = state.cron().list_jobs().into_iter().map(|c| c.to_msg()).collect::<Vec<_>>();
+            let spawn_msg = veloce_ipc::message::SpawnNodeMsg {
+                app_name: app.name.clone(),
+                executable: app.executable.clone(),
+                args: app.args.clone(),
+                env: app.env.clone(),
+                limits,
+                auto_kill: false,
+                restart_policy: None,
+                use_appcontainer: false,
+                health_check: None,
+                volume_mounts: vec![],
+                secret_refs: vec![],
+                service_name: Some(app.name.clone()),
+                replica_index: Some(0),
+            };
 
-            let status_json = serde_json::json!({
-                "version": env!("CARGO_PKG_VERSION"),
-                "nodes": live_nodes,
-                "peers": peers,
-                "ingress": ingress,
-                "hpa": hpa,
-                "cron": cron,
-            });
+            let pipe = format!("veloce-node-{node_id}");
+            let slot = state.registry()
+                .alloc_node(node_id, &spawn_msg.app_name, &pipe)
+                .unwrap_or(0);
 
-            let body = status_json.to_string();
-            let resp = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                body.len(),
-                body
-            );
+            if let (Some(hostname), Some(port)) = (&app.hostname, app.port) {
+                state.net_registry().register(hostname.clone(), node_id, port, 0);
+            }
+
+            match crate::job::spawn_node(&spawn_msg, node_id, slot, &pipe, None, None).await {
+                Ok(handle) => {
+                    let pid = handle.pid;
+                    let _ = state.registry().set_node_pid(slot, pid);
+                    state.node_table().insert(handle);
+                    let resp = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK";
+                    client.write_all(resp.as_bytes()).await?;
+                }
+                Err(e) => {
+                    let err_msg = format!("Spawn failed: {e}");
+                    let resp = format!("HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", err_msg.len(), err_msg);
+                    client.write_all(resp.as_bytes()).await?;
+                }
+            }
+        } else {
+            let resp = "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: 17\r\nConnection: close\r\n\r\nApp Not in Hub";
             client.write_all(resp.as_bytes()).await?;
         }
-        _ => {
-            let resp = "HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\nConnection: close\r\n\r\nNot Found";
-            client.write_all(resp.as_bytes()).await?;
-        }
+    } else {
+        let resp = "HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\nConnection: close\r\n\r\nNot Found";
+        client.write_all(resp.as_bytes()).await?;
     }
 
     Ok(())

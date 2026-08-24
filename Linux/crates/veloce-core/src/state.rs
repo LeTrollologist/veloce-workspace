@@ -63,6 +63,10 @@ pub struct CoreState {
     // ── v3.2 ──────────────────────────────────────────────────────────────────
     /// Ingress TLS engine with dynamic SNI and self-signed CA for *.vln.
     pub tls_manager: Arc<veloce_net::TlsManager>,
+
+    // ── v3.4 ──────────────────────────────────────────────────────────────────
+    /// Veloce Hub application catalog and deployment engine.
+    pub hub: Arc<crate::hub::HubCatalogEngine>,
 }
 
 impl CoreState {
@@ -131,6 +135,7 @@ impl CoreState {
         let autoscale  = crate::autoscale::AutoscaleEngine::new();
         let cron       = crate::cron::CronScheduler::new();
         let tls_manager = Arc::new(veloce_net::TlsManager::new_self_signed()?);
+        let hub        = crate::hub::HubCatalogEngine::new(&dir);
 
         Ok(Self {
             registry,
@@ -148,6 +153,7 @@ impl CoreState {
             autoscale,
             cron,
             tls_manager,
+            hub,
         })
     }
 
@@ -161,6 +167,7 @@ impl CoreState {
     pub fn autoscale(&self)           -> &Arc<crate::autoscale::AutoscaleEngine> { &self.autoscale }
     pub fn cron(&self)                -> &Arc<crate::cron::CronScheduler> { &self.cron }
     pub fn tls_manager(&self)         -> &Arc<veloce_net::TlsManager> { &self.tls_manager }
+    pub fn hub(&self)                 -> &Arc<crate::hub::HubCatalogEngine> { &self.hub }
     pub fn reconciler(&self)          -> &Arc<Reconciler>             { &self.reconciler }
     /// The current session's PSK bytes.  Clients must send these verbatim.
     pub fn psk(&self) -> &[u8; 32] { &self.psk }

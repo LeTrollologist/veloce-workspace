@@ -1,5 +1,10 @@
-//! Named-pipe IPC server (Windows).
-//! On Linux, use `socket_server.rs` instead.
+/*!
+Named-pipe IPC server (Windows).
+
+Handles the Windows-specific accept loop and pipe security check.
+The `ClientSession` protocol handler lives in `crate::session` and is
+shared with the Unix socket server on Linux.
+*/
 
 #![cfg(windows)]
 
@@ -10,13 +15,16 @@ use veloce_ipc::PIPE_NAME;
 
 use crate::{
     pipe_security,
-    session::{ClientSession, spawn_event_forwarder, spawn_log_forwarder},
+    session::ClientSession,
     state::CoreState,
 };
+
+// ── SERVER ENTRY POINT ────────────────────────────────────────────────────────
 
 pub async fn run(state: Arc<CoreState>) -> Result<()> {
     use tokio::net::windows::named_pipe::ServerOptions;
 
+    // Compute server's own user SID once; used to gate every incoming connection.
     let server_sid = pipe_security::server_user_sid()
         .context("resolve server user SID")?;
     tracing::debug!("pipe ACL: accepting connections from SID {server_sid}");
@@ -26,17 +34,21 @@ pub async fn run(state: Arc<CoreState>) -> Result<()> {
     loop {
         if state.is_shutting_down() { break; }
 
+        // Create a new pipe instance waiting for the next client
         let pipe = ServerOptions::new()
             .first_pipe_instance(false)
             .create(PIPE_NAME)
             .context("create named pipe instance")?;
 
+        // Wait for a client to connect
         pipe.connect().await.context("pipe connect")?;
 
+        // ── ACL gate: reject any process not running as the server's user ──
         let (exe_path, client_pid) = match pipe_security::assert_client_is_owner(&pipe, &server_sid) {
             Ok(pair) => pair,
             Err(e) => {
                 tracing::warn!("pipe ACL rejected connection: {e:#}");
+                // Dropping `pipe` here disconnects the client immediately.
                 continue;
             }
         };

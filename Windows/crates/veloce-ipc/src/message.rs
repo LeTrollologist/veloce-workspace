@@ -197,6 +197,22 @@ pub enum MessageType {
     /// Client → Core: trigger a Cron job immediately.
     CronTrigger          = 0xF8,
 
+    // ── Veloce Hub (v3.4) ─────────────────────────────────────
+    /// Client → Core: publish or register an application in the Hub catalog.
+    HubPublish           = 0xEA,
+    /// Client → Core: list catalog applications.
+    HubList              = 0xEB,
+    /// Core → Client: list response.
+    HubListResult        = 0xEC,
+    /// Client → Core: get details of an application.
+    HubGet               = 0xED,
+    /// Core → Client: app details response.
+    HubInfo              = 0xEE,
+    /// Client → Core: remove an application from the Hub catalog.
+    HubRemove            = 0xEF,
+    /// Client → Core: deploy an application from the Hub catalog.
+    HubDeploy            = 0xF9,
+
     // ── Error ─────────────────────────────────────────────────
     Error           = 0xFF,
 }
@@ -249,6 +265,10 @@ impl TryFrom<u8> for MessageType {
             0xF4 => CronCreate,           0xF5 => CronList,
             0xF6 => CronListResult,       0xF7 => CronRemove,
             0xF8 => CronTrigger,
+            0xEA => HubPublish,           0xEB => HubList,
+            0xEC => HubListResult,        0xED => HubGet,
+            0xEE => HubInfo,              0xEF => HubRemove,
+            0xF9 => HubDeploy,
             0xFF => Error,
             other => return Err(other),
         })
@@ -438,6 +458,15 @@ pub enum Body {
     CronListResult(Vec<CronJobMsg>),
     CronRemove { name: String },
     CronTrigger { name: String },
+
+    // ── Veloce Hub (v3.4) ─────────────────────────────────────
+    HubPublish(HubAppMsg),
+    HubList,
+    HubListResult(Vec<HubAppMsg>),
+    HubGet { name: String },
+    HubInfo(Option<HubAppMsg>),
+    HubRemove { name: String },
+    HubDeploy { name: String },
 }
 
 impl Body {
@@ -531,6 +560,14 @@ impl Body {
             CronListResult(_)          => MessageType::CronListResult,
             CronRemove{..}             => MessageType::CronRemove,
             CronTrigger{..}            => MessageType::CronTrigger,
+            // Veloce Hub (v3.4)
+            HubPublish(_)              => MessageType::HubPublish,
+            HubList                    => MessageType::HubList,
+            HubListResult(_)           => MessageType::HubListResult,
+            HubGet{..}                 => MessageType::HubGet,
+            HubInfo(_)                 => MessageType::HubInfo,
+            HubRemove{..}              => MessageType::HubRemove,
+            HubDeploy{..}              => MessageType::HubDeploy,
         }
     }
 }
@@ -581,6 +618,8 @@ pub enum Capability {
     NetPortForward,
     /// Apply a desired-state spec and trigger the reconciler (v1.3).
     DesiredStateManage,
+    /// Manage the Veloce Hub catalog and launch Hub apps (v3.4).
+    HubManage,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1172,6 +1211,25 @@ pub struct CronJobMsg {
     pub last_run_timestamp_secs: Option<u64>,
     pub last_run_status: Option<String>, // "Success", "Failed", "Running"
     pub next_run_timestamp_secs: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct HubAppMsg {
+    pub name: String,
+    pub version: String,
+    pub description: String,
+    pub category: String,
+    pub author: String,
+    pub executable: String,
+    pub args: Vec<String>,
+    pub env: Vec<(String, String)>,
+    pub port: Option<u16>,
+    pub hostname: Option<String>,
+    pub cpu: Option<u8>,
+    pub mem: Option<u64>,
+    pub replicas: u32,
+    pub auto_restart: bool,
+    pub tls: bool,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
