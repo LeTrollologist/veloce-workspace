@@ -153,6 +153,14 @@ fn main() -> anyhow::Result<()> {
                 }
             }
         }
+        "help" | "--help" | "-h" => {
+            println!("VeloceCore v{}\n\nUsage:\n  veloce-core run            Foreground / development mode\n  veloce-core install        Register as Windows service\n  veloce-core uninstall      Remove Windows service\n  veloce-core start          Start the Windows service\n  veloce-core stop           Stop the Windows service\n  veloce-core nrpt [sub]     Manage NRPT .vln DNS rule (enable|disable|status)\n  veloce-core version        Print version", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
+        "version" | "--version" | "-v" => {
+            println!("veloce-core v{}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
         _ => {
             // No recognised argument → assume SCM launched us as a service.
             service::dispatch()

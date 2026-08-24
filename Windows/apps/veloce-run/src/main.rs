@@ -81,7 +81,7 @@ struct Cli {
     // ── Run mode (default when no subcommand is given) ────────────────────────
 
     /// Executable to launch (path or name on PATH)
-    #[arg(required_unless_present = "command")]
+    #[arg(value_name = "EXECUTABLE")]
     executable: Option<String>,
 
     /// Arguments forwarded to the executable
@@ -509,7 +509,13 @@ async fn main() -> Result<()> {
         Some(Commands::Hub { action })        => run_hub(action).await,
         Some(Commands::Version)               => { run_version(); Ok(()) }
         None => {
-            let executable = cli.executable.expect("clap ensures executable is set when no subcommand");
+            let executable = match cli.executable {
+                Some(exe) => exe,
+                None => {
+                    eprintln!("error: 'veloce-run' requires an executable to launch or a subcommand.\n\nUsage:\n    veloce-run [OPTIONS] <EXECUTABLE> [ARGS]...\n    veloce-run <COMMAND>\n\nFor more information, try '--help'.");
+                    std::process::exit(2);
+                }
+            };
             run_spawn(
                 executable, cli.args, cli.extra_env, cli.name, cli.hostname,
                 cli.port, cli.cpu, cli.mem, cli.restarts, cli.detach,

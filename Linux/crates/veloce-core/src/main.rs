@@ -78,6 +78,14 @@ fn main() -> anyhow::Result<()> {
                 }
             }
         }
+        "help" | "--help" | "-h" => {
+            println!("VeloceCore v{}\n\nUsage:\n  veloce-core run            Foreground / development mode\n  veloce-core install        Install systemd unit\n  veloce-core uninstall      Remove systemd unit\n  veloce-core start          Start systemd unit\n  veloce-core stop           Stop systemd unit\n  veloce-core dns [sub]      Manage .vln DNS routing (enable|disable|status)\n  veloce-core version        Print version", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
+        "version" | "--version" | "-v" => {
+            println!("veloce-core v{}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
         // No argument = invoked by systemd
         _ => {
             let rt = build_tokio_runtime()?;
