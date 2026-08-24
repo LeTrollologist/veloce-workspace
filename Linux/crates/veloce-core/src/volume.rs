@@ -54,6 +54,8 @@ impl VolumeRegistry {
     /// Return the host path for a named volume, creating the directory (and
     /// catalog entry) if it does not already exist.
     pub fn get_or_create(&self, name: &str) -> Result<PathBuf> {
+        validate_volume_name(name)?;
+
         // Fast path — already known
         {
             let guard = self.volumes.read();
@@ -110,5 +112,41 @@ impl VolumeRegistry {
             }
             Err(e) => tracing::warn!("volume catalog serialize failed: {e}"),
         }
+    }
+}
+
+/// Validate that a volume name contains only safe alphanumeric/dash/underscore/dot chars
+/// and cannot perform path traversal.
+pub fn validate_volume_name(name: &str) -> Result<()> {
+    anyhow::ensure!(!name.is_empty(), "volume name cannot be empty");
+    anyhow::ensure!(name.len() <= 64, "volume name too long (max 64 chars)");
+    anyhow::ensure!(
+        name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.'),
+        "volume name contains invalid characters: only [a-zA-Z0-9._-] permitted"
+    );
+    anyhow::ensure!(
+        !name.contains("..") && !name.contains('/') && !name.contains('\\'),
+        "volume name cannot contain directory traversal components"
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_volume_name() {
+        assert!(validate_volume_name("db-data").is_ok());
+        assert!(validate_volume_name("my_volume.v1").is_ok());
+        assert!(validate_volume_name("app123").is_ok());
+
+        // Path traversal attempts
+        assert!(validate_volume_name("../etc").is_err());
+        assert!(validate_volume_name("foo/bar").is_err());
+        assert!(validate_volume_name("foo\\bar").is_err());
+        assert!(validate_volume_name("..").is_err());
+        assert!(validate_volume_name("").is_err());
+        assert!(validate_volume_name("a".repeat(65).as_str()).is_err());
     }
 }

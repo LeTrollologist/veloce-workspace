@@ -356,13 +356,13 @@ async fn handle_incoming(
             entries.truncate(1_000);
 
             // Clock-skew guard: reject entries with timestamps more than 5 minutes in
-            // the future or more than 24 hours in the past (N4).
+            // the future or more than 5 minutes in the past (N4).
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map(|d| d.as_secs())
                 .unwrap_or(0);
-            const SKEW_FUTURE_SECS: u64 = 300;   // 5 minutes
-            const SKEW_PAST_SECS:   u64 = 86_400; // 24 hours
+            const SKEW_FUTURE_SECS: u64 = 300; // 5 minutes
+            const SKEW_PAST_SECS:   u64 = 300; // 5 minutes (±5m window)
 
             let entries: Vec<_> = entries
                 .into_iter()

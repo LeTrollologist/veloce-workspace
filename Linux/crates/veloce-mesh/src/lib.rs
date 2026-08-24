@@ -74,12 +74,8 @@ pub struct MeshState {
     pub mesh_acl_fn: Option<AclFn>,
     /// How often (seconds) to re-broadcast local hostnames to each peer.
     pub gossip_interval_secs: u64,
-    /// Nonces from consumed VM3 one-time join codes.
-    ///
-    /// Once a one-time code is used, its 16-byte nonce is recorded here.
-    /// Any subsequent `connect_to_peer` call presenting the same nonce is
-    /// rejected with an error, preventing replay attacks.
-    used_nonces: Mutex<HashSet<[u8; 16]>>,
+    /// Nonces from consumed VM3 one-time join codes mapped to timestamp for bounded eviction.
+    used_nonces: Mutex<HashMap<[u8; 16], u64>>,
     /// Maps each gossip hostname to the peer UUID that first advertised it.
     ///
     /// When a different peer later claims the same hostname, a warning is
@@ -158,7 +154,7 @@ impl MeshState {
             addrs_cache,
             mesh_acl_fn,
             gossip_interval_secs,
-            used_nonces: Mutex::new(HashSet::new()),
+            used_nonces: Mutex::new(HashMap::new()),
             hostname_origins: Arc::new(ParkingMutex::new(HashMap::new())),
             kv,
         })
@@ -219,14 +215,24 @@ impl MeshState {
                 );
             }
 
-            // Check one-time nonce.
+            // Check one-time nonce with bounded time-eviction.
             if meta.is_one_time() {
                 let mut used = self.used_nonces.lock().await;
-                if used.contains(&meta.nonce) {
+                // Evict nonces older than 24h (86,400s)
+                used.retain(|_, &mut ts| now.saturating_sub(ts) < 86_400);
+                // Bound size to 10,000 entries max to prevent OOM
+                if used.len() > 10_000 {
+                    let mut entries: Vec<_> = used.drain().collect();
+                    entries.sort_by_key(|(_, ts)| *ts);
+                    for (k, v) in entries.into_iter().rev().take(5_000) {
+                        used.insert(k, v);
+                    }
+                }
+                if used.contains_key(&meta.nonce) {
                     anyhow::bail!("one-time join code has already been used (nonce replay)");
                 }
-                // Record the nonce now; we'll remove it below if the handshake fails.
-                used.insert(meta.nonce);
+                // Record the nonce with current timestamp; removed below if handshake fails.
+                used.insert(meta.nonce, now);
             }
 
             Some(meta)

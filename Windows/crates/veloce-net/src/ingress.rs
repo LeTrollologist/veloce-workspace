@@ -174,17 +174,7 @@ async fn handle_ingress_tls_client(
     let path = parts.next().unwrap_or("/");
     let http_ver = parts.next().unwrap_or("HTTP/1.1");
 
-    let mut host = String::new();
-    for line in lines {
-        if line.is_empty() {
-            break;
-        }
-        if let Some(h) = line.strip_prefix("Host:").or_else(|| line.strip_prefix("host:")) {
-            let h = h.trim();
-            host = h.split(':').next().unwrap_or(h).to_string();
-            break;
-        }
-    }
+    let host = extract_host_header(&raw_req).unwrap_or_default();
 
     let route = router.match_route(&host, path).await;
     match route {
@@ -253,17 +243,7 @@ async fn handle_ingress_client(
     let path = parts.next().unwrap_or("/");
     let http_ver = parts.next().unwrap_or("HTTP/1.1");
 
-    let mut host = String::new();
-    for line in lines {
-        if line.is_empty() {
-            break;
-        }
-        if let Some(h) = line.strip_prefix("Host:").or_else(|| line.strip_prefix("host:")) {
-            let h = h.trim();
-            host = h.split(':').next().unwrap_or(h).to_string();
-            break;
-        }
-    }
+    let host = extract_host_header(&raw_req).unwrap_or_default();
 
     let route = router.match_route(&host, path).await;
     match route {
@@ -309,10 +289,44 @@ async fn handle_ingress_client(
     Ok(())
 }
 
+fn extract_host_header(raw_req: &str) -> Option<String> {
+    for line in raw_req.lines().skip(1) {
+        if line.is_empty() {
+            break;
+        }
+        if let Some(idx) = line.find(':') {
+            let header_name = line[..idx].trim();
+            if header_name.eq_ignore_ascii_case("host") {
+                let val = line[idx + 1..].trim();
+                let host = val.split(':').next().unwrap_or(val).to_string();
+                if !host.is_empty() {
+                    return Some(host);
+                }
+            }
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use veloce_ipc::message::IngressPathRule;
+
+    #[test]
+    fn test_extract_host_header_case_insensitive() {
+        let req1 = "GET / HTTP/1.1\r\nHost: api.vln:8080\r\nUser-Agent: curl\r\n\r\n";
+        assert_eq!(extract_host_header(req1), Some("api.vln".to_string()));
+
+        let req2 = "GET / HTTP/1.1\r\nhost: web.vln\r\n\r\n";
+        assert_eq!(extract_host_header(req2), Some("web.vln".to_string()));
+
+        let req3 = "GET / HTTP/1.1\r\nHOST:   service.vln:443  \r\n\r\n";
+        assert_eq!(extract_host_header(req3), Some("service.vln".to_string()));
+
+        let req4 = "GET / HTTP/1.1\r\nhOsT: cluster.vln\r\n\r\n";
+        assert_eq!(extract_host_header(req4), Some("cluster.vln".to_string()));
+    }
 
     #[tokio::test]
     async fn test_ingress_router_matching() {

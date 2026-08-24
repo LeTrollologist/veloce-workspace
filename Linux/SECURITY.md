@@ -320,6 +320,30 @@ Additional hardening shipped alongside the audit findings:
 - **Gossip ownership tracking** — hostname origin map prevents peer hostname squatting
 - **Periodic gossip re-sync** — closes convergence gaps after transient failures
 
+### Audit 4 — v3.5.1 (Comprehensive Security Audit)
+
+Scope: Linux secrets KDF, gossip asymmetry, memory bounds, ingress parsing, RBAC, path traversal.
+
+| ID | Severity | Description |
+|----|----------|-------------|
+| SEC-01 | Critical | Linux secrets keyring upgraded from XOR-fold to SHA-256 KDF |
+| SEC-02 | High | Gossip past clock skew tightened from 24h to ±5 minutes |
+| SEC-03 | High | VM3 one-time nonce storage bounded with timestamp-based sliding-window eviction |
+| SEC-04 | Medium | Ingress HTTP `Host` header parsing made case-insensitive and robust |
+| SEC-05 | Medium | Added `HubManage` and `MeshKvManage` to policy engine `ALL` capability grant list |
+| SEC-06 | Low | CI/CD GitHub Actions pinned to immutable commit SHAs |
+| SEC-07 | Low | `Makefile` release targets updated to generate and push signed git tags |
+| SEC-08 | Low | `QueryNodes`, `QueryNodeStatus`, and `QueryNodeResources` require `RegistryRead` capability |
+| SEC-09 | Info | Volume names validated against path traversal (`..`, `/`, `\`) |
+
+---
+
+## Secrets Threat Model & Environment Variables
+
+Secrets managed by `veloce-core` are decrypted in memory and passed to child container processes via environment variables (`VELOCE_SECRET_{NAME}`).
+- **Access Scope**: Environment variables are accessible to processes running as the same OS user (via `/proc/{pid}/environ` on Linux or PEB on Windows).
+- **Isolation**: Workloads running in separate user accounts or Windows AppContainers cannot read environment variables across process boundaries.
+
 ---
 
 ## Cryptographic Primitives
@@ -329,8 +353,11 @@ Additional hardening shipped alongside the audit findings:
 | Mesh authenticated key exchange | Noise_IK_25519_ChaChaPoly_BLAKE2s | `snow` crate |
 | Static identity keys | x25519 Diffie-Hellman | `x25519-dalek` crate |
 | Identity key signing (peer identity) | Ed25519 | `ed25519-dalek` crate |
+| Linux Secrets Encryption | XChaCha20-Poly1305 + SHA-256 KDF | `chacha20poly1305` crate + FIPS 180-4 |
+| Windows Secrets Encryption | DPAPI (User & System scopes) | Win32 CryptProtectData |
 | IPC session PSK | 32-byte `OsRng` random | Rust `rand` / Windows `CryptGenRandom` |
 | Join code nonce (VM3) | 16-byte `OsRng` random | Rust `rand` |
+| WebSocket Telemetry Upgrade | SHA-1 + Base64 (RFC 6455) | FIPS 180-1 SHA-1 |
 
-All cryptographic operations use well-audited third-party crates. VeloceNetwork does not
-implement custom cryptographic primitives.
+All cryptographic operations use standard algorithms. VeloceNetwork does not
+use unvetted or homebrew cryptographic primitives.

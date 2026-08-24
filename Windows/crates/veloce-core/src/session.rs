@@ -337,6 +337,7 @@ where
             }
 
             QueryNodes => {
+                self.require_cap(Capability::RegistryRead)?;
                 let nodes: Vec<NodeInfo> = self.state.registry()
                     .list_nodes()
                     .into_iter()
@@ -406,6 +407,7 @@ where
 
             // ── Resource usage ─────────────────────────────────────────────
             QueryNodeResources => {
+                self.require_cap(Capability::RegistryRead)?;
                 let resources: Vec<NodeResourceMsg> = self.state.node_table()
                     .query_all_resources()
                     .into_iter()
@@ -740,6 +742,7 @@ where
 
             // ── Extended node status (v1.3) ────────────────────────────────
             Body::QueryNodeStatus => {
+                self.require_cap(Capability::RegistryRead)?;
                 let statuses: Vec<NodeStatusMsg> = self.state.node_table()
                     .list_live()
                     .into_iter()
