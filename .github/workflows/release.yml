@@ -1,15 +1,12 @@
 name: Release Build & Binary Distribution
 
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag (e.g. v3.0.1)'
+        description: 'Release tag (e.g. v3.3.0)'
         required: true
-        default: 'v3.0.1'
+        default: 'v3.3.0'
 
 permissions:
   contents: write

@@ -35,9 +35,7 @@ use veloce_net::registry::NetRegistry;
 
 use parking_lot::Mutex as ParkingMutex;
 
-pub mod control;
-pub use control::{ClusterCoordinator, ClusterRole};
-
+use control::ClusterCoordinator;
 use identity::MachineIdentity;
 use peer::{AclFn, GossipEntry, OwnerFn, PeerConnection, PeerMsg};
 

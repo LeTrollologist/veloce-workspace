@@ -16,9 +16,9 @@ mod metrics;
 mod portal;
 mod registry;
 mod job;
-mod ipc_server;
-mod nrpt;
-mod pipe_security;
+#[cfg(windows)] mod ipc_server;
+#[cfg(windows)] mod nrpt;
+#[cfg(windows)] mod pipe_security;
 mod policy;
 mod reconciler;
 mod secrets;
@@ -54,18 +54,18 @@ fn main() -> anyhow::Result<()> {
             let sub = args.get(2).map(|s| s.as_str()).unwrap_or("status");
             match sub {
                 "enable" => {
-                    nrpt::install(nrpt::VLN_DNS_ADDR)?;
+                    dns_config::install(dns_config::VLN_DNS_ADDR)?;
                     println!(".vln DNS routing enabled.");
                     Ok(())
                 }
                 "disable" => {
-                    nrpt::uninstall()?;
+                    dns_config::uninstall()?;
                     println!(".vln DNS routing disabled.");
                     Ok(())
                 }
                 "status" => {
-                    if nrpt::is_installed() {
-                        println!(".vln DNS routing is enabled ({})", nrpt::installed_addr().unwrap_or_default());
+                    if dns_config::is_installed() {
+                        println!(".vln DNS routing is enabled ({})", dns_config::installed_addr().unwrap_or_default());
                     } else {
                         println!(".vln DNS routing is not configured.");
                     }

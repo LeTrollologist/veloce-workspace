@@ -12,11 +12,12 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=windows.manifest");
 
-    #[cfg(target_os = "windows")]
-    embed_manifest();
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    if target_os == "windows" {
+        embed_manifest();
+    }
 }
 
-#[cfg(target_os = "windows")]
 fn embed_manifest() {
     // Embed the application manifest so Windows knows this binary requires
     // Administrator privileges (necessary for service install/Job Objects).
