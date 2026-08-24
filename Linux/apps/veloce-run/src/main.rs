@@ -520,8 +520,24 @@ async fn main() -> Result<()> {
             let executable = match cli.executable {
                 Some(exe) => exe,
                 None => {
-                    eprintln!("error: 'veloce-run' requires an executable to launch or a subcommand.\n\nUsage:\n    veloce-run [OPTIONS] <EXECUTABLE> [ARGS]...\n    veloce-run <COMMAND>\n\nFor more information, try '--help'.");
-                    std::process::exit(2);
+                    println!("========================================================");
+                    println!(" Veloce CLI Runner v{}", env!("CARGO_PKG_VERSION"));
+                    println!("========================================================");
+                    println!("Usage:");
+                    println!("  veloce-run [OPTIONS] <EXECUTABLE> [ARGS]...   Launch an executable");
+                    println!("  veloce-run <COMMAND>                          Run a subcommand\n");
+                    println!("Common Subcommands:");
+                    println!("  veloce-run portal             Open the web status portal");
+                    println!("  veloce-run ps                 List active sandboxed processes");
+                    println!("  veloce-run hub list           Explore available Hub apps");
+                    println!("  veloce-run pack run <file>    Launch a .vpack package");
+                    println!("  veloce-run mesh join <code>   Join a peer-to-peer mesh");
+                    println!("  veloce-run --help             View all commands and options");
+                    println!("========================================================");
+                    println!("\nPress Enter to exit (or run from PowerShell / Command Prompt)...");
+                    let mut buf = String::new();
+                    let _ = std::io::stdin().read_line(&mut buf);
+                    return Ok(());
                 }
             };
             run_spawn(

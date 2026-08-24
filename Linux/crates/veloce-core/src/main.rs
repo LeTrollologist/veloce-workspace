@@ -79,14 +79,6 @@ fn main() -> anyhow::Result<()> {
                 }
             }
         }
-        "help" | "--help" | "-h" => {
-            println!("VeloceCore v{}\n\nUsage:\n  veloce-core run            Foreground / development mode\n  veloce-core install        Install systemd unit\n  veloce-core uninstall      Remove systemd unit\n  veloce-core start          Start systemd unit\n  veloce-core stop           Stop systemd unit\n  veloce-core dns [sub]      Manage .vln DNS routing (enable|disable|status)\n  veloce-core version        Print version", env!("CARGO_PKG_VERSION"));
-            Ok(())
-        }
-        "version" | "--version" | "-v" => {
-            println!("veloce-core v{}", env!("CARGO_PKG_VERSION"));
-            Ok(())
-        }
         // No argument = invoked by systemd
         _ => {
             let rt = build_tokio_runtime()?;
@@ -162,9 +154,36 @@ fn main() -> anyhow::Result<()> {
                 }
             }
         }
+        "help" | "--help" | "-h" => {
+            println!("VeloceCore v{}\n\nUsage:\n  veloce-core run            Foreground / development mode\n  veloce-core install        Register as Windows service\n  veloce-core uninstall      Remove Windows service\n  veloce-core start          Start the Windows service\n  veloce-core stop           Stop the Windows service\n  veloce-core nrpt [sub]     Manage NRPT .vln DNS rule (enable|disable|status)\n  veloce-core version        Print version", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
+        "version" | "--version" | "-v" => {
+            println!("veloce-core v{}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
         _ => {
-            // No recognised argument → assume SCM launched us as a service.
-            service::dispatch()
+            // Attempt to connect to SCM. If not running as a Windows service (error 1063),
+            // seamlessly fallback to running in foreground mode so double-clicking or running `veloce-core`
+            // starts the core daemon immediately!
+            if let Err(e) = service::dispatch() {
+                tracing::info!("Not running under SCM ({e}); starting VeloceCore in foreground console mode...");
+                println!("========================================================");
+                println!(" VeloceCore v{} (Interactive Console Mode)", env!("CARGO_PKG_VERSION"));
+                println!(" IPC Pipe: \\\\.\\pipe\\VeloceCore");
+                println!(" Portal:   http://localhost:9090");
+                println!(" Metrics:  http://localhost:9090/metrics");
+                println!(" SOCKS5:   127.0.0.1:1055");
+                println!(" DNS:      127.0.0.1:5354");
+                println!(" Press Ctrl+C to stop.");
+                println!("========================================================");
+                let rt = tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .thread_name("veloce-worker")
+                    .build()?;
+                rt.block_on(run_core())?;
+            }
+            Ok(())
         }
     }
 }
