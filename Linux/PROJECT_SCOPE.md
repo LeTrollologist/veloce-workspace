@@ -429,5 +429,10 @@ This phase dedicated three sequential releases to security, correctness, and sta
 - [x] `veloce-run pack` CLI subcommands (`init`, `keygen`, `build`, `inspect`, `verify`, `extract`, `run`)
 - [x] Sandboxed zero-root package cache and runtime execution engine
 
+**v3.6.1 — Non-Admin Desktop Compatibility & Interactive Fallback** ✅
+- [x] Automatic fallback to `%LOCALAPPDATA%` (Windows) / `~/.local/share` (Linux) when system `%ProgramData%` / `/var/lib` has restricted permissions
+- [x] Interactive console fallback for `veloce-core` when launched outside the Windows Service Control Manager
+- [x] Double-click pause protection for `veloce-run` in graphical desktop environments
+
 **Future Roadmap** 📋
 - **Standalone Distribution**: Portable self-contained binaries (`.exe` / `.tar.gz`) with manual and offline release artifacts, bypassing third-party cloud billing dependencies.
