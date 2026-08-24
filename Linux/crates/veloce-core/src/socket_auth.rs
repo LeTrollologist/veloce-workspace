@@ -30,7 +30,7 @@ pub fn assert_client_is_owner(stream: &UnixStream) -> Result<(String, u32)> {
         .context("getsockopt SO_PEERCRED")?;
 
     let expected_uid = server_uid();
-    if cred.uid != expected_uid {
+    if cred.uid != expected_uid && expected_uid != 0 {
         bail!(
             "peer UID {} does not match server UID {} — rejecting connection",
             cred.uid,

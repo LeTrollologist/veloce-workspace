@@ -153,7 +153,9 @@ pub fn assert_client_is_owner<H: AsRawHandle>(
         let client_sid = sid_string_from_token(token)?;
         CloseHandle(token).ok();
 
-        if client_sid != server_sid {
+        // If server is running as SYSTEM / service account, allow local authenticated users to connect
+        let is_system_server = server_sid == "S-1-5-18" || server_sid == "S-1-5-19" || server_sid == "S-1-5-20";
+        if client_sid != server_sid && !is_system_server {
             anyhow::bail!(
                 "pipe client SID {client_sid:?} does not match server SID \
                  {server_sid:?} — connection rejected"

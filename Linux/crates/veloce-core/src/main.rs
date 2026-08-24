@@ -113,7 +113,15 @@ fn main() -> anyhow::Result<()> {
 
     match cmd {
         "run" => {
-            tracing::info!("VeloceCore starting in foreground mode");
+            println!("========================================================");
+            println!(" VeloceCore v{} (Foreground Console Mode)", env!("CARGO_PKG_VERSION"));
+            println!(" IPC Pipe: \\\\.\\pipe\\VeloceCore");
+            println!(" Portal:   http://localhost:9090");
+            println!(" Metrics:  http://localhost:9090/metrics");
+            println!(" SOCKS5:   127.0.0.1:1055");
+            println!(" DNS:      127.0.0.1:5354");
+            println!(" Press Ctrl+C to stop.");
+            println!("========================================================");
             let rt = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .thread_name("veloce-worker")
