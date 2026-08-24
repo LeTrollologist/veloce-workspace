@@ -1,5 +1,5 @@
-WINDOWS_DIR := /c/Users/Owner/Windows
-LINUX_DIR   := /c/Users/Owner/Linux
+WINDOWS_DIR ?= ./Windows
+LINUX_DIR   ?= ./Linux
 
 .PHONY: sync-prod sync-windows sync-linux pull-prod release-windows release-linux
 

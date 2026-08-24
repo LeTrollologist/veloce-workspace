@@ -11,3 +11,9 @@ target/
 # Local Claude settings
 .claude/
 **/.claude/
+
+# Release archives
+*.zip
+*.tar.gz
+veloce-*.zip
+veloce-*.tar.gz

@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag (e.g. v3.3.0)'
+        description: 'Release tag (e.g. v3.5.0)'
         required: true
-        default: 'v3.3.0'
+        default: 'v3.5.0'
 
 permissions:
   contents: write
@@ -39,7 +39,7 @@ jobs:
         shell: pwsh
         run: |
           $Tag = if ("${{ github.ref_name }}".StartsWith("v")) { "${{ github.ref_name }}" } else { "${{ github.event.inputs.tag }}" }
-          if (-not $Tag) { $Tag = "v3.0.1" }
+          if (-not $Tag) { $Tag = "v3.5.0" }
           $DistDir = "Windows/target/dist"
           New-Item -ItemType Directory -Force -Path $DistDir
           Copy-Item Windows/target/release/veloce-core.exe $DistDir/ -Force
@@ -47,9 +47,9 @@ jobs:
           if (Test-Path Windows/target/release/veloce-launcher.exe) { Copy-Item Windows/target/release/veloce-launcher.exe $DistDir/ -Force }
           if (Test-Path Windows/target/release/veloce-shell.exe) { Copy-Item Windows/target/release/veloce-shell.exe $DistDir/ -Force }
           if (Test-Path Windows/target/release/veloce_sdk.dll) { Copy-Item Windows/target/release/veloce_sdk.dll $DistDir/ -Force }
-          Copy-Item Windows/veloce_sdk.h $DistDir/ -Force
-          Copy-Item Windows/README.md $DistDir/ -Force
-          Copy-Item Windows/SECURITY.md $DistDir/ -Force
+          if (Test-Path Windows/veloce_sdk.h) { Copy-Item Windows/veloce_sdk.h $DistDir/ -Force }
+          if (Test-Path Windows/README.md) { Copy-Item Windows/README.md $DistDir/ -Force }
+          if (Test-Path Windows/SECURITY.md) { Copy-Item Windows/SECURITY.md $DistDir/ -Force }
           
           Compress-Archive -Path "$DistDir/*" -DestinationPath "veloce-windows-x86_64-$Tag.zip" -Force
           Copy-Item Windows/target/release/veloce-core.exe "veloce-core-windows-x86_64.exe" -Force
@@ -68,7 +68,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   build-linux:
-    name: Build Linux Release Binaries (tar.gz / ELF)
+    name: Build Linux Release Binaries (tar.gz / zip / ELF)
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout repository
@@ -77,7 +77,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config libssl-dev
+          sudo apt-get install -y pkg-config libssl-dev zip
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -102,19 +102,32 @@ jobs:
             TAG="${{ github.event.inputs.tag }}"
           fi
           if [ -z "$TAG" ]; then
-            TAG="v3.0.1"
+            TAG="v3.5.0"
           fi
           mkdir -p Linux/target/dist
           cp Linux/target/release/veloce-core Linux/target/dist/
           cp Linux/target/release/veloce-run Linux/target/dist/
+          if [ -f Linux/target/release/veloce-launcher ]; then
+            cp Linux/target/release/veloce-launcher Linux/target/dist/
+          fi
+          if [ -f Linux/target/release/veloce-shell ]; then
+            cp Linux/target/release/veloce-shell Linux/target/dist/
+          fi
           if [ -f Linux/target/release/libveloce_sdk.so ]; then
             cp Linux/target/release/libveloce_sdk.so Linux/target/dist/
           fi
-          cp Linux/veloce_sdk.h Linux/target/dist/
-          cp Linux/README.md Linux/target/dist/
-          cp Linux/SECURITY.md Linux/target/dist/
+          if [ -f Linux/veloce_sdk.h ]; then
+            cp Linux/veloce_sdk.h Linux/target/dist/
+          fi
+          if [ -f Linux/README.md ]; then
+            cp Linux/README.md Linux/target/dist/
+          fi
+          if [ -f Linux/SECURITY.md ]; then
+            cp Linux/SECURITY.md Linux/target/dist/
+          fi
           
           tar -czvf "veloce-linux-x86_64-${TAG}.tar.gz" -C Linux/target/dist .
+          (cd Linux/target/dist && zip -r "../../../veloce-linux-x86_64-${TAG}.zip" .)
           cp Linux/target/release/veloce-core "veloce-core-linux-x86_64"
           cp Linux/target/release/veloce-run "veloce-run-linux-x86_64"
 
@@ -125,6 +138,7 @@ jobs:
           tag_name: ${{ github.ref_name || github.event.inputs.tag }}
           files: |
             veloce-linux-x86_64-*.tar.gz
+            veloce-linux-x86_64-*.zip
             veloce-core-linux-x86_64
             veloce-run-linux-x86_64
         env:
