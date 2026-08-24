@@ -1,0 +1,12 @@
+﻿<resources>
+    <string name="app_name">VeloceNetwork</string>
+    <string name="connected">Connected</string>
+    <string name="disconnected">Disconnected</string>
+    <string name="connecting">Connecting…</string>
+    <string name="connect">Connect to Mesh</string>
+    <string name="disconnect">Disconnect</string>
+    <string name="peers">Peers</string>
+    <string name="kv_store">Mesh KV Store</string>
+    <string name="logs">Console Logs</string>
+    <string name="join_mesh">Join Mesh with Code</string>
+</resources>

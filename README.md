@@ -56,6 +56,7 @@ veloce-workspace/
 | **v3.5.1** | CLI argument validation hardening, `--help` / `--version` service dispatcher bypass, cross-platform release synchronization | ✅ Complete |
 | **v3.6.0** | Userspace `.vpack` Application Packager: Single-file archives, Ed25519 cryptographic signing/verification, sandboxed zero-root runtime (`veloce-run pack`) | ✅ Complete |
 | **v3.6.1** | Non-Admin Desktop Compatibility: Automatic `%LOCALAPPDATA%` unprivileged storage fallback, interactive console mode, double-click pause protection | ✅ Complete |
+| **v3.7.0** | Android Mobile Integration: Native Rust JNI runtime (`veloce-mobile`), zero-root `VpnService` for `*.vln` routing, Jetpack Compose companion app | ✅ Complete |
 
 ---
 

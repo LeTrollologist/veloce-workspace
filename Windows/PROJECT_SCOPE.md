@@ -434,5 +434,11 @@ This phase dedicated three sequential releases to security, correctness, and sta
 - [x] Interactive console fallback for `veloce-core` when launched outside the Windows Service Control Manager
 - [x] Double-click pause protection for `veloce-run` in graphical desktop environments
 
+**v3.7.0 — Android Mobile Integration (Zero-Root Userspace Mesh & App)** ✅
+- [x] `crates/veloce-mobile` — Native Rust JNI/C FFI library embedding `veloce-mesh`, `veloce-net`, and `veloce-sdk`
+- [x] `apps/veloce-android` — Modern native Jetpack Compose companion app with Material 3 design
+- [x] `VeloceVpnService` — Zero-root `android.net.VpnService` routing `*.vln` domains and private mesh traffic
+- [x] Real-time replicated KV editor and mobile telemetry monitoring
+
 **Future Roadmap** 📋
 - **Standalone Distribution**: Portable self-contained binaries (`.exe` / `.tar.gz`) with manual and offline release artifacts, bypassing third-party cloud billing dependencies.

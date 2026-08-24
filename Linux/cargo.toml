@@ -6,6 +6,7 @@ members = [
     "crates/veloce-net",
     "crates/veloce-mesh",
     "crates/veloce-sdk",
+    "crates/veloce-mobile",
     "apps/dashboard/src-tauri",
     "apps/installer/src-tauri",
     "apps/veloce-run",
