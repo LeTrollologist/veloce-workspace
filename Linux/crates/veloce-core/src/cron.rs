@@ -102,7 +102,6 @@ impl ScheduleKind {
             Self::Interval(dur) => from_secs + dur.as_secs(),
             Self::Cron { minute, hour, is_wildcard_hour } => {
                 let current_min = (from_secs / 60) % 60;
-                let current_hour = (from_secs / 3600) % 24;
 
                 if *is_wildcard_hour {
                     let diff_mins = if *minute > current_min as u32 {

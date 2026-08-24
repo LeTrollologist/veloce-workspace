@@ -42,7 +42,6 @@ use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use uuid::Uuid;
-use chrono::Utc;
 
 // ── CONSTANTS ─────────────────────────────────────────────────────────────────
 
@@ -59,7 +58,7 @@ mod hdr {
     pub const MAGIC:      usize = 0;
     pub const VERSION:    usize = 4;
     pub const NODE_COUNT: usize = 8;
-    pub const FLAGS:      usize = 12;
+    pub const _FLAGS:     usize = 12;
     pub const BOOT_TS:    usize = 16;
 }
 

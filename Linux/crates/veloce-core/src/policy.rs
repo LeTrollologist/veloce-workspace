@@ -403,7 +403,6 @@ mod tests {
 
     #[test]
     fn compute_max_caps_default_deny() {
-        use veloce_ipc::message::Capability::*;
         let e = engine_from_toml(r#"
             default_effect = "deny"
         "#);

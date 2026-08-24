@@ -7,7 +7,7 @@ use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 use veloce_ipc::message::{AutoscaleInfoMsg, AutoscalePolicyMsg};
 
 #[derive(Debug, Clone, PartialEq)]

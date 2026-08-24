@@ -18,7 +18,7 @@ pub mod peer;
 pub mod stun;
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},

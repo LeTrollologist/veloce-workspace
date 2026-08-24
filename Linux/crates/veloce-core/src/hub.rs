@@ -10,7 +10,7 @@ use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 use veloce_ipc::message::HubAppMsg;
 
 pub struct HubCatalogEngine {

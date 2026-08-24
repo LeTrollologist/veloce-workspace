@@ -6,7 +6,7 @@ suitable for passing to `VeloceClient::spawn_node_with`.
 */
 
 use anyhow::{bail, Context, Result};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::Path;
 use veloce_ipc::message::{
@@ -20,6 +20,7 @@ use veloce_ipc::message::{
 #[derive(Debug, Deserialize)]
 pub struct ComposeFile {
     #[serde(default)]
+    #[allow(dead_code)]
     pub version: String,
     pub services: HashMap<String, ComposeService>,
     #[serde(default)]

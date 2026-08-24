@@ -244,6 +244,7 @@ struct DnsMessage {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct DnsQuestion {
     name:  String,
     qtype: u16,

@@ -60,7 +60,10 @@ mod compose;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
-use veloce_ipc::message::{Capability, LogStream, NetPortForwardMsg, NodeLimits, RestartPolicy, SpawnNodeMsg};
+use veloce_ipc::message::{
+    AutoscalePolicyMsg, Capability, CronJobMsg, IngressPathRule, IngressRule, LogStream,
+    NetPortForwardMsg, NodeLimits, RestartPolicy, SpawnNodeMsg,
+};
 use veloce_sdk::VeloceClient;
 
 // ── Top-level CLI ─────────────────────────────────────────────────────────────
@@ -891,10 +894,12 @@ async fn run_up(file: Option<PathBuf>, detach: bool) -> Result<()> {
     client.apply_desired_state(spec).await?;
     eprintln!("veloce-compose: ✓ desired state applied — reconciler is converging");
 
-    // Register port forwards.
+    // Register port forwards, autoscaling, cron schedules, and ingress rules.
     let order = compose::topo_sort(&compose_file.services)?;
     for svc_name in &order {
         let svc = &compose_file.services[svc_name];
+
+        // 1. Port forwards
         for port_str in &svc.ports {
             let (host_port, target_port) = compose::parse_port_mapping(port_str)
                 .with_context(|| format!("service '{}': port '{}'", svc_name, port_str))?;
@@ -906,6 +911,57 @@ async fn run_up(file: Option<PathBuf>, detach: bool) -> Result<()> {
                 node_id:     None,
             }).await.with_context(|| format!("add port forward {host_port}:{target_port}"))?;
             eprintln!("veloce-compose: ✓ port forward {host_port} → {target_port}  ({forward_name})");
+        }
+
+        // 2. Autoscaling
+        if let Some(ref auto) = svc.autoscaling {
+            client.autoscale_set(AutoscalePolicyMsg {
+                service_name: svc_name.clone(),
+                min_replicas: auto.min_replicas,
+                max_replicas: auto.max_replicas,
+                target_cpu_percent: auto.target_cpu,
+                target_memory_mb: auto.target_memory_mb,
+                scale_up_cooldown_secs: 30,
+                scale_down_cooldown_secs: 60,
+            }).await.with_context(|| format!("service '{}': configure autoscaling", svc_name))?;
+            eprintln!("veloce-compose: ✓ autoscaling configured for '{svc_name}' (min: {}, max: {})", auto.min_replicas, auto.max_replicas);
+        }
+
+        // 3. Cron schedule
+        if let Some(ref cron) = svc.cron {
+            let job_name = format!("{compose_name}-{svc_name}");
+            client.cron_create(CronJobMsg {
+                name: job_name.clone(),
+                schedule: cron.schedule.clone(),
+                executable: svc.executable.clone(),
+                args: svc.args.clone(),
+                concurrency_policy: cron.concurrency.clone(),
+                enabled: true,
+                last_run_timestamp_secs: None,
+                last_run_status: None,
+                next_run_timestamp_secs: None,
+            }).await.with_context(|| format!("service '{}': configure cron schedule", svc_name))?;
+            eprintln!("veloce-compose: ✓ cron scheduled for '{svc_name}' ({})", cron.schedule);
+        }
+
+        // 4. Ingress route
+        if let Some(ref ing) = svc.ingress {
+            let target_port = svc.ports.first()
+                .and_then(|p| compose::parse_port_mapping(p).ok().map(|(_, node_port)| node_port))
+                .unwrap_or(8080);
+            client.ingress_add(IngressRule {
+                host: ing.host.clone(),
+                paths: vec![IngressPathRule {
+                    path_prefix: ing.path.clone(),
+                    target_port,
+                    strip_prefix: ing.strip_prefix,
+                }],
+                default_port: Some(target_port),
+                tls_enabled: ing.tls,
+                tls_cert_pem: ing.cert.clone(),
+                tls_key_pem: ing.key.clone(),
+            }).await.with_context(|| format!("service '{}': add ingress route for '{}'", svc_name, ing.host))?;
+            eprintln!("veloce-compose: ✓ ingress route {} → port {} ({})", ing.host, target_port, ing.path);
         }
     }
 
@@ -921,6 +977,7 @@ async fn run_down(file: Option<PathBuf>) -> Result<()> {
 
     let caps = vec![
         Capability::KillNodes, Capability::DesiredStateManage, Capability::NetPortForward,
+        Capability::NetRegister,
     ];
     let mut client = connect_client("veloce-compose", caps).await?;
 
@@ -951,13 +1008,23 @@ async fn run_down(file: Option<PathBuf>) -> Result<()> {
     }
     eprintln!("veloce-compose: ✓ {killed} node(s) stopped");
 
-    // Remove port forwards.
+    // Remove port forwards, autoscaling policies, cron jobs, and ingress rules.
     let forwards = client.list_port_forwards().await?;
     for f in &forwards {
         // Only remove forwards whose names start with a service name from this file.
         let belongs = service_names.iter().any(|n| f.name.starts_with(*n));
         if belongs {
             client.remove_port_forward(&f.name).await.ok();
+        }
+    }
+
+    for svc_name in &service_names {
+        let _ = client.autoscale_remove(svc_name).await;
+        let _ = client.cron_remove(&format!("{compose_name}-{svc_name}")).await;
+        if let Some(svc) = compose_file.services.get(*svc_name) {
+            if let Some(ref ing) = svc.ingress {
+                let _ = client.ingress_remove(&ing.host).await;
+            }
         }
     }
 

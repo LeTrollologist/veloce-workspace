@@ -15,7 +15,7 @@ use tokio_rustls::rustls::server::{ClientHello, ResolvesServerCert};
 use tokio_rustls::rustls::sign::CertifiedKey;
 use tokio_rustls::rustls::ServerConfig;
 use tokio_rustls::TlsAcceptor;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// Dynamic SNI Certificate Resolver supporting per-host certificates and a default wildcard fallback.
 #[derive(Debug)]

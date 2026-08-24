@@ -14,7 +14,7 @@ as `NodeLogChunk` push messages.  Crashed nodes are automatically restarted
 according to the `RestartPolicy` stored on the original `SpawnNodeMsg`.
 */
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use uuid::Uuid;
 

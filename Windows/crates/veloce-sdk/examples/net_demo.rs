@@ -21,7 +21,7 @@ use std::time::Duration;
 
 const WORKER_PORT: u16 = 9000;
 const VLN_HOST:    &str = "demo.vln";
-const SOCKS_PORT:  u16  = 1055; // VeloceNet default
+const _SOCKS_PORT: u16  = 1055; // VeloceNet default
 
 #[tokio::main]
 async fn main() -> Result<()> {

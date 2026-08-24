@@ -27,8 +27,10 @@ use veloce_ipc::{
         NodeEventMsg, PeerInfoMsg, PolicyRulesMsg, PortForwardEntry, SpawnNodeMsg,
         TrafficStatsMsg, VolumeEntry, VolumeRegisteredMsg,
     },
-    PIPE_NAME,
 };
+
+#[cfg(windows)]
+use veloce_ipc::PIPE_NAME;
 
 // ── Boxed async I/O trait objects ─────────────────────────────────────────────
 
@@ -126,7 +128,6 @@ impl VeloceClient {
 
         #[cfg(unix)]
         let (writer, reader): (BoxWriter, BoxReader) = {
-            use tokio::net::UnixStream;
             let socket_path = veloce_ipc::socket_path_user();
             let stream = retry_connect_unix(&socket_path, Duration::from_secs(10)).await?;
             let (r, w) = tokio::io::split(stream);

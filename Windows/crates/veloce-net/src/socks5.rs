@@ -33,10 +33,10 @@ const ATYP_DOMAIN:   u8 = 0x03;
 const ATYP_IPV6:     u8 = 0x04;
 const REP_SUCCESS:   u8 = 0x00;
 const REP_FAIL:      u8 = 0x01;
-const REP_NO_ALLOW:  u8 = 0x02;
+const _REP_NO_ALLOW: u8 = 0x02;
 const REP_UNREACHABLE: u8 = 0x04;
 const REP_CMD_UNSUP: u8 = 0x07;
-const REP_ATYP_UNSUP: u8 = 0x08;
+const _REP_ATYP_UNSUP: u8 = 0x08;
 
 // ── SERVER ────────────────────────────────────────────────────────────────────
 
@@ -45,38 +45,32 @@ pub async fn serve(registry: Arc<NetRegistry>, port: u16) -> Result<()> {
     tracing::info!("SOCKS5 server listening on 127.0.0.1:{port}");
 
     loop {
-        let (stream, peer) = listener.accept().await?;
-        let reg = registry.clone();
+        let (stream, peer_addr) = listener.accept().await?;
+        let reg = Arc::clone(&registry);
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(stream, peer, reg).await {
-                tracing::debug!("SOCKS5 error from {peer}: {e:#}");
+            if let Err(e) = handle_client(stream, reg).await {
+                tracing::debug!("SOCKS5 client error from {peer_addr}: {e}");
             }
         });
     }
 }
 
-async fn handle_connection(
-    mut stream:   TcpStream,
-    _peer:        SocketAddr,
-    registry:     Arc<NetRegistry>,
-) -> Result<()> {
-    // ── Step 1: Auth negotiation ──────────────────────────────────────────────
+async fn handle_client(mut stream: TcpStream, registry: Arc<NetRegistry>) -> Result<()> {
+    // ── Step 1: Greeting / Auth negotiation ───────────────────────────────────
     let ver = stream.read_u8().await?;
-    if ver != VERSION {
-        bail!("unsupported SOCKS version: {ver}");
-    }
+    if ver != VERSION { bail!("bad SOCKS version: {ver}"); }
+
     let nmethods = stream.read_u8().await? as usize;
     let mut methods = vec![0u8; nmethods];
     stream.read_exact(&mut methods).await?;
 
     if !methods.contains(&AUTH_NONE) {
-        // We only support no-auth for local connections
         stream.write_all(&[VERSION, AUTH_NO_ACC]).await?;
-        bail!("client doesn't support no-auth");
+        bail!("no acceptable auth method");
     }
     stream.write_all(&[VERSION, AUTH_NONE]).await?;
 
-    // ── Step 2: Request ──────────────────────────────────────────────────────
+    // ── Step 2: Request ───────────────────────────────────────────────────────
     let ver = stream.read_u8().await?;
     if ver != VERSION { bail!("bad version in request"); }
 
@@ -84,7 +78,7 @@ async fn handle_connection(
     let _rsv = stream.read_u8().await?; // reserved
 
     let atyp = stream.read_u8().await?;
-    let (target_host, target_port) = read_address(&mut stream, atyp).await?;
+    let (target_host, _target_port) = read_address(&mut stream, atyp).await?;
 
     if cmd != CMD_CONNECT {
         send_reply(&mut stream, REP_CMD_UNSUP, Ipv4Addr::UNSPECIFIED, 0).await?;

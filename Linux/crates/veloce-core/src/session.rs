@@ -734,7 +734,7 @@ where
 
             Body::CronTrigger { name } => {
                 self.require_cap(Capability::SpawnNodes)?;
-                if let Some(job) = self.state.cron().get_job(&name) {
+                if let Some(_job) = self.state.cron().get_job(&name) {
                     tracing::info!(job = %name, "cron: manual trigger requested");
                 }
                 self.send_reply(cid, Body::CronTrigger { name }).await?;

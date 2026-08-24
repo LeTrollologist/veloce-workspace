@@ -15,7 +15,7 @@ use std::time::Duration;
 use uuid::Uuid;
 
 use veloce_ipc::message::{
-    DependsOnCondition, DesiredStateSpec, HealthStatus, ServiceSpec, UpdateStrategy,
+    DependsOnCondition, DesiredStateSpec, HealthStatus, ServiceSpec,
 };
 
 use crate::state::CoreState;

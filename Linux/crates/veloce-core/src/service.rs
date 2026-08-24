@@ -9,7 +9,7 @@ Handles:
 */
 
 #[cfg(windows)]
-use anyhow::{bail, Context, Result};
+use anyhow::Context;
 #[cfg(windows)]
 use std::ffi::OsString;
 #[cfg(windows)]
