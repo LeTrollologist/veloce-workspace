@@ -111,6 +111,20 @@ pub enum MessageType {
     /// Client → Core: hot-reload policy from veloce-policy.toml.
     PolicyReload      = 0x72,
 
+    // ── OIDC & Corporate Identity (v3.8) ──────────────────────
+    /// Client → Core: set or update active OIDC authentication session.
+    OidcAuthSet          = 0x73,
+    /// Core → Client: OIDC session acknowledged.
+    OidcAuthAck          = 0x74,
+    /// Client → Core: query active OIDC identity session.
+    OidcAuthGet          = 0x75,
+    /// Core → Client: active OIDC identity response.
+    OidcAuthInfo         = 0x76,
+    /// Client → Core: logout and clear SSO session.
+    OidcAuthClear        = 0x77,
+    /// Core → Client: logout acknowledged.
+    OidcAuthClearAck     = 0x78,
+
     // ── Traffic stats ──────────────────────────────────────────
     /// Client → Core: request cumulative byte counters for all tunnels and .vln hosts.
     TrafficQuery      = 0x80,
@@ -263,6 +277,9 @@ impl TryFrom<u8> for MessageType {
             0x5C => MeshGetJoinCodeV3,0x5D => MeshJoinCodeV3Result,
             0x70 => PolicyGetRules,  0x71 => PolicyRulesResult,
             0x72 => PolicyReload,
+            0x73 => OidcAuthSet,     0x74 => OidcAuthAck,
+            0x75 => OidcAuthGet,     0x76 => OidcAuthInfo,
+            0x77 => OidcAuthClear,   0x78 => OidcAuthClearAck,
             0x80 => TrafficQuery,    0x81 => TrafficStatsResult,
             0x90 => NetAddPortForward,    0x91 => NetPortForwardAdded,
             0x92 => NetRemovePortForward, 0x93 => NetListPortForwards,
@@ -492,6 +509,14 @@ pub enum Body {
     MeshKvList,
     MeshKvListResult(Vec<MeshKvEntryMsg>),
     MeshKvDelete { key: String },
+
+    // ── OIDC & Corporate Identity (v3.8) ──────────────────────
+    OidcAuthSet(OidcSessionMsg),
+    OidcAuthAck,
+    OidcAuthGet,
+    OidcAuthInfo(OidcAuthInfoMsg),
+    OidcAuthClear,
+    OidcAuthClearAck,
 }
 
 impl Body {
@@ -600,6 +625,13 @@ impl Body {
             MeshKvList                 => MessageType::MeshKvList,
             MeshKvListResult(_)        => MessageType::MeshKvListResult,
             MeshKvDelete{..}           => MessageType::MeshKvDelete,
+            // OIDC & Corporate Identity (v3.8)
+            OidcAuthSet(_)             => MessageType::OidcAuthSet,
+            OidcAuthAck                => MessageType::OidcAuthAck,
+            OidcAuthGet                => MessageType::OidcAuthGet,
+            OidcAuthInfo(_)            => MessageType::OidcAuthInfo,
+            OidcAuthClear              => MessageType::OidcAuthClear,
+            OidcAuthClearAck           => MessageType::OidcAuthClearAck,
         }
     }
 }
@@ -1273,6 +1305,29 @@ pub struct MeshKvEntryMsg {
     pub version: u64,
     pub updated_at: u64,
     pub origin: Uuid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OidcSessionMsg {
+    pub issuer_url: String,
+    pub client_id: String,
+    pub subject: String,
+    pub email: String,
+    pub name: Option<String>,
+    pub groups: Vec<String>,
+    pub id_token: String,
+    pub expires_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OidcAuthInfoMsg {
+    pub is_authenticated: bool,
+    pub issuer_url: Option<String>,
+    pub subject: Option<String>,
+    pub email: Option<String>,
+    pub name: Option<String>,
+    pub groups: Vec<String>,
+    pub expires_at: Option<u64>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

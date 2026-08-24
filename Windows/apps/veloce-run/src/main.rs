@@ -55,6 +55,7 @@ Examples:
     veloce-run version
 */
 
+mod auth;
 mod compose;
 mod pack;
 
@@ -203,6 +204,10 @@ enum Commands {
         #[command(subcommand)]
         action: PackAction,
     },
+    /// Manage Corporate OpenID Connect (OIDC) SSO Authentication (v3.8)
+    Auth(auth::AuthArgs),
+    /// Shortcut to authenticate with corporate SSO (v3.8)
+    Login(auth::LoginArgs),
     /// Print version information
     Version,
 }
@@ -515,6 +520,14 @@ async fn main() -> Result<()> {
         Some(Commands::Metrics { port })      => run_metrics(port).await,
         Some(Commands::Hub { action })        => run_hub(action).await,
         Some(Commands::Pack { action })       => pack::run_pack(action).await,
+        Some(Commands::Auth(args))            => {
+            let client = connect_client("veloce-auth", vec![Capability::RegistryRead, Capability::RegistryWrite]).await?;
+            auth::run_auth(std::sync::Arc::new(tokio::sync::Mutex::new(client)), args).await
+        }
+        Some(Commands::Login(args))           => {
+            let client = connect_client("veloce-auth", vec![Capability::RegistryRead, Capability::RegistryWrite]).await?;
+            auth::handle_login(std::sync::Arc::new(tokio::sync::Mutex::new(client)), args).await
+        }
         Some(Commands::Version)               => { run_version(); Ok(()) }
         None => {
             let executable = match cli.executable {

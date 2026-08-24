@@ -906,6 +906,26 @@ where
                 }
             }
 
+            // ── OIDC & Corporate Identity (v3.8) ──────────────────────
+            Body::OidcAuthSet(session_msg) => {
+                let session = crate::oidc::OidcSession::from(session_msg);
+                if let Err(e) = self.state.oidc().set_session(session) {
+                    self.send_error(Some(cid), ErrorCode::InternalError, format!("failed to save SSO session: {e}")).await?;
+                } else {
+                    self.send_reply(cid, Body::OidcAuthAck).await?;
+                }
+            }
+
+            Body::OidcAuthGet => {
+                let info = self.state.oidc().get_auth_info();
+                self.send_reply(cid, Body::OidcAuthInfo(info)).await?;
+            }
+
+            Body::OidcAuthClear => {
+                let _ = self.state.oidc().clear_session();
+                self.send_reply(cid, Body::OidcAuthClearAck).await?;
+            }
+
             other => {
                 tracing::warn!("unhandled message type: {:?}", other.msg_type());
                 self.send_error(Some(cid), ErrorCode::InvalidMessage,

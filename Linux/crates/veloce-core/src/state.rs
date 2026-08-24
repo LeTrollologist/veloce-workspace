@@ -68,6 +68,9 @@ pub struct CoreState {
     // ── v3.4 ──────────────────────────────────────────────────────────────────
     /// Veloce Hub application catalog and deployment engine.
     pub hub: Arc<crate::hub::HubCatalogEngine>,
+
+    // ── v3.8 (Enterprise OIDC SSO) ────────────────────────────
+    pub oidc: Arc<crate::oidc::OidcEngine>,
 }
 
 impl CoreState {
@@ -134,6 +137,7 @@ impl CoreState {
         let cron       = crate::cron::CronScheduler::new();
         let tls_manager = Arc::new(veloce_net::TlsManager::new_self_signed()?);
         let hub        = crate::hub::HubCatalogEngine::new(&dir);
+        let oidc       = Arc::new(crate::oidc::OidcEngine::new(&dir));
 
         Ok(Self {
             registry,
@@ -152,6 +156,7 @@ impl CoreState {
             cron,
             tls_manager,
             hub,
+            oidc,
         })
     }
 
@@ -166,6 +171,7 @@ impl CoreState {
     pub fn cron(&self)                -> &Arc<crate::cron::CronScheduler> { &self.cron }
     pub fn tls_manager(&self)         -> &Arc<veloce_net::TlsManager> { &self.tls_manager }
     pub fn hub(&self)                 -> &Arc<crate::hub::HubCatalogEngine> { &self.hub }
+    pub fn oidc(&self)                -> &Arc<crate::oidc::OidcEngine> { &self.oidc }
     pub fn reconciler(&self)          -> &Arc<Reconciler>             { &self.reconciler }
     /// The current session's PSK bytes.  Clients must send these verbatim.
     pub fn psk(&self) -> &[u8; 32] { &self.psk }

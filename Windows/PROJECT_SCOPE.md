@@ -440,5 +440,11 @@ This phase dedicated three sequential releases to security, correctness, and sta
 - [x] `VeloceVpnService` — Zero-root `android.net.VpnService` routing `*.vln` domains and private mesh traffic
 - [x] Real-time replicated KV editor and mobile telemetry monitoring
 
+**v3.8.0 — Enterprise OIDC & Corporate Identity Integration (SSO / ZTNA)** ✅
+- [x] PKCE Authorization Code Grant flow with ephemeral local callback listener (`http://127.0.0.1:18234/callback`)
+- [x] Corporate group-based RBAC and Mesh ACL role bindings in `veloce-policy.toml` (`[oidc.role_bindings]`)
+- [x] `veloce-run auth` CLI subcommands (`login`, `status`, `whoami`, `logout`)
+- [x] Web Status Portal (:9090) live corporate identity badge and API endpoints (`/api/auth/status`, `/api/auth/logout`)
+
 **Future Roadmap** 📋
 - **Standalone Distribution**: Portable self-contained binaries (`.exe` / `.tar.gz`) with manual and offline release artifacts, bypassing third-party cloud billing dependencies.

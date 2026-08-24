@@ -373,6 +373,19 @@ async fn handle_portal_client(mut client: TcpStream, state: Arc<CoreState>) -> R
             body
         );
         client.write_all(resp.as_bytes()).await?;
+    } else if path == "/api/auth/status" {
+        let auth_info = state.oidc().get_auth_info();
+        let body = serde_json::to_string(&auth_info).unwrap_or_default();
+        let resp = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        client.write_all(resp.as_bytes()).await?;
+    } else if path == "/api/auth/logout" {
+        let _ = state.oidc().clear_session();
+        let resp = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK";
+        client.write_all(resp.as_bytes()).await?;
     } else if path.starts_with("/api/mesh/kv") {
         if method == "POST" {
             let key = extract_query_param(path, "key").unwrap_or_default();
@@ -505,6 +518,7 @@ async fn build_status_json(state: &Arc<CoreState>) -> serde_json::Value {
     let hpa = state.autoscale().list_policies().into_iter().map(|p| p.to_msg()).collect::<Vec<_>>();
     let cron = state.cron().list_jobs().into_iter().map(|c| c.to_msg()).collect::<Vec<_>>();
     let hub = state.hub().list();
+    let auth = state.oidc().get_auth_info();
 
     serde_json::json!({
         "version": env!("CARGO_PKG_VERSION"),
@@ -515,6 +529,7 @@ async fn build_status_json(state: &Arc<CoreState>) -> serde_json::Value {
         "hpa": hpa,
         "cron": cron,
         "hub": hub,
+        "auth": auth,
     })
 }
 

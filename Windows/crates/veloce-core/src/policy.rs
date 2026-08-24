@@ -96,6 +96,35 @@ pub struct PolicyConfig {
     /// ```
     #[serde(default = "default_gossip_interval")]
     pub gossip_interval_secs: u64,
+
+    /// Enterprise OIDC SSO and corporate identity configuration.
+    #[serde(default)]
+    pub oidc: Option<OidcConfig>,
+}
+
+/// OIDC and Corporate SSO Configuration in veloce-policy.toml
+#[derive(Deserialize, Clone, Debug, Default)]
+pub struct OidcConfig {
+    #[serde(default)]
+    pub issuer_url: Option<String>,
+    #[serde(default)]
+    pub client_id: Option<String>,
+    #[serde(default)]
+    pub required_groups: Vec<String>,
+    #[serde(default)]
+    pub role_bindings: Vec<RoleBinding>,
+}
+
+/// Role binding connecting corporate groups to allowed hostnames and capabilities.
+#[derive(Deserialize, Clone, Debug, Default)]
+pub struct RoleBinding {
+    pub group: String,
+    #[serde(default)]
+    pub allowed_hostnames: Vec<String>,
+    #[serde(default)]
+    pub denied_hostnames: Vec<String>,
+    #[serde(default)]
+    pub capabilities: Vec<String>,
 }
 
 impl Default for PolicyConfig {
@@ -107,6 +136,7 @@ impl Default for PolicyConfig {
             stun_servers:         default_stun_servers(),
             mesh_mode:            MeshMode::default(),
             gossip_interval_secs: default_gossip_interval(),
+            oidc:                 None,
         }
     }
 }
@@ -263,6 +293,63 @@ impl PolicyEngine {
                 if !glob_match(fp, peer) { continue; }
             }
             return acl.effect.eq_ignore_ascii_case("allow");
+        }
+        cfg.default_effect.eq_ignore_ascii_case("allow")
+    }
+
+    /// Check whether an authenticated user with `user_groups` is allowed to access `hostname`.
+    pub fn check_oidc_mesh_acl(&self, user_groups: &[String], hostname: &str) -> bool {
+        let cfg = self.config.read();
+        let oidc = match &cfg.oidc {
+            Some(o) => o,
+            None => return true, // No OIDC policy -> permissive
+        };
+
+        if oidc.role_bindings.is_empty() {
+            return true;
+        }
+
+        // Check if any role binding matches the user's groups
+        let mut matched_group = false;
+        for rb in &oidc.role_bindings {
+            if user_groups.iter().any(|g| g.eq_ignore_ascii_case(&rb.group)) {
+                matched_group = true;
+                // Explicit deny takes priority
+                if rb.denied_hostnames.iter().any(|p| glob_match(p, hostname)) {
+                    return false;
+                }
+                // Allowed hostnames
+                if rb.allowed_hostnames.iter().any(|p| glob_match(p, hostname)) {
+                    return true;
+                }
+            }
+        }
+
+        if matched_group {
+            false
+        } else {
+            cfg.default_effect.eq_ignore_ascii_case("allow")
+        }
+    }
+
+    /// Check whether an authenticated user with `user_groups` is allowed a specific capability.
+    pub fn check_oidc_capability(&self, user_groups: &[String], cap_name: &str) -> bool {
+        let cfg = self.config.read();
+        let oidc = match &cfg.oidc {
+            Some(o) => o,
+            None => return true,
+        };
+
+        if oidc.role_bindings.is_empty() {
+            return true;
+        }
+
+        for rb in &oidc.role_bindings {
+            if user_groups.iter().any(|g| g.eq_ignore_ascii_case(&rb.group)) {
+                if rb.capabilities.iter().any(|c| c.eq_ignore_ascii_case(cap_name) || c == "*") {
+                    return true;
+                }
+            }
         }
         cfg.default_effect.eq_ignore_ascii_case("allow")
     }
@@ -446,5 +533,50 @@ mod tests {
         assert!(!e.check_mesh_acl("db.internal", "UNTRUSTED"));
         // Allowed for a different peer
         assert!( e.check_mesh_acl("db.internal", "TRUSTED"));
+    }
+
+    #[test]
+    fn oidc_role_binding_mesh_acl_and_caps() {
+        let e = engine_from_toml(r#"
+            default_effect = "deny"
+
+            [oidc]
+            issuer_url = "https://login.microsoftonline.com/test/v2.0"
+            client_id  = "veloce-enterprise-app"
+
+            [[oidc.role_bindings]]
+            group = "DevOps"
+            allowed_hostnames = ["*.prod.vln", "*.staging.vln"]
+            denied_hostnames  = ["secret.prod.vln"]
+            capabilities      = ["SpawnNodes", "KillNodes", "ReadSecrets"]
+
+            [[oidc.role_bindings]]
+            group = "Engineering"
+            allowed_hostnames = ["*.dev.vln", "*.staging.vln"]
+            capabilities      = ["SpawnNodes", "ListNodes"]
+        "#);
+
+        let devops_groups = vec!["DevOps".to_string()];
+        let eng_groups = vec!["Engineering".to_string()];
+        let guest_groups = vec!["Guest".to_string()];
+
+        // DevOps access
+        assert!(e.check_oidc_mesh_acl(&devops_groups, "api.prod.vln"));
+        assert!(e.check_oidc_mesh_acl(&devops_groups, "web.staging.vln"));
+        assert!(!e.check_oidc_mesh_acl(&devops_groups, "secret.prod.vln")); // explicit deny
+        assert!(e.check_oidc_capability(&devops_groups, "SpawnNodes"));
+        assert!(e.check_oidc_capability(&devops_groups, "ReadSecrets"));
+        assert!(!e.check_oidc_capability(&devops_groups, "DropTables"));
+
+        // Engineering access
+        assert!(e.check_oidc_mesh_acl(&eng_groups, "test.dev.vln"));
+        assert!(e.check_oidc_mesh_acl(&eng_groups, "web.staging.vln"));
+        assert!(!e.check_oidc_mesh_acl(&eng_groups, "api.prod.vln")); // not in allowed
+        assert!(e.check_oidc_capability(&eng_groups, "ListNodes"));
+        assert!(!e.check_oidc_capability(&eng_groups, "ReadSecrets"));
+
+        // Guest access
+        assert!(!e.check_oidc_mesh_acl(&guest_groups, "api.prod.vln"));
+        assert!(!e.check_oidc_capability(&guest_groups, "SpawnNodes"));
     }
 }

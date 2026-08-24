@@ -751,6 +751,35 @@ impl VeloceClient {
         }
     }
 
+    // ── OIDC & Corporate Identity (v3.8) ──────────────────────────────────────
+
+    /// Store or update an active OIDC SSO session with Core.
+    pub async fn auth_set_session(&mut self, session: veloce_ipc::message::OidcSessionMsg) -> Result<()> {
+        match self.request(Body::OidcAuthSet(session)).await? {
+            Body::OidcAuthAck => Ok(()),
+            Body::Error(e)    => bail!("auth_set_session: {}", e.message),
+            other             => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// Query the currently authenticated corporate SSO identity and claims.
+    pub async fn auth_get_session(&mut self) -> Result<veloce_ipc::message::OidcAuthInfoMsg> {
+        match self.request(Body::OidcAuthGet).await? {
+            Body::OidcAuthInfo(info) => Ok(info),
+            Body::Error(e)           => bail!("auth_get_session: {}", e.message),
+            other                    => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// Logout and clear the active SSO session.
+    pub async fn auth_logout(&mut self) -> Result<()> {
+        match self.request(Body::OidcAuthClear).await? {
+            Body::OidcAuthClearAck => Ok(()),
+            Body::Error(e)         => bail!("auth_logout: {}", e.message),
+            other                  => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
     // ── Traffic stats ─────────────────────────────────────────────────────────
 
     /// Query per-tunnel (Noise) and per-.vln host byte counters from Core.
