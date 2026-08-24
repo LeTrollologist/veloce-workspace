@@ -423,6 +423,11 @@ This phase dedicated three sequential releases to security, correctness, and sta
 - [x] Explicit `--help` and `--version` handling for `veloce-core` bypassing SCM service dispatcher
 - [x] Unified documentation & roadmap across monorepo and production mirrors
 
+**v3.6.0 — Userspace `.vpack` Application Packager** ✅
+- [x] `veloce-core/src/pack.rs` & `apps/veloce-run/src/pack.rs` — Self-contained single-file `.vpack` container format with binary payload serialization
+- [x] Ed25519 publisher signature generation, verification, and tamper protection (`ed25519-dalek`)
+- [x] `veloce-run pack` CLI subcommands (`init`, `keygen`, `build`, `inspect`, `verify`, `extract`, `run`)
+- [x] Sandboxed zero-root package cache and runtime execution engine
+
 **Future Roadmap** 📋
-- **v3.6 — Userspace `.vpack` Application Packager**: Self-contained single-file archives (`.vpack`) bundling binaries, configs, environment defaults, lifecycle hooks, and Ed25519 publisher signatures.
 - **Standalone Distribution**: Portable self-contained binaries (`.exe` / `.tar.gz`) with manual and offline release artifacts, bypassing third-party cloud billing dependencies.

@@ -56,9 +56,11 @@ Examples:
 */
 
 mod compose;
+mod pack;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use pack::PackAction;
 use std::path::PathBuf;
 use veloce_ipc::message::{
     AutoscalePolicyMsg, Capability, CronJobMsg, IngressPathRule, IngressRule, LogStream,
@@ -195,6 +197,11 @@ enum Commands {
     Hub {
         #[command(subcommand)]
         action: HubAction,
+    },
+    /// Build, sign, inspect, verify, and run .vpack application packages (v3.6)
+    Pack {
+        #[command(subcommand)]
+        action: PackAction,
     },
     /// Print version information
     Version,
@@ -507,6 +514,7 @@ async fn main() -> Result<()> {
         Some(Commands::Portal { port })       => run_portal(port).await,
         Some(Commands::Metrics { port })      => run_metrics(port).await,
         Some(Commands::Hub { action })        => run_hub(action).await,
+        Some(Commands::Pack { action })       => pack::run_pack(action).await,
         Some(Commands::Version)               => { run_version(); Ok(()) }
         None => {
             let executable = match cli.executable {

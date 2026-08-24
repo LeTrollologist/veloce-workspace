@@ -20,6 +20,11 @@ ctrlc       = { workspace = true }
 uuid        = { workspace = true }
 serde       = { workspace = true }
 serde_yaml  = { workspace = true }
+serde_json  = { workspace = true }
+toml        = "0.8"
+bincode     = { workspace = true }
+rand        = "0.8"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
 
 [target.'cfg(windows)'.dependencies]
 winreg = { workspace = true }
