@@ -412,6 +412,12 @@ This phase dedicated three sequential releases to security, correctness, and sta
 - [x] `veloce-run hub` — CLI subcommands (`list`, `search`, `publish`, `deploy`, `rm`)
 - [x] Cross-platform releases for Windows and Linux (glibc 2.17+) compiled locally with `cargo-zigbuild`
 
+**v3.5 — Real-Time WebSocket Telemetry, Web Terminal & P2P Replicated Mesh KV Store** ✅
+- [x] `veloce-mesh/src/kv.rs` — Decentralized, causal CRDT / LWW replicated Key-Value database over Noise_IK mesh tunnels
+- [x] `veloce-core/src/portal.rs` — RFC 6455 WebSocket streaming server on `:9090/ws` with real-time push telemetry and live logs console
+- [x] `veloce-run mesh kv` — CLI subcommands (`set`, `get`, `list`, `rm`)
+- [x] Web Portal interactive Mesh KV explorer and live WebSocket status stream
+
 **Future Roadmap** 📋
-- **v3.5 — Userspace `.vpack` Application Packager**: Self-contained single-file archives (`.vpack`) bundling binaries, configs, environment defaults, lifecycle hooks, and Ed25519 publisher signatures.
+- **v3.6 — Userspace `.vpack` Application Packager**: Self-contained single-file archives (`.vpack`) bundling binaries, configs, environment defaults, lifecycle hooks, and Ed25519 publisher signatures.
 - **Standalone Distribution**: Portable self-contained binaries (`.exe` / `.tar.gz`) with manual and offline release artifacts, bypassing third-party cloud billing dependencies.

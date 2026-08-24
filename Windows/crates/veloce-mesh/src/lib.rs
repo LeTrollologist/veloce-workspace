@@ -12,6 +12,7 @@
 pub mod control;
 pub mod forward;
 pub mod identity;
+pub mod kv;
 pub mod noise;
 pub mod peer;
 pub mod stun;
@@ -84,6 +85,8 @@ pub struct MeshState {
     /// When a different peer later claims the same hostname, a warning is
     /// logged.  Uses `parking_lot::Mutex` for use inside sync `OwnerFn`.
     hostname_origins: Arc<ParkingMutex<HashMap<String, Uuid>>>,
+    /// Decentralized replicated key-value store (v3.5).
+    pub kv: Arc<crate::kv::MeshKvStore>,
 }
 
 impl MeshState {
@@ -143,6 +146,7 @@ impl MeshState {
         }
 
         let coordinator = Arc::new(ClusterCoordinator::new(identity.machine_id));
+        let kv = crate::kv::MeshKvStore::new(identity.machine_id);
 
         Arc::new(Self {
             identity,
@@ -156,6 +160,7 @@ impl MeshState {
             gossip_interval_secs,
             used_nonces: Mutex::new(HashSet::new()),
             hostname_origins: Arc::new(ParkingMutex::new(HashMap::new())),
+            kv,
         })
     }
 

@@ -19,7 +19,7 @@ use veloce_ipc::{
     message::{
         Body, Capability, Envelope, ErrorCode, ErrorMsg, Flags,
         HandshakeAckMsg, MeshConnectMsg, MeshDisconnectMsg, MeshGetJoinCodeV3Msg, MeshJoinCodeV3ResultMsg,
-        NetAddIngressMsg, NodeEventMsg, NodeInfo, NodeKilledMsg, NodeLimits, NodeListMsg,
+        MeshKvEntryMsg, NetAddIngressMsg, NodeEventMsg, NodeInfo, NodeKilledMsg, NodeLimits, NodeListMsg,
         NodeLogChunkMsg, NodeResourceMsg, NodeSpawnedMsg, NodeStatus as IpcNodeStatus,
         NodeStatusMsg, RestartPolicy, SpawnNodeMsg, TrafficStatsMsg,
     },
@@ -861,6 +861,45 @@ where
                     Err(e) => {
                         self.send_error(Some(cid), ErrorCode::NodeStartFailed, e.to_string()).await?;
                     }
+                }
+            }
+
+            // ── Mesh Replicated Key-Value (v3.5) ──────────────────────────
+            Body::MeshKvSet { key, value } => {
+                self.require_cap(Capability::MeshKvManage)?;
+                if let Some(mesh) = &self.state.mesh {
+                    mesh.kv.set(&key, &value);
+                    self.send_reply(cid, Body::Ping).await?;
+                } else {
+                    self.send_error(Some(cid), ErrorCode::NotFound, "mesh layer not active".into()).await?;
+                }
+            }
+
+            Body::MeshKvGet { key } => {
+                let val = self.state.mesh.as_ref().and_then(|m| m.kv.get(&key));
+                self.send_reply(cid, Body::MeshKvInfo(val)).await?;
+            }
+
+            Body::MeshKvList => {
+                let list = self.state.mesh.as_ref().map(|m| {
+                    m.kv.list().into_iter().map(|e| MeshKvEntryMsg {
+                        key: e.key,
+                        value: e.value,
+                        version: e.version,
+                        updated_at: e.updated_at,
+                        origin: e.origin,
+                    }).collect()
+                }).unwrap_or_default();
+                self.send_reply(cid, Body::MeshKvListResult(list)).await?;
+            }
+
+            Body::MeshKvDelete { key } => {
+                self.require_cap(Capability::MeshKvManage)?;
+                if let Some(mesh) = &self.state.mesh {
+                    mesh.kv.delete(&key);
+                    self.send_reply(cid, Body::Ping).await?;
+                } else {
+                    self.send_error(Some(cid), ErrorCode::NotFound, "mesh layer not active".into()).await?;
                 }
             }
 

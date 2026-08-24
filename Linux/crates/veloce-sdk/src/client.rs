@@ -19,7 +19,7 @@ use uuid::Uuid;
 use veloce_ipc::{
     Codec,
     message::{
-        AutoscaleInfoMsg, AutoscalePolicyMsg, CronJobMsg, HubAppMsg,
+        AutoscaleInfoMsg, AutoscalePolicyMsg, CronJobMsg, HubAppMsg, MeshKvEntryMsg,
         Body, Capability, DesiredStateSpec, Envelope, Flags,
         IngressRule, MeshConnectMsg, MeshConnectResultMsg, MeshDisconnectMsg,
         MeshGetJoinCodeV3Msg, MeshInfoMsg, NetAddIngressMsg,
@@ -708,6 +708,44 @@ impl VeloceClient {
         match self.request(Body::HubDeploy { name: name.into() }).await? {
             Body::NodeSpawned(msg) => Ok(msg.node_id),
             Body::Error(e) => bail!("hub_deploy: {}", e.message),
+            other => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    // ── Mesh Replicated Key-Value (v3.5) ──────────────────────────────────────
+
+    /// Set a key-value pair in the mesh-replicated store.
+    pub async fn mesh_kv_set(&mut self, key: &str, value: &str) -> Result<()> {
+        match self.request(Body::MeshKvSet { key: key.into(), value: value.into() }).await? {
+            Body::Ping => Ok(()),
+            Body::Error(e) => bail!("mesh_kv_set: {}", e.message),
+            other => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// Get a key's value from the mesh-replicated store.
+    pub async fn mesh_kv_get(&mut self, key: &str) -> Result<Option<String>> {
+        match self.request(Body::MeshKvGet { key: key.into() }).await? {
+            Body::MeshKvInfo(v) => Ok(v),
+            Body::Error(e) => bail!("mesh_kv_get: {}", e.message),
+            other => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// List all active key-value entries across the mesh.
+    pub async fn mesh_kv_list(&mut self) -> Result<Vec<MeshKvEntryMsg>> {
+        match self.request(Body::MeshKvList).await? {
+            Body::MeshKvListResult(v) => Ok(v),
+            Body::Error(e) => bail!("mesh_kv_list: {}", e.message),
+            other => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// Delete a key from the mesh-replicated store.
+    pub async fn mesh_kv_delete(&mut self, key: &str) -> Result<()> {
+        match self.request(Body::MeshKvDelete { key: key.into() }).await? {
+            Body::Ping => Ok(()),
+            Body::Error(e) => bail!("mesh_kv_delete: {}", e.message),
             other => bail!("unexpected: {:?}", other.msg_type()),
         }
     }

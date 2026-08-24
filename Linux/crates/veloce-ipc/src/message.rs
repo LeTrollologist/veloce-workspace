@@ -213,6 +213,20 @@ pub enum MessageType {
     /// Client → Core: deploy an application from the Hub catalog.
     HubDeploy            = 0xF9,
 
+    // ── Mesh Replicated Key-Value (v3.5) ──────────────────────
+    /// Client → Core: set a key-value pair in the mesh-replicated store.
+    MeshKvSet            = 0x6A,
+    /// Client → Core: get a key-value pair from the mesh store.
+    MeshKvGet            = 0x6B,
+    /// Core → Client: mesh KV value response.
+    MeshKvInfo           = 0x6C,
+    /// Client → Core: list all mesh KV entries.
+    MeshKvList           = 0x6D,
+    /// Core → Client: list response.
+    MeshKvListResult     = 0x6E,
+    /// Client → Core: delete a key from the mesh store.
+    MeshKvDelete         = 0x6F,
+
     // ── Error ─────────────────────────────────────────────────
     Error           = 0xFF,
 }
@@ -235,6 +249,9 @@ impl TryFrom<u8> for MessageType {
             0x30 => RegistryGet,     0x31 => RegistryValue,   0x32 => RegistrySet,
             0x33 => RegistryAck,
             0x60 => QueryNodeResources, 0x61 => NodeResourceList,
+            0x6A => MeshKvSet,       0x6B => MeshKvGet,
+            0x6C => MeshKvInfo,      0x6D => MeshKvList,
+            0x6E => MeshKvListResult,0x6F => MeshKvDelete,
             0x40 => NetRegisterHost, 0x41 => NetHostRegistered,
             0x42 => NetUnregisterHost,0x43 => NetResolve,
             0x44 => NetResolveResult, 0x45 => NetHostList,
@@ -467,6 +484,14 @@ pub enum Body {
     HubInfo(Option<HubAppMsg>),
     HubRemove { name: String },
     HubDeploy { name: String },
+
+    // ── Mesh Replicated Key-Value (v3.5) ──────────────────────
+    MeshKvSet { key: String, value: String },
+    MeshKvGet { key: String },
+    MeshKvInfo(Option<String>),
+    MeshKvList,
+    MeshKvListResult(Vec<MeshKvEntryMsg>),
+    MeshKvDelete { key: String },
 }
 
 impl Body {
@@ -568,6 +593,13 @@ impl Body {
             HubInfo(_)                 => MessageType::HubInfo,
             HubRemove{..}              => MessageType::HubRemove,
             HubDeploy{..}              => MessageType::HubDeploy,
+            // Mesh Replicated Key-Value (v3.5)
+            MeshKvSet{..}              => MessageType::MeshKvSet,
+            MeshKvGet{..}              => MessageType::MeshKvGet,
+            MeshKvInfo(_)              => MessageType::MeshKvInfo,
+            MeshKvList                 => MessageType::MeshKvList,
+            MeshKvListResult(_)        => MessageType::MeshKvListResult,
+            MeshKvDelete{..}           => MessageType::MeshKvDelete,
         }
     }
 }
@@ -620,6 +652,8 @@ pub enum Capability {
     DesiredStateManage,
     /// Manage the Veloce Hub catalog and launch Hub apps (v3.4).
     HubManage,
+    /// Read, write, and manage the P2P replicated mesh key-value store (v3.5).
+    MeshKvManage,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1230,6 +1264,15 @@ pub struct HubAppMsg {
     pub replicas: u32,
     pub auto_restart: bool,
     pub tls: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MeshKvEntryMsg {
+    pub key: String,
+    pub value: String,
+    pub version: u64,
+    pub updated_at: u64,
+    pub origin: Uuid,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

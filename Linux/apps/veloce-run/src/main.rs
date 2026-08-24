@@ -388,6 +388,34 @@ enum MeshAction {
         /// Peer UUID from `veloce-run mesh peers`
         peer_id: uuid::Uuid,
     },
+    /// Manage the P2P replicated key-value mesh database (v3.5)
+    Kv {
+        #[command(subcommand)]
+        action: MeshKvAction,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum MeshKvAction {
+    /// Set a key-value pair in the mesh database
+    Set {
+        /// Key name
+        key: String,
+        /// Value string
+        value: String,
+    },
+    /// Get a key from the mesh database
+    Get {
+        /// Key name
+        key: String,
+    },
+    /// List all key-value entries across the mesh
+    List,
+    /// Delete a key from the mesh database
+    Rm {
+        /// Key name to remove
+        key: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -490,8 +518,8 @@ async fn main() -> Result<()> {
 // ── Mesh subcommands ──────────────────────────────────────────────────────────
 
 async fn run_mesh(action: MeshAction) -> Result<()> {
-    // MeshManage is required for join/leave; harmless to declare for identity/peers too.
-    let mut client = connect_client("veloce-run-mesh", vec![Capability::MeshManage]).await?;
+    // MeshManage is required for join/leave; MeshKvManage for mesh database operations.
+    let mut client = connect_client("veloce-run-mesh", vec![Capability::MeshManage, Capability::MeshKvManage]).await?;
     match action {
         MeshAction::Identity { ttl, one_time } => {
             let info = client.mesh_info().await?;
@@ -654,6 +682,40 @@ async fn run_mesh(action: MeshAction) -> Result<()> {
         MeshAction::Leave { peer_id } => {
             client.mesh_disconnect(peer_id).await?;
             println!("✓ disconnected from {peer_id}");
+        }
+
+        MeshAction::Kv { action } => {
+            match action {
+                MeshKvAction::Set { key, value } => {
+                    client.mesh_kv_set(&key, &value).await?;
+                    println!("✓ Mesh KV: set '{key}' = '{value}'");
+                }
+                MeshKvAction::Get { key } => {
+                    match client.mesh_kv_get(&key).await? {
+                        Some(val) => println!("{val}"),
+                        None => {
+                            eprintln!("Key '{key}' not found in Mesh database");
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                MeshKvAction::List => {
+                    let list = client.mesh_kv_list().await?;
+                    if list.is_empty() {
+                        println!("No entries in Mesh database.");
+                    } else {
+                        println!("{:<24} {:<32} {:<8} {:<36}", "KEY", "VALUE", "VERSION", "ORIGIN PEER");
+                        println!("{}", "─".repeat(105));
+                        for e in list {
+                            println!("{:<24} {:<32} {:<8} {:<36}", e.key, e.value, e.version, e.origin);
+                        }
+                    }
+                }
+                MeshKvAction::Rm { key } => {
+                    client.mesh_kv_delete(&key).await?;
+                    println!("✓ Mesh KV: deleted '{key}'");
+                }
+            }
         }
     }
     Ok(())
