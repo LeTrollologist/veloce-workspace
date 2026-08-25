@@ -50,7 +50,7 @@
 | NRPT `.vln` routing (system-wide DNS without VELOCE_DNS) | ✅ v1.0 |
 | Signed installer + Tauri auto-update | ✅ v1.0 |
 | GitHub Actions CI/CD pipeline | ✅ v1.0 |
-| `SECURITY.md` + `VELOCE_PRINCIPALS.md` manifesto | ✅ v1.0 |
+| `SECURITY.md` + `VELOCE_PRINCIPLES.md` manifesto | ✅ v1.0 |
 | Veloce Compose (`veloce-compose.yml`, `veloce up/down`, port publishing, env injection, health probes) | ✅ v1.1 |
 | Persistence & Secrets (named volumes, bind mounts, DPAPI-backed runtime secrets) | ✅ v1.2 |
 | Rolling Deployments & Desired State (reconciler, rolling/recreate strategies, `veloce status`) | ✅ v1.3 |
@@ -336,7 +336,7 @@ This phase dedicated three sequential releases to security, correctness, and sta
 - [x] Signed installer with Tauri auto-update delivery
 - [x] GitHub Actions CI/CD pipeline (`.github/workflows/ci.yml`, `release.yml`)
 - [x] `SECURITY.md` — comprehensive security policy, threat model, and trust boundaries
-- [x] `VELOCE_PRINCIPALS.md` — design manifesto (zero-admin, zero kernel deps, encrypted mesh, capability-based security)
+- [x] `VELOCE_PRINCIPLES.md` — design manifesto (zero-admin, zero kernel deps, encrypted mesh, capability-based security)
 - [x] Workspace version bumped to `1.0.0`
 
 ---
