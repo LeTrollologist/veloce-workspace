@@ -1001,6 +1001,31 @@ where
                 }
             }
 
+            // ── OpenTelemetry Distributed Tracing (v4.2) ───────────────
+            Body::TraceQuery { limit, service } => {
+                self.require_cap(Capability::TraceRead)?;
+                let list = self.state.otel.query_traces(limit, service.as_deref());
+                self.send_reply(cid, Body::TraceQueryResult(list)).await?;
+            }
+
+            Body::TraceGet { trace_id } => {
+                self.require_cap(Capability::TraceRead)?;
+                let detail = self.state.otel.get_trace(&trace_id);
+                self.send_reply(cid, Body::TraceGetResult(detail)).await?;
+            }
+
+            Body::TraceOtlpConfigSet(config) => {
+                self.require_cap(Capability::TraceAdmin)?;
+                self.state.otel.set_otlp_config(config);
+                self.send_reply(cid, Body::TraceOtlpConfigAck).await?;
+            }
+
+            Body::TraceClear => {
+                self.require_cap(Capability::TraceAdmin)?;
+                self.state.otel.clear_traces();
+                self.send_reply(cid, Body::TraceClearAck).await?;
+            }
+
             other => {
                 tracing::warn!("unhandled message type: {:?}", other.msg_type());
                 self.send_error(Some(cid), ErrorCode::InvalidMessage,

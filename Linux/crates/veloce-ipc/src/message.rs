@@ -161,6 +161,24 @@ pub enum MessageType {
     /// Core → Client: share revoked ack.
     ShareRevokeAck       = 0x8A,
 
+    // ── OpenTelemetry Distributed Tracing (v4.2) ───────────────
+    /// Client → Core: query recent distributed traces.
+    TraceQuery           = 0x8B,
+    /// Core → Client: trace query response.
+    TraceQueryResult     = 0x8C,
+    /// Client → Core: get full trace detail with spans.
+    TraceGet             = 0x8D,
+    /// Core → Client: trace detail response.
+    TraceGetResult       = 0x8E,
+    /// Client → Core: configure OTLP export endpoint.
+    TraceOtlpConfigSet   = 0x8F,
+    /// Core → Client: OTLP export configured ack.
+    TraceOtlpConfigAck   = 0x95,
+    /// Client → Core: clear trace buffer.
+    TraceClear           = 0x96,
+    /// Core → Client: trace buffer cleared ack.
+    TraceClearAck        = 0x97,
+
     // ── Traffic stats ──────────────────────────────────────────
     /// Client → Core: request cumulative byte counters for all tunnels and .vln hosts.
     TrafficQuery      = 0x80,
@@ -324,6 +342,10 @@ impl TryFrom<u8> for MessageType {
             0x85 => ShareConnect,    0x86 => ShareConnectAck,
             0x87 => ShareList,       0x88 => ShareListResp,
             0x89 => ShareRevoke,     0x8A => ShareRevokeAck,
+            0x8B => TraceQuery,       0x8C => TraceQueryResult,
+            0x8D => TraceGet,         0x8E => TraceGetResult,
+            0x8F => TraceOtlpConfigSet, 0x95 => TraceOtlpConfigAck,
+            0x96 => TraceClear,       0x97 => TraceClearAck,
             0x80 => TrafficQuery,    0x81 => TrafficStatsResult,
             0x90 => NetAddPortForward,    0x91 => NetPortForwardAdded,
             0x92 => NetRemovePortForward, 0x93 => NetListPortForwards,
@@ -581,6 +603,16 @@ pub enum Body {
     ShareListResp(Vec<ShareInfoMsg>),
     ShareRevoke { share_id: String },
     ShareRevokeAck { share_id: String },
+
+    // ── OpenTelemetry Distributed Tracing (v4.2) ───────────────
+    TraceQuery { limit: Option<usize>, service: Option<String> },
+    TraceQueryResult(Vec<TraceSummaryMsg>),
+    TraceGet { trace_id: String },
+    TraceGetResult(Option<TraceDetailMsg>),
+    TraceOtlpConfigSet(OtlpConfigMsg),
+    TraceOtlpConfigAck,
+    TraceClear,
+    TraceClearAck,
 }
 
 impl Body {
@@ -714,6 +746,15 @@ impl Body {
             ShareListResp(_)           => MessageType::ShareListResp,
             ShareRevoke{..}            => MessageType::ShareRevoke,
             ShareRevokeAck{..}         => MessageType::ShareRevokeAck,
+            // OpenTelemetry Distributed Tracing (v4.2)
+            TraceQuery{..}             => MessageType::TraceQuery,
+            TraceQueryResult(_)        => MessageType::TraceQueryResult,
+            TraceGet{..}               => MessageType::TraceGet,
+            TraceGetResult(_)          => MessageType::TraceGetResult,
+            TraceOtlpConfigSet(_)      => MessageType::TraceOtlpConfigSet,
+            TraceOtlpConfigAck         => MessageType::TraceOtlpConfigAck,
+            TraceClear                 => MessageType::TraceClear,
+            TraceClearAck              => MessageType::TraceClearAck,
         }
     }
 }
@@ -772,6 +813,10 @@ pub enum Capability {
     BridgeManage,
     /// Create, manage, and consume ephemeral Zero-Trust team shares (v4.1).
     ShareManage,
+    /// Read distributed traces and OpenTelemetry span waterfalls (v4.2).
+    TraceRead,
+    /// Configure OpenTelemetry OTLP exporters and clear buffers (v4.2).
+    TraceAdmin,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1501,6 +1546,49 @@ pub struct ShareConnectedMsg {
     pub local_endpoint: String,
     pub domain_name: String, // e.g. "dev-api.shared.vln"
     pub local_port: u16,
+}
+
+// ── OpenTelemetry Distributed Tracing (v4.2) ─────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SpanMsg {
+    pub trace_id: String,
+    pub span_id: String,
+    pub parent_span_id: Option<String>,
+    pub name: String,
+    pub service_name: String,
+    pub start_time_unix_nano: u64,
+    pub end_time_unix_nano: u64,
+    pub duration_ms: f64,
+    pub status_code: String,
+    pub attributes: std::collections::HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TraceSummaryMsg {
+    pub trace_id: String,
+    pub root_service: String,
+    pub root_name: String,
+    pub span_count: usize,
+    pub duration_ms: f64,
+    pub start_time_unix_nano: u64,
+    pub has_errors: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TraceDetailMsg {
+    pub trace_id: String,
+    pub spans: Vec<SpanMsg>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OtlpConfigMsg {
+    /// OTLP HTTP endpoint (e.g. "http://localhost:4318/v1/traces")
+    pub endpoint: String,
+    /// Enabled flag
+    pub enabled: bool,
+    /// Batch timeout in seconds
+    pub batch_timeout_secs: u64,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

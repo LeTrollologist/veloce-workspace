@@ -856,6 +856,54 @@ impl VeloceClient {
         }
     }
 
+    // ── OpenTelemetry Distributed Tracing (v4.2) ──────────────────────────────
+
+    /// Query recent distributed traces recorded across the mesh.
+    pub async fn trace_query(
+        &mut self,
+        limit: Option<usize>,
+        service: Option<String>,
+    ) -> Result<Vec<veloce_ipc::message::TraceSummaryMsg>> {
+        match self.request(Body::TraceQuery { limit, service }).await? {
+            Body::TraceQueryResult(list) => Ok(list),
+            Body::Error(e)               => bail!("trace_query: {}", e.message),
+            other                        => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// Retrieve full trace detail and span waterfall for a given trace_id.
+    pub async fn trace_get(
+        &mut self,
+        trace_id: &str,
+    ) -> Result<Option<veloce_ipc::message::TraceDetailMsg>> {
+        match self.request(Body::TraceGet { trace_id: trace_id.into() }).await? {
+            Body::TraceGetResult(detail) => Ok(detail),
+            Body::Error(e)               => bail!("trace_get: {}", e.message),
+            other                        => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// Configure OpenTelemetry OTLP/HTTP collector export settings.
+    pub async fn trace_set_otlp_config(
+        &mut self,
+        config: veloce_ipc::message::OtlpConfigMsg,
+    ) -> Result<()> {
+        match self.request(Body::TraceOtlpConfigSet(config)).await? {
+            Body::TraceOtlpConfigAck => Ok(()),
+            Body::Error(e)           => bail!("trace_set_otlp_config: {}", e.message),
+            other                    => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// Clear all in-memory recorded traces and spans.
+    pub async fn trace_clear(&mut self) -> Result<()> {
+        match self.request(Body::TraceClear).await? {
+            Body::TraceClearAck => Ok(()),
+            Body::Error(e)      => bail!("trace_clear: {}", e.message),
+            other               => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
     // ── Traffic stats ─────────────────────────────────────────────────────────
 
     /// Query per-tunnel (Noise) and per-.vln host byte counters from Core.

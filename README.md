@@ -61,6 +61,7 @@ veloce-workspace/
 | **v3.9.0** | First-Class WebAssembly (Wasm/WASI) Orchestration: Zero-root userspace runtime, WASI preview 1 IO, mesh host bindings (`veloce-run wasm`) | ✅ Complete |
 | **v4.0.0** | "Bridge to Cloud" Unprivileged Kubernetes Remote Telepresence & Traffic Interceptor: In-cluster DNS (*.svc.cluster.local), header-based live traffic shadowing (`veloce-run bridge`) | ✅ Complete |
 | **v4.1.0** | Zero-Trust Team Share ("Unprivileged Secure Tunnels"): Ephemeral VM3 share tokens (`vshare://...`), 1-command peer port sharing (`veloce-run share`, `veloce-run join`) | ✅ Complete |
+| **v4.2.0** | OpenTelemetry (OTel) Native Distributed Tracing & Observability: W3C trace context, zero-config OTLP JSON export (`:4318`), live trace waterfall UI (`veloce-run trace`) | ✅ Complete |
 
 ---
 

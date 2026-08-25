@@ -77,6 +77,9 @@ pub struct CoreState {
 
     // ── v4.1 (Zero-Trust Team Share) ──────────────────────────
     pub share: Arc<crate::share::ShareEngine>,
+
+    // ── v4.2 (OpenTelemetry Distributed Tracing) ──────────────
+    pub otel: Arc<crate::otel::OtelEngine>,
 }
 
 impl CoreState {
@@ -146,6 +149,7 @@ impl CoreState {
         let oidc       = Arc::new(crate::oidc::OidcEngine::new(&dir));
         let bridge     = Arc::new(crate::bridge::BridgeEngine::new());
         let share      = Arc::new(crate::share::ShareEngine::new());
+        let otel       = Arc::new(crate::otel::OtelEngine::new());
 
         Ok(Self {
             registry,
@@ -167,6 +171,7 @@ impl CoreState {
             oidc,
             bridge,
             share,
+            otel,
         })
     }
 

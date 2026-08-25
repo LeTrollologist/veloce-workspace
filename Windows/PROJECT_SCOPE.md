@@ -465,5 +465,11 @@ This phase dedicated three sequential releases to security, correctness, and sta
 - [x] Instant remote consumption and DNS mapping (`veloce-run share connect <CODE>` / `veloce-run join <CODE>`)
 - [x] End-to-end Noise_IK encrypted peer tunnels with zero root and zero port opening
 
+**v4.2.0 — OpenTelemetry (OTel) Native Distributed Tracing & Observability** ✅
+- [x] W3C TraceContext injection & extraction (`traceparent: 00-{trace_id}-{span_id}-01`)
+- [x] Pure-Rust zero-dependency OTLP/HTTP JSON exporter streaming to Jaeger / Grafana Tempo (`:4318/v1/traces`)
+- [x] In-memory span ring buffer & trace aggregator grouping parent/child microservice spans
+- [x] Live Trace Waterfall Inspector CLI (`veloce-run trace list`, `veloce-run trace inspect <ID>`) and Web Status Portal REST API (`:9090/api/traces`)
+
 **Future Roadmap** 📋
 - **Standalone Distribution**: Portable self-contained binaries (`.exe` / `.tar.gz`) with manual and offline release artifacts, bypassing third-party cloud billing dependencies.

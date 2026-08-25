@@ -386,6 +386,25 @@ async fn handle_portal_client(mut client: TcpStream, state: Arc<CoreState>) -> R
         let _ = state.oidc().clear_session();
         let resp = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK";
         client.write_all(resp.as_bytes()).await?;
+    } else if path == "/api/traces" {
+        let traces = state.otel.query_traces(Some(50), None);
+        let body = serde_json::to_string(&traces).unwrap_or_default();
+        let resp = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        client.write_all(resp.as_bytes()).await?;
+    } else if path.starts_with("/api/traces/") {
+        let trace_id = &path["/api/traces/".len()..];
+        let detail = state.otel.get_trace(trace_id);
+        let body = serde_json::to_string(&detail).unwrap_or_default();
+        let resp = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        client.write_all(resp.as_bytes()).await?;
     } else if path.starts_with("/api/mesh/kv") {
         if method == "POST" {
             let key = extract_query_param(path, "key").unwrap_or_default();

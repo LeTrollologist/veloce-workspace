@@ -60,6 +60,7 @@ mod bridge;
 mod compose;
 mod pack;
 mod share;
+mod trace;
 mod wasm;
 
 use anyhow::{Context, Result};
@@ -225,6 +226,8 @@ enum Commands {
         #[arg(short = 'p', long = "port")]
         port: Option<u16>,
     },
+    /// OpenTelemetry (OTel) Native Distributed Tracing & Observability (v4.2)
+    Trace(trace::TraceArgs),
     /// Print version information
     Version,
 }
@@ -557,6 +560,10 @@ async fn main() -> Result<()> {
         Some(Commands::Join { share_code, port }) => {
             let client = connect_client("veloce-share", vec![Capability::ShareManage, Capability::RegistryRead]).await?;
             share::handle_connect(std::sync::Arc::new(tokio::sync::Mutex::new(client)), share_code, port).await
+        }
+        Some(Commands::Trace(args))           => {
+            let client = connect_client("veloce-trace", vec![Capability::TraceRead, Capability::TraceAdmin, Capability::RegistryRead]).await?;
+            trace::run_trace(std::sync::Arc::new(tokio::sync::Mutex::new(client)), args).await
         }
         Some(Commands::Version)               => { run_version(); Ok(()) }
         None => {
