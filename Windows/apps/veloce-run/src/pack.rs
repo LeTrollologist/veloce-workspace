@@ -383,12 +383,19 @@ impl VpackEngine {
         fs::write(&manifest_dest, &archive.manifest_raw)?;
 
         for file in &archive.files {
-            let clean_path = file.path.trim_start_matches('/').trim_start_matches('\\');
-            if clean_path.contains("..") {
-                bail!("illegal file path in archive: {}", file.path);
+            let rel_path = Path::new(&file.path);
+            for component in rel_path.components() {
+                match component {
+                    std::path::Component::Normal(_) => {},
+                    _ => bail!("Security violation: illegal path component in archive entry '{}'", file.path),
+                }
             }
 
-            let target = dest_dir.join(clean_path);
+            let target = dest_dir.join(rel_path);
+            if !target.starts_with(dest_dir) {
+                bail!("Security violation: directory traversal detected for '{}'", file.path);
+            }
+
             if let Some(parent) = target.parent() {
                 fs::create_dir_all(parent)?;
             }

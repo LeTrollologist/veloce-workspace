@@ -18,6 +18,9 @@ pub mod noise;
 pub mod peer;
 pub mod stun;
 
+#[cfg(test)]
+mod consensus_test;
+
 use std::{
     collections::HashMap,
     net::{IpAddr, Ipv4Addr, SocketAddr},
