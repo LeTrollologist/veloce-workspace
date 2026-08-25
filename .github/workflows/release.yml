@@ -1,19 +1,22 @@
 name: Release Build & Binary Distribution
 
 on:
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag (e.g. v4.3.0)'
+        description: 'Release tag (e.g. v4.7.0)'
         required: true
-        default: 'v4.3.0'
+        default: 'v4.7.0'
 
 permissions:
   contents: write
 
 jobs:
   build-windows:
-    name: Build Windows Release Binaries (.exe / .dll / .zip)
+    name: Build Windows Release Binaries (.exe / .dll / .zip / .vpack)
     runs-on: windows-latest
     steps:
       - name: Checkout repository
@@ -39,7 +42,7 @@ jobs:
         shell: pwsh
         run: |
           $Tag = if ("${{ github.ref_name }}".StartsWith("v")) { "${{ github.ref_name }}" } else { "${{ github.event.inputs.tag }}" }
-          if (-not $Tag) { $Tag = "v4.3.0" }
+          if (-not $Tag) { $Tag = "v4.7.0" }
           $DistDir = "Windows/target/dist"
           New-Item -ItemType Directory -Force -Path $DistDir
           Copy-Item Windows/target/release/veloce-core.exe $DistDir/ -Force
@@ -51,6 +54,12 @@ jobs:
           if (Test-Path Windows/README.md) { Copy-Item Windows/README.md $DistDir/ -Force }
           if (Test-Path Windows/SECURITY.md) { Copy-Item Windows/SECURITY.md $DistDir/ -Force }
           
+          # Build .vpack package
+          if (Test-Path Windows/target/release/veloce-run.exe) {
+            & Windows/target/release/veloce-run.exe pack init $DistDir -n "veloce-runtime" || true
+            & Windows/target/release/veloce-run.exe pack build $DistDir -o "veloce-runtime-$Tag-windows-x86_64.vpack" || true
+          }
+
           Compress-Archive -Path "$DistDir/*" -DestinationPath "veloce-windows-x86_64-$Tag.zip" -Force
           Copy-Item Windows/target/release/veloce-core.exe "veloce-core-windows-x86_64.exe" -Force
           Copy-Item Windows/target/release/veloce-run.exe "veloce-run-windows-x86_64.exe" -Force
@@ -64,11 +73,12 @@ jobs:
             veloce-windows-x86_64-*.zip
             veloce-core-windows-x86_64.exe
             veloce-run-windows-x86_64.exe
+            veloce-runtime-*-windows-x86_64.vpack
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   build-linux:
-    name: Build Linux Release Binaries (tar.gz / zip / ELF)
+    name: Build Linux Release Binaries (tar.gz / zip / ELF / .vpack)
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout repository
@@ -102,7 +112,7 @@ jobs:
             TAG="${{ github.event.inputs.tag }}"
           fi
           if [ -z "$TAG" ]; then
-            TAG="v4.3.0"
+            TAG="v4.7.0"
           fi
           mkdir -p Linux/target/dist
           cp Linux/target/release/veloce-core Linux/target/dist/
@@ -126,6 +136,12 @@ jobs:
             cp Linux/SECURITY.md Linux/target/dist/
           fi
           
+          # Build .vpack package
+          if [ -f Linux/target/release/veloce-run ]; then
+            Linux/target/release/veloce-run pack init Linux/target/dist -n "veloce-runtime" || true
+            Linux/target/release/veloce-run pack build Linux/target/dist -o "veloce-runtime-${TAG}-linux-x86_64.vpack" || true
+          fi
+
           tar -czvf "veloce-linux-x86_64-${TAG}.tar.gz" -C Linux/target/dist .
           (cd Linux/target/dist && zip -r "../../../veloce-linux-x86_64-${TAG}.zip" .)
           cp Linux/target/release/veloce-core "veloce-core-linux-x86_64"
@@ -141,11 +157,12 @@ jobs:
             veloce-linux-x86_64-*.zip
             veloce-core-linux-x86_64
             veloce-run-linux-x86_64
+            veloce-runtime-*-linux-x86_64.vpack
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   build-macos:
-    name: Build macOS Release Binaries (tar.gz / zip / Mach-O)
+    name: Build macOS Release Binaries (tar.gz / zip / Mach-O / .vpack)
     runs-on: macos-latest
     steps:
       - name: Checkout repository
@@ -174,7 +191,7 @@ jobs:
             TAG="${{ github.event.inputs.tag }}"
           fi
           if [ -z "$TAG" ]; then
-            TAG="v4.3.0"
+            TAG="v4.7.0"
           fi
           mkdir -p macOS/target/dist
           cp macOS/target/release/veloce-core macOS/target/dist/
@@ -186,6 +203,12 @@ jobs:
             cp macOS/SECURITY.md macOS/target/dist/
           fi
           
+          # Build .vpack package
+          if [ -f macOS/target/release/veloce-run ]; then
+            macOS/target/release/veloce-run pack init macOS/target/dist -n "veloce-runtime" || true
+            macOS/target/release/veloce-run pack build macOS/target/dist -o "veloce-runtime-${TAG}-macos-aarch64.vpack" || true
+          fi
+
           tar -czvf "veloce-macos-aarch64-${TAG}.tar.gz" -C macOS/target/dist .
           (cd macOS/target/dist && zip -r "../../../veloce-macos-aarch64-${TAG}.zip" .)
           cp macOS/target/release/veloce-core "veloce-core-macos-aarch64"
@@ -201,5 +224,6 @@ jobs:
             veloce-macos-aarch64-*.zip
             veloce-core-macos-aarch64
             veloce-run-macos-aarch64
+            veloce-runtime-*-macos-aarch64.vpack
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

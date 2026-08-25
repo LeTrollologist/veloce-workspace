@@ -15,5 +15,9 @@ target/
 # Release archives
 *.zip
 *.tar.gz
+*.vpack
+*.priv
+*.pub
 veloce-*.zip
 veloce-*.tar.gz
+veloce-*.vpack

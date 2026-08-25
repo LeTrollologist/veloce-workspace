@@ -28,7 +28,7 @@ jobs:
 
       - name: Run Cryptographic Invariant Test Suite
         run: |
-          cargo test -p veloce-mesh --test crypto_audit -- --nocapture || cargo test -p veloce-mesh crypto_audit -- --nocapture
+          cargo test -p veloce-mesh --manifest-path Linux/Cargo.toml -- --nocapture
 
       - name: Run Automated SOC 2 Type II Compliance Scan
         run: |
@@ -57,4 +57,4 @@ jobs:
 
       - name: Audit Dependencies (Security Advisories)
         run: |
-          cargo audit --ignore RUSTSEC-2020-0071 --ignore RUSTSEC-2020-0159 || echo "Advisory scan complete."
+          cargo audit --file Linux/Cargo.lock --ignore RUSTSEC-2020-0071 --ignore RUSTSEC-2020-0159 || echo "Advisory scan complete."
