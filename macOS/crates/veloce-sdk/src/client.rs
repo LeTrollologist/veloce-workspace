@@ -20,6 +20,7 @@ use veloce_ipc::{
     Codec,
     message::{
         AutoscaleInfoMsg, AutoscalePolicyMsg, CronJobMsg, HubAppMsg, MeshKvEntryMsg,
+        MeshKvCasMsg, MeshKvCasResultMsg, MeshKvLockMsg, MeshKvLockResultMsg, MeshKvUnlockMsg,
         Body, Capability, DesiredStateSpec, Envelope, Flags,
         IngressRule, MeshConnectMsg, MeshConnectResultMsg, MeshDisconnectMsg,
         MeshGetJoinCodeV3Msg, MeshInfoMsg, NetAddIngressMsg,
@@ -206,6 +207,7 @@ impl VeloceClient {
             secret_refs:      vec![],
             service_name:     None,
             replica_index:    None,
+            isolation_level:  None,
         }).await
     }
 
@@ -748,6 +750,48 @@ impl VeloceClient {
         match self.request(Body::MeshKvDelete { key: key.into() }).await? {
             Body::Ping => Ok(()),
             Body::Error(e) => bail!("mesh_kv_delete: {}", e.message),
+            other => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// Atomic Compare-And-Swap (CAS) on a mesh KV key.
+    pub async fn mesh_kv_cas(&mut self, key: &str, expected_value: Option<String>, new_value: &str) -> Result<MeshKvCasResultMsg> {
+        let msg = MeshKvCasMsg {
+            key: key.into(),
+            expected_value,
+            new_value: new_value.into(),
+        };
+        match self.request(Body::MeshKvCas(msg)).await? {
+            Body::MeshKvCasResult(res) => Ok(res),
+            Body::Error(e) => bail!("mesh_kv_cas: {}", e.message),
+            other => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// Acquire or renew a distributed lease lock on a mesh key.
+    pub async fn mesh_kv_lock(&mut self, key: &str, holder: &str, ttl_secs: u64) -> Result<MeshKvLockResultMsg> {
+        let msg = MeshKvLockMsg {
+            key: key.into(),
+            holder: holder.into(),
+            ttl_secs,
+        };
+        match self.request(Body::MeshKvLock(msg)).await? {
+            Body::MeshKvLockResult(res) => Ok(res),
+            Body::Error(e) => bail!("mesh_kv_lock: {}", e.message),
+            other => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// Release a distributed lease lock on a mesh key.
+    pub async fn mesh_kv_unlock(&mut self, key: &str, holder: &str, fence_token: u64) -> Result<bool> {
+        let msg = MeshKvUnlockMsg {
+            key: key.into(),
+            holder: holder.into(),
+            fence_token,
+        };
+        match self.request(Body::MeshKvUnlock(msg)).await? {
+            Body::MeshKvUnlockResult(res) => Ok(res.released),
+            Body::Error(e) => bail!("mesh_kv_unlock: {}", e.message),
             other => bail!("unexpected: {:?}", other.msg_type()),
         }
     }

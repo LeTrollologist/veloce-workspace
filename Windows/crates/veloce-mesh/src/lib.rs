@@ -10,6 +10,7 @@
 //!    resolve each other's `.vln` hostnames transparently.
 
 pub mod control;
+pub mod crypto_audit;
 pub mod forward;
 pub mod identity;
 pub mod kv;

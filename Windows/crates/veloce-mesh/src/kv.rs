@@ -21,9 +21,20 @@ pub struct KvEntry {
     pub deleted: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LeaseLock {
+    pub key: String,
+    pub holder: String,
+    pub fence_token: u64,
+    pub acquired_at: u64,
+    pub expires_at: u64,
+}
+
 pub struct MeshKvStore {
     local_peer_id: Uuid,
     entries: RwLock<HashMap<String, KvEntry>>,
+    locks: RwLock<HashMap<String, LeaseLock>>,
+    next_fence: std::sync::atomic::AtomicU64,
 }
 
 impl MeshKvStore {
@@ -31,6 +42,8 @@ impl MeshKvStore {
         Arc::new(Self {
             local_peer_id,
             entries: RwLock::new(HashMap::new()),
+            locks: RwLock::new(HashMap::new()),
+            next_fence: std::sync::atomic::AtomicU64::new(1),
         })
     }
 
@@ -55,6 +68,112 @@ impl MeshKvStore {
 
         map.insert(key.to_owned(), entry.clone());
         entry
+    }
+
+    /// Atomic Compare-And-Swap (CAS) for strong consistency operations.
+    /// Returns `(success, current_value, version)`.
+    pub fn cas(&self, key: &str, expected_value: Option<&str>, new_value: &str) -> (bool, Option<String>, u64) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let mut map = self.entries.write();
+        let current = map.get(key).and_then(|e| if e.deleted { None } else { Some(e.value.clone()) });
+        let current_version = map.get(key).map(|e| e.version).unwrap_or(0);
+
+        let matches = match (expected_value, &current) {
+            (None, None) => true,
+            (Some(exp), Some(cur)) => exp == cur.as_str(),
+            _ => false,
+        };
+
+        if matches {
+            let version = current_version + 1;
+            let entry = KvEntry {
+                key: key.to_owned(),
+                value: new_value.to_owned(),
+                version,
+                updated_at: now,
+                origin: self.local_peer_id,
+                deleted: false,
+            };
+            map.insert(key.to_owned(), entry);
+            (true, Some(new_value.to_owned()), version)
+        } else {
+            (false, current, current_version)
+        }
+    }
+
+    /// Acquire or renew a distributed lease lock on a key with fencing token.
+    /// Returns `(acquired, fence_token, expires_at)`.
+    pub fn acquire_lock(&self, key: &str, holder: &str, ttl_secs: u64) -> (bool, u64, u64) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let mut map = self.locks.write();
+        let effective_ttl = ttl_secs.max(1);
+
+        if let Some(lock) = map.get_mut(key) {
+            if lock.expires_at > now && lock.holder != holder {
+                // Lock is actively held by someone else
+                return (false, 0, lock.expires_at);
+            }
+            // Either expired or held by same holder -> renew / acquire
+            let fence_token = if lock.holder == holder && lock.expires_at > now {
+                lock.fence_token
+            } else {
+                self.next_fence.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            };
+            lock.holder = holder.to_owned();
+            lock.fence_token = fence_token;
+            lock.acquired_at = now;
+            lock.expires_at = now + effective_ttl;
+            (true, fence_token, lock.expires_at)
+        } else {
+            let fence_token = self.next_fence.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let expires_at = now + effective_ttl;
+            let lock = LeaseLock {
+                key: key.to_owned(),
+                holder: holder.to_owned(),
+                fence_token,
+                acquired_at: now,
+                expires_at,
+            };
+            map.insert(key.to_owned(), lock);
+            (true, fence_token, expires_at)
+        }
+    }
+
+    /// Release an existing distributed lease lock using holder identity and fencing token.
+    pub fn release_lock(&self, key: &str, holder: &str, fence_token: u64) -> bool {
+        let mut map = self.locks.write();
+        if let Some(lock) = map.get(key) {
+            if lock.holder == holder && (lock.fence_token == fence_token || fence_token == 0) {
+                map.remove(key);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Get current lock status if present.
+    pub fn get_lock(&self, key: &str) -> Option<LeaseLock> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let map = self.locks.read();
+        map.get(key).and_then(|l| {
+            if l.expires_at > now {
+                Some(l.clone())
+            } else {
+                None
+            }
+        })
     }
 
     /// Retrieve a value by key if present and not deleted.
@@ -172,5 +291,48 @@ mod tests {
         assert_eq!(store_a.get("cluster.config"), None);
         assert!(store_b.merge_entry(del_entry));
         assert_eq!(store_b.get("cluster.config"), None);
+    }
+
+    #[test]
+    fn test_mesh_kv_cas_and_leases() {
+        let node_a = Uuid::new_v4();
+        let store = MeshKvStore::new(node_a);
+
+        // CAS create from None
+        let (ok, val, ver) = store.cas("leader.lock", None, "worker-1");
+        assert!(ok);
+        assert_eq!(val, Some("worker-1".into()));
+        assert_eq!(ver, 1);
+
+        // CAS with wrong expected fails
+        let (ok, val, _) = store.cas("leader.lock", Some("worker-2"), "worker-3");
+        assert!(!ok);
+        assert_eq!(val, Some("worker-1".into()));
+
+        // CAS with correct expected succeeds
+        let (ok, val, ver) = store.cas("leader.lock", Some("worker-1"), "worker-2");
+        assert!(ok);
+        assert_eq!(val, Some("worker-2".into()));
+        assert_eq!(ver, 2);
+
+        // Distributed Lease Lock
+        let (acquired, fence1, exp1) = store.acquire_lock("master.lease", "node-1", 10);
+        assert!(acquired);
+        assert!(fence1 > 0);
+        assert!(exp1 > 0);
+
+        // Other node cannot acquire active lease
+        let (acquired2, fence2, _) = store.acquire_lock("master.lease", "node-2", 10);
+        assert!(!acquired2);
+        assert_eq!(fence2, 0);
+
+        // Same holder can renew
+        let (renewed, fence_renew, _) = store.acquire_lock("master.lease", "node-1", 20);
+        assert!(renewed);
+        assert_eq!(fence_renew, fence1);
+
+        // Release lock
+        assert!(store.release_lock("master.lease", "node-1", fence1));
+        assert_eq!(store.get_lock("master.lease"), None);
     }
 }

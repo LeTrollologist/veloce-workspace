@@ -249,7 +249,10 @@ async fn handle_ingress_client(
     match route {
         Some((target_port, rewritten_path)) => {
             let mut backend = match TcpStream::connect(format!("127.0.0.1:{target_port}")).await {
-                Ok(b) => b,
+                Ok(b) => {
+                    let _ = b.set_nodelay(true);
+                    b
+                }
                 Err(e) => {
                     let err_body = format!("{{\"error\":\"upstream backend port {target_port} unreachable: {e}\"}}");
                     let resp = format!(

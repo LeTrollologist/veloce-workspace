@@ -60,6 +60,7 @@ mod bridge;
 mod compose;
 mod os_cmd;
 mod pack;
+mod security;
 mod share;
 mod trace;
 mod wasm;
@@ -131,6 +132,14 @@ struct Cli {
     /// Print the node ID and exit immediately after spawning
     #[arg(short = 'd', long, conflicts_with = "watch")]
     detach: bool,
+
+    /// Sandboxing / Isolation level: 'default' (Job Object/cgroup), 'appcontainer' (Windows AppContainer sandbox), 'sandbox' (unprivileged OS user namespace)
+    #[arg(long, value_name = "LEVEL")]
+    isolation: Option<String>,
+
+    /// Run with maximum sandboxing / AppContainer isolation enabled
+    #[arg(long)]
+    isolate: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -234,8 +243,35 @@ enum Commands {
         #[command(subcommand)]
         command: os_cmd::OsCommands,
     },
+    /// Enterprise SOC 2 Compliance, Cryptography Verification & SBOM (v4.5)
+    Security {
+        #[command(subcommand)]
+        action: SecurityAction,
+    },
     /// Print version information
     Version,
+}
+
+#[derive(Subcommand, Debug)]
+enum SecurityAction {
+    /// Run automated SOC 2 Type II compliance controls audit
+    Audit {
+        /// Output results as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Execute formal cryptographic invariant verification suite
+    VerifyCrypto {
+        /// Output results as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Generate a CycloneDX / SPDX Software Bill of Materials (SBOM)
+    Sbom {
+        /// Save output to a file path
+        #[arg(short, long, value_name = "FILE")]
+        output: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -457,6 +493,39 @@ enum MeshKvAction {
         /// Key name to remove
         key: String,
     },
+    /// Atomic Compare-And-Swap (CAS) on a key (v4.4)
+    Cas {
+        /// Key name
+        key: String,
+        /// Expected current value (omit if key is expected to not exist)
+        #[arg(short, long)]
+        expected: Option<String>,
+        /// New value to write
+        #[arg(short, long)]
+        value: String,
+    },
+    /// Acquire or renew a distributed lease lock on a key (v4.4)
+    Lock {
+        /// Key name
+        key: String,
+        /// Lock holder identity [default: local machine/pid]
+        #[arg(short, long)]
+        holder: Option<String>,
+        /// Lease TTL in seconds [default: 30]
+        #[arg(short, long, default_value = "30")]
+        ttl: u64,
+    },
+    /// Release a distributed lease lock on a key (v4.4)
+    Unlock {
+        /// Key name
+        key: String,
+        /// Lock holder identity [default: local machine/pid]
+        #[arg(short, long)]
+        holder: Option<String>,
+        /// Fencing token received when lock was acquired (0 to force if owner matches)
+        #[arg(short, long, default_value = "0")]
+        token: u64,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -575,6 +644,7 @@ async fn main() -> Result<()> {
             let client = connect_client("veloce-os", vec![Capability::OsAdmin, Capability::VfsManage, Capability::RegistryRead]).await?;
             os_cmd::handle_os_command(command, client).await
         }
+        Some(Commands::Security { action })   => run_security(action).await,
         Some(Commands::Version)               => { run_version(); Ok(()) }
         None => {
             let executable = match cli.executable {
@@ -611,6 +681,7 @@ async fn main() -> Result<()> {
             run_spawn(
                 executable, cli.args, cli.extra_env, cli.name, cli.hostname,
                 cli.port, cli.cpu, cli.mem, cli.restarts, cli.detach,
+                cli.isolation, cli.isolate,
             ).await
         }
     }
@@ -815,6 +886,41 @@ async fn run_mesh(action: MeshAction) -> Result<()> {
                 MeshKvAction::Rm { key } => {
                     client.mesh_kv_delete(&key).await?;
                     println!("✓ Mesh KV: deleted '{key}'");
+                }
+                MeshKvAction::Cas { key, expected, value } => {
+                    let res = client.mesh_kv_cas(&key, expected, &value).await?;
+                    if res.success {
+                        println!("✓ Mesh KV CAS success: '{key}' = '{value}' (version {})", res.version);
+                    } else {
+                        eprintln!("✗ Mesh KV CAS failed: current value is {:?} (version {})", res.current_value, res.version);
+                        std::process::exit(1);
+                    }
+                }
+                MeshKvAction::Lock { key, holder, ttl } => {
+                    let holder_id = holder.unwrap_or_else(|| {
+                        let hostname = std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")).unwrap_or_else(|_| "node".into());
+                        format!("{hostname}:{}", std::process::id())
+                    });
+                    let res = client.mesh_kv_lock(&key, &holder_id, ttl).await?;
+                    if res.acquired {
+                        println!("✓ Mesh KV Lock acquired: key='{key}', holder='{}', fence_token={}, expires_at={}", res.holder, res.fence_token, res.expires_at);
+                    } else {
+                        eprintln!("✗ Mesh KV Lock failed: key='{key}' is actively held by '{}' (expires at {})", res.holder, res.expires_at);
+                        std::process::exit(1);
+                    }
+                }
+                MeshKvAction::Unlock { key, holder, token } => {
+                    let holder_id = holder.unwrap_or_else(|| {
+                        let hostname = std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")).unwrap_or_else(|_| "node".into());
+                        format!("{hostname}:{}", std::process::id())
+                    });
+                    let released = client.mesh_kv_unlock(&key, &holder_id, token).await?;
+                    if released {
+                        println!("✓ Mesh KV Lock released: key='{key}', holder='{holder_id}'");
+                    } else {
+                        eprintln!("✗ Mesh KV Lock release failed: key='{key}' is not held by '{holder_id}' or token did not match");
+                        std::process::exit(1);
+                    }
                 }
             }
         }
@@ -1209,6 +1315,8 @@ async fn run_spawn(
     mem: Option<u64>,
     restarts: u32,
     detach: bool,
+    isolation: Option<String>,
+    isolate: bool,
 ) -> Result<()> {
     let app_name = name.unwrap_or_else(|| basename(&executable));
 
@@ -1247,6 +1355,15 @@ async fn run_spawn(
         Some((parts.next()?.to_owned(), parts.next().unwrap_or("").to_owned()))
     }).collect();
 
+    let iso_level = match isolation.as_deref() {
+        Some("appcontainer") | Some("ac") => Some(veloce_ipc::message::IsolationLevel::AppContainer),
+        Some("sandbox") | Some("strict") => Some(veloce_ipc::message::IsolationLevel::Sandbox),
+        Some("default") => Some(veloce_ipc::message::IsolationLevel::Default),
+        _ if isolate => Some(veloce_ipc::message::IsolationLevel::AppContainer),
+        _ => None,
+    };
+    let use_appcontainer = matches!(iso_level, Some(veloce_ipc::message::IsolationLevel::AppContainer | veloce_ipc::message::IsolationLevel::Sandbox));
+
     let msg = SpawnNodeMsg {
         app_name:         app_name.clone(),
         executable:       executable.clone(),
@@ -1255,12 +1372,13 @@ async fn run_spawn(
         limits,
         auto_kill:        !detach,
         restart_policy,
-        use_appcontainer: false,
+        use_appcontainer,
         health_check:     None,
         volume_mounts:    vec![],
         secret_refs:      vec![],
         service_name:     None,
         replica_index:    None,
+        isolation_level:  iso_level,
     };
 
     let spawned = client.spawn_node_with(msg).await.context("spawn_node failed")?;
@@ -1565,4 +1683,62 @@ async fn run_hub(action: HubAction) -> Result<()> {
     }
     Ok(())
 }
+
+async fn run_security(action: SecurityAction) -> Result<()> {
+    match action {
+        SecurityAction::Audit { json } => {
+            let report = security::run_soc2_audit();
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("================================================================================");
+                println!("  VeloceNetwork SOC 2 Type II Automated Security & Compliance Audit Report      ");
+                println!("================================================================================");
+                println!("Product:       {} v{}", report.product, report.version);
+                println!("Audit Date:    {}", report.audit_date);
+                println!("Status:        [{}]", report.overall_status);
+                println!("Passed:        {}/{} Controls\n", report.passed_controls, report.total_controls);
+                println!("{:<14} {:<10} {:<38} {}", "CONTROL ID", "STATUS", "TITLE", "CATEGORY");
+                println!("{}", "─".repeat(95));
+                for c in &report.controls {
+                    let st = if c.passed { "PASS" } else { "FAIL" };
+                    println!("{:<14} {:<10} {:<38} {}", c.id, st, c.title, c.tsc_category);
+                    println!("   Technical Control : {}", c.technical_control);
+                    println!("   Evidence Verified : {}\n", c.evidence);
+                }
+            }
+        }
+        SecurityAction::VerifyCrypto { json } => {
+            let report = veloce_mesh::crypto_audit::run_full_crypto_audit();
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("================================================================================");
+                println!("  VeloceNetwork Formal Cryptographic Invariant Verification Suite              ");
+                println!("================================================================================");
+                println!("Overall:       [{}]", if report.passed { "PASS" } else { "FAIL" });
+                println!("Invariants:    {}/{} Verified\n", report.passed_tests, report.total_tests);
+                println!("{:<8} {:<30} {}", "STATUS", "CATEGORY", "INVARIANT SPECIFICATION");
+                println!("{}", "─".repeat(90));
+                for c in &report.checks {
+                    let st = if c.passed { "PASS" } else { "FAIL" };
+                    println!("{:<8} {:<30} {}", st, c.category, c.name);
+                    println!("   Details: {}\n", c.details);
+                }
+            }
+        }
+        SecurityAction::Sbom { output } => {
+            let doc = security::generate_sbom();
+            let json_str = serde_json::to_string_pretty(&doc)?;
+            if let Some(path) = output {
+                std::fs::write(&path, &json_str)?;
+                println!("✓ Software Bill of Materials (SBOM) written to {}", path.display());
+            } else {
+                println!("{json_str}");
+            }
+        }
+    }
+    Ok(())
+}
+
 

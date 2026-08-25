@@ -339,6 +339,7 @@ impl From<TemplateSpec> for SpawnNodeMsg {
             secret_refs:      vec![],
             service_name:     None,
             replica_index:    None,
+            isolation_level:  None,
         }
     }
 }

@@ -405,6 +405,74 @@ async fn handle_portal_client(mut client: TcpStream, state: Arc<CoreState>) -> R
             body
         );
         client.write_all(resp.as_bytes()).await?;
+    } else if path.starts_with("/api/mesh/kv/cas") {
+        if method == "POST" {
+            let key = extract_query_param(path, "key").unwrap_or_default();
+            let expected = extract_query_param(path, "expected");
+            let value = extract_query_param(path, "value").unwrap_or_default();
+            if let Some(mesh) = &state.mesh {
+                let (ok, cur, ver) = mesh.kv.cas(&key, expected.as_deref(), &value);
+                let json = serde_json::json!({
+                    "key": key,
+                    "success": ok,
+                    "current_value": cur,
+                    "version": ver
+                }).to_string();
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    json.len(), json
+                );
+                client.write_all(resp.as_bytes()).await?;
+            } else {
+                let resp = "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 17\r\nConnection: close\r\n\r\nMesh Unavailable";
+                client.write_all(resp.as_bytes()).await?;
+            }
+        }
+    } else if path.starts_with("/api/mesh/kv/lock") {
+        if method == "POST" {
+            let key = extract_query_param(path, "key").unwrap_or_default();
+            let holder = extract_query_param(path, "holder").unwrap_or_else(|| "api-client".into());
+            let ttl: u64 = extract_query_param(path, "ttl").and_then(|t| t.parse().ok()).unwrap_or(30);
+            if let Some(mesh) = &state.mesh {
+                let (acquired, fence_token, expires_at) = mesh.kv.acquire_lock(&key, &holder, ttl);
+                let json = serde_json::json!({
+                    "key": key,
+                    "acquired": acquired,
+                    "fence_token": fence_token,
+                    "holder": holder,
+                    "expires_at": expires_at
+                }).to_string();
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    json.len(), json
+                );
+                client.write_all(resp.as_bytes()).await?;
+            } else {
+                let resp = "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 17\r\nConnection: close\r\n\r\nMesh Unavailable";
+                client.write_all(resp.as_bytes()).await?;
+            }
+        }
+    } else if path.starts_with("/api/mesh/kv/unlock") {
+        if method == "POST" {
+            let key = extract_query_param(path, "key").unwrap_or_default();
+            let holder = extract_query_param(path, "holder").unwrap_or_else(|| "api-client".into());
+            let token: u64 = extract_query_param(path, "token").and_then(|t| t.parse().ok()).unwrap_or(0);
+            if let Some(mesh) = &state.mesh {
+                let released = mesh.kv.release_lock(&key, &holder, token);
+                let json = serde_json::json!({
+                    "key": key,
+                    "released": released
+                }).to_string();
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    json.len(), json
+                );
+                client.write_all(resp.as_bytes()).await?;
+            } else {
+                let resp = "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 17\r\nConnection: close\r\n\r\nMesh Unavailable";
+                client.write_all(resp.as_bytes()).await?;
+            }
+        }
     } else if path.starts_with("/api/mesh/kv") {
         if method == "POST" {
             let key = extract_query_param(path, "key").unwrap_or_default();
@@ -456,6 +524,7 @@ async fn handle_portal_client(mut client: TcpStream, state: Arc<CoreState>) -> R
                 secret_refs: vec![],
                 service_name: Some(app.name.clone()),
                 replica_index: Some(0),
+                isolation_level: None,
             };
 
             let pipe = format!("veloce-node-{node_id}");

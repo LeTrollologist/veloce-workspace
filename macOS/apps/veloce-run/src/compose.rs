@@ -276,6 +276,7 @@ pub fn to_spawn_msg(service_name: &str, svc: &ComposeService) -> Result<SpawnNod
         secret_refs,
         service_name:     Some(service_name.into()),
         replica_index:    None, // set by reconciler
+        isolation_level:  None,
     })
 }
 

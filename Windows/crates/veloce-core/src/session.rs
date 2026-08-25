@@ -19,7 +19,8 @@ use veloce_ipc::{
     message::{
         Body, Capability, Envelope, ErrorCode, ErrorMsg, Flags,
         HandshakeAckMsg, MeshConnectMsg, MeshDisconnectMsg, MeshGetJoinCodeV3Msg, MeshJoinCodeV3ResultMsg,
-        MeshKvEntryMsg, NetAddIngressMsg, NodeEventMsg, NodeInfo, NodeKilledMsg, NodeLimits, NodeListMsg,
+        MeshKvEntryMsg, MeshKvCasResultMsg, MeshKvLockResultMsg, MeshKvUnlockResultMsg,
+        NetAddIngressMsg, NodeEventMsg, NodeInfo, NodeKilledMsg, NodeLimits, NodeListMsg,
         NodeLogChunkMsg, NodeResourceMsg, NodeSpawnedMsg, NodeStatus as IpcNodeStatus,
         NodeStatusMsg, RestartPolicy, SpawnNodeMsg, TrafficStatsMsg,
     },
@@ -822,6 +823,7 @@ where
                     secret_refs: vec![],
                     service_name: Some(app.name.clone()),
                     replica_index: Some(0),
+                    isolation_level: None,
                 };
 
                 // Register hostname if configured
@@ -901,6 +903,51 @@ where
                 if let Some(mesh) = &self.state.mesh {
                     mesh.kv.delete(&key);
                     self.send_reply(cid, Body::Ping).await?;
+                } else {
+                    self.send_error(Some(cid), ErrorCode::NotFound, "mesh layer not active".into()).await?;
+                }
+            }
+
+            Body::MeshKvCas(cas_msg) => {
+                self.require_cap(Capability::MeshKvManage)?;
+                if let Some(mesh) = &self.state.mesh {
+                    let exp = cas_msg.expected_value.as_deref();
+                    let (success, current_value, version) = mesh.kv.cas(&cas_msg.key, exp, &cas_msg.new_value);
+                    self.send_reply(cid, Body::MeshKvCasResult(MeshKvCasResultMsg {
+                        key: cas_msg.key,
+                        success,
+                        current_value,
+                        version,
+                    })).await?;
+                } else {
+                    self.send_error(Some(cid), ErrorCode::NotFound, "mesh layer not active".into()).await?;
+                }
+            }
+
+            Body::MeshKvLock(lock_msg) => {
+                self.require_cap(Capability::MeshKvManage)?;
+                if let Some(mesh) = &self.state.mesh {
+                    let (acquired, fence_token, expires_at) = mesh.kv.acquire_lock(&lock_msg.key, &lock_msg.holder, lock_msg.ttl_secs);
+                    self.send_reply(cid, Body::MeshKvLockResult(MeshKvLockResultMsg {
+                        key: lock_msg.key,
+                        acquired,
+                        fence_token,
+                        holder: lock_msg.holder,
+                        expires_at,
+                    })).await?;
+                } else {
+                    self.send_error(Some(cid), ErrorCode::NotFound, "mesh layer not active".into()).await?;
+                }
+            }
+
+            Body::MeshKvUnlock(unlock_msg) => {
+                self.require_cap(Capability::MeshKvManage)?;
+                if let Some(mesh) = &self.state.mesh {
+                    let released = mesh.kv.release_lock(&unlock_msg.key, &unlock_msg.holder, unlock_msg.fence_token);
+                    self.send_reply(cid, Body::MeshKvUnlockResult(MeshKvUnlockResultMsg {
+                        key: unlock_msg.key,
+                        released,
+                    })).await?;
                 } else {
                     self.send_error(Some(cid), ErrorCode::NotFound, "mesh layer not active".into()).await?;
                 }

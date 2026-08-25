@@ -113,6 +113,8 @@ async fn handle_client(mut stream: TcpStream, registry: Arc<NetRegistry>) -> Res
     // ── Step 4: Connect to target ─────────────────────────────────────────────
     match TcpStream::connect(&real_addr).await {
         Ok(mut target) => {
+            let _ = stream.set_nodelay(true);
+            let _ = target.set_nodelay(true);
             let local = target.local_addr()
                 .unwrap_or_else(|_| SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0)));
             let (bind_ip, bind_port) = match local {

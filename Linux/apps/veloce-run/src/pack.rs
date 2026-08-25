@@ -1,4 +1,4 @@
-﻿/*!
+/*!
 Veloce Userspace Packager CLI commands (`veloce-run pack`).
 */
 
@@ -642,6 +642,8 @@ pub async fn run_pack(action: PackAction) -> Result<()> {
                 app_mem,
                 0,
                 detach,
+                None,
+                false,
             ).await
         }
     }

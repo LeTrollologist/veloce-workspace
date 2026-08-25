@@ -328,6 +328,18 @@ pub enum MessageType {
     MeshKvListResult     = 0x6E,
     /// Client → Core: delete a key from the mesh store.
     MeshKvDelete         = 0x6F,
+    /// Client → Core: atomic compare-and-swap (v4.4).
+    MeshKvCas            = 0x62,
+    /// Core → Client: CAS result.
+    MeshKvCasResult      = 0x63,
+    /// Client → Core: acquire or renew a distributed lease lock (v4.4).
+    MeshKvLock           = 0x64,
+    /// Core → Client: lock acquisition result.
+    MeshKvLockResult     = 0x65,
+    /// Client → Core: release a distributed lease lock (v4.4).
+    MeshKvUnlock         = 0x66,
+    /// Core → Client: lock release result.
+    MeshKvUnlockResult   = 0x67,
 
     // ── Error ─────────────────────────────────────────────────
     Error           = 0xFF,
@@ -354,6 +366,9 @@ impl TryFrom<u8> for MessageType {
             0x6A => MeshKvSet,       0x6B => MeshKvGet,
             0x6C => MeshKvInfo,      0x6D => MeshKvList,
             0x6E => MeshKvListResult,0x6F => MeshKvDelete,
+            0x62 => MeshKvCas,       0x63 => MeshKvCasResult,
+            0x64 => MeshKvLock,      0x65 => MeshKvLockResult,
+            0x66 => MeshKvUnlock,    0x67 => MeshKvUnlockResult,
             0x40 => NetRegisterHost, 0x41 => NetHostRegistered,
             0x42 => NetUnregisterHost,0x43 => NetResolve,
             0x44 => NetResolveResult, 0x45 => NetHostList,
@@ -617,6 +632,13 @@ pub enum Body {
     MeshKvList,
     MeshKvListResult(Vec<MeshKvEntryMsg>),
     MeshKvDelete { key: String },
+    // Distributed Leases & CAS (v4.4)
+    MeshKvCas(MeshKvCasMsg),
+    MeshKvCasResult(MeshKvCasResultMsg),
+    MeshKvLock(MeshKvLockMsg),
+    MeshKvLockResult(MeshKvLockResultMsg),
+    MeshKvUnlock(MeshKvUnlockMsg),
+    MeshKvUnlockResult(MeshKvUnlockResultMsg),
 
     // ── OIDC & Corporate Identity (v3.8) ──────────────────────
     OidcAuthSet(OidcSessionMsg),
@@ -781,6 +803,12 @@ impl Body {
             MeshKvList                 => MessageType::MeshKvList,
             MeshKvListResult(_)        => MessageType::MeshKvListResult,
             MeshKvDelete{..}           => MessageType::MeshKvDelete,
+            MeshKvCas(_)               => MessageType::MeshKvCas,
+            MeshKvCasResult(_)         => MessageType::MeshKvCasResult,
+            MeshKvLock(_)              => MessageType::MeshKvLock,
+            MeshKvLockResult(_)        => MessageType::MeshKvLockResult,
+            MeshKvUnlock(_)            => MessageType::MeshKvUnlock,
+            MeshKvUnlockResult(_)      => MessageType::MeshKvUnlockResult,
             // OIDC & Corporate Identity (v3.8)
             OidcAuthSet(_)             => MessageType::OidcAuthSet,
             OidcAuthAck                => MessageType::OidcAuthAck,
@@ -947,6 +975,22 @@ pub struct SpawnNodeMsg {
     /// Replica index within the service (set by reconciler, 0-based).
     #[serde(default)]
     pub replica_index: Option<u32>,
+
+    /// Optional isolation and sandboxing level (v4.4).
+    #[serde(default)]
+    pub isolation_level: Option<IsolationLevel>,
+}
+
+/// Process isolation and sandboxing level (v4.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum IsolationLevel {
+    /// Standard Job Object (Windows) / cgroups v2 (Linux) resource sandboxing.
+    #[default]
+    Default,
+    /// Windows AppContainer profile isolation with restricted token capabilities.
+    AppContainer,
+    /// OS-level unprivileged namespace/seatbelt sandbox (Linux unshare, macOS sandbox).
+    Sandbox,
 }
 
 /// Automatic restart policy for nodes that exit unexpectedly.
@@ -1517,6 +1561,50 @@ pub struct MeshKvEntryMsg {
     pub version: u64,
     pub updated_at: u64,
     pub origin: Uuid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MeshKvCasMsg {
+    pub key: String,
+    pub expected_value: Option<String>,
+    pub new_value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MeshKvCasResultMsg {
+    pub key: String,
+    pub success: bool,
+    pub current_value: Option<String>,
+    pub version: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MeshKvLockMsg {
+    pub key: String,
+    pub holder: String,
+    pub ttl_secs: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MeshKvLockResultMsg {
+    pub key: String,
+    pub acquired: bool,
+    pub fence_token: u64,
+    pub holder: String,
+    pub expires_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MeshKvUnlockMsg {
+    pub key: String,
+    pub holder: String,
+    pub fence_token: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MeshKvUnlockResultMsg {
+    pub key: String,
+    pub released: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
