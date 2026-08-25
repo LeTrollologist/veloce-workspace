@@ -459,5 +459,11 @@ This phase dedicated three sequential releases to security, correctness, and sta
 - [x] In-cluster unprivileged bridge sidecar agent (`veloce-run bridge agent`)
 - [x] Full CLI suite (`veloce-run bridge connect`, `intercept`, `list`, `disconnect`)
 
+**v4.1.0 — Zero-Trust Team Share ("Unprivileged Secure Tunnels via VM3 Share Codes")** ✅
+- [x] Scoped VM3 Share Tokens (`vshare://vm3-...`) carrying service scopes, target ports, and TTLs
+- [x] 1-Command local port publishing (`veloce-run share <PORT> [--name dev-api] [--ttl 2h] [--one-time]`)
+- [x] Instant remote consumption and DNS mapping (`veloce-run share connect <CODE>` / `veloce-run join <CODE>`)
+- [x] End-to-end Noise_IK encrypted peer tunnels with zero root and zero port opening
+
 **Future Roadmap** 📋
 - **Standalone Distribution**: Portable self-contained binaries (`.exe` / `.tar.gz`) with manual and offline release artifacts, bypassing third-party cloud billing dependencies.

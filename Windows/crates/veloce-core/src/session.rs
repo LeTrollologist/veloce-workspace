@@ -961,6 +961,46 @@ where
                 }
             }
 
+            // ── Zero-Trust Team Share (v4.1) ───────────────────────────
+            Body::ShareCreate(msg) => {
+                self.require_cap(Capability::ShareManage)?;
+                let host_pk = if let Some(mesh) = &self.state.mesh {
+                    mesh.identity.pub_key
+                } else {
+                    [0u8; 32]
+                };
+                let info = self.state.share.create_share(msg, &host_pk);
+                self.send_reply(cid, Body::ShareCreateAck(info)).await?;
+            }
+
+            Body::ShareConnect(msg) => {
+                self.require_cap(Capability::ShareManage)?;
+                match self.state.share.connect_share(msg) {
+                    Ok(connected) => {
+                        self.send_reply(cid, Body::ShareConnectAck(connected)).await?;
+                    }
+                    Err(e) => {
+                        self.send_error(Some(cid), ErrorCode::NotFound, e.to_string()).await?;
+                    }
+                }
+            }
+
+            Body::ShareList => {
+                self.require_cap(Capability::ShareManage)?;
+                let list = self.state.share.list_shares();
+                self.send_reply(cid, Body::ShareListResp(list)).await?;
+            }
+
+            Body::ShareRevoke { share_id } => {
+                self.require_cap(Capability::ShareManage)?;
+                let revoked = self.state.share.revoke_share(&share_id);
+                if revoked {
+                    self.send_reply(cid, Body::ShareRevokeAck { share_id }).await?;
+                } else {
+                    self.send_error(Some(cid), ErrorCode::NotFound, format!("share '{share_id}' not found")).await?;
+                }
+            }
+
             other => {
                 tracing::warn!("unhandled message type: {:?}", other.msg_type());
                 self.send_error(Some(cid), ErrorCode::InvalidMessage,

@@ -818,6 +818,44 @@ impl VeloceClient {
         }
     }
 
+    // ── Zero-Trust Team Share (v4.1) ──────────────────────────────────────────
+
+    /// Create and publish an ephemeral Zero-Trust team share link.
+    pub async fn share_create(&mut self, msg: veloce_ipc::message::ShareCreateMsg) -> Result<veloce_ipc::message::ShareInfoMsg> {
+        match self.request(Body::ShareCreate(msg)).await? {
+            Body::ShareCreateAck(info) => Ok(info),
+            Body::Error(e)             => bail!("share_create: {}", e.message),
+            other                      => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// Connect to a remote VM3 share token and expose it locally.
+    pub async fn share_connect(&mut self, msg: veloce_ipc::message::ShareConnectMsg) -> Result<veloce_ipc::message::ShareConnectedMsg> {
+        match self.request(Body::ShareConnect(msg)).await? {
+            Body::ShareConnectAck(conn) => Ok(conn),
+            Body::Error(e)              => bail!("share_connect: {}", e.message),
+            other                       => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// List all active published and consumed share links.
+    pub async fn share_list(&mut self) -> Result<Vec<veloce_ipc::message::ShareInfoMsg>> {
+        match self.request(Body::ShareList).await? {
+            Body::ShareListResp(list) => Ok(list),
+            Body::Error(e)            => bail!("share_list: {}", e.message),
+            other                     => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// Revoke an active share link.
+    pub async fn share_revoke(&mut self, share_id: &str) -> Result<()> {
+        match self.request(Body::ShareRevoke { share_id: share_id.into() }).await? {
+            Body::ShareRevokeAck { .. } => Ok(()),
+            Body::Error(e)              => bail!("share_revoke: {}", e.message),
+            other                       => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
     // ── Traffic stats ─────────────────────────────────────────────────────────
 
     /// Query per-tunnel (Noise) and per-.vln host byte counters from Core.

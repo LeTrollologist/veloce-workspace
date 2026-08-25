@@ -16,6 +16,7 @@ mod hub;
 pub mod bridge;
 pub mod oidc;
 pub mod pack;
+pub mod share;
 pub mod wasm;
 mod metrics;
 mod portal;

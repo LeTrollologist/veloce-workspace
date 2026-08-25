@@ -74,6 +74,9 @@ pub struct CoreState {
 
     // ── v4.0 (Bridge to Cloud) ────────────────────────────────
     pub bridge: Arc<crate::bridge::BridgeEngine>,
+
+    // ── v4.1 (Zero-Trust Team Share) ──────────────────────────
+    pub share: Arc<crate::share::ShareEngine>,
 }
 
 impl CoreState {
@@ -142,6 +145,7 @@ impl CoreState {
         let hub        = crate::hub::HubCatalogEngine::new(&dir);
         let oidc       = Arc::new(crate::oidc::OidcEngine::new(&dir));
         let bridge     = Arc::new(crate::bridge::BridgeEngine::new());
+        let share      = Arc::new(crate::share::ShareEngine::new());
 
         Ok(Self {
             registry,
@@ -162,6 +166,7 @@ impl CoreState {
             hub,
             oidc,
             bridge,
+            share,
         })
     }
 

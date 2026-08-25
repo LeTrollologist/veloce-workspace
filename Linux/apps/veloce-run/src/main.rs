@@ -59,6 +59,7 @@ mod auth;
 mod bridge;
 mod compose;
 mod pack;
+mod share;
 mod wasm;
 
 use anyhow::{Context, Result};
@@ -214,6 +215,16 @@ enum Commands {
     Wasm(wasm::WasmArgs),
     /// "Bridge to Cloud" unprivileged Kubernetes telepresence & traffic interceptor (v4.0)
     Bridge(bridge::BridgeArgs),
+    /// Zero-Trust Team Share: ephemeral encrypted tunnels via VM3 share codes (v4.1)
+    Share(share::ShareArgs),
+    /// Shortcut to connect to a remote VM3 share code (v4.1)
+    Join {
+        /// The vshare:// URI or VM3 share code
+        share_code: String,
+        /// Local port override
+        #[arg(short = 'p', long = "port")]
+        port: Option<u16>,
+    },
     /// Print version information
     Version,
 }
@@ -538,6 +549,14 @@ async fn main() -> Result<()> {
         Some(Commands::Bridge(args))          => {
             let client = connect_client("veloce-bridge", vec![Capability::BridgeManage, Capability::RegistryRead]).await?;
             bridge::run_bridge(std::sync::Arc::new(tokio::sync::Mutex::new(client)), args.action).await
+        }
+        Some(Commands::Share(args))           => {
+            let client = connect_client("veloce-share", vec![Capability::ShareManage, Capability::RegistryRead]).await?;
+            share::run_share(std::sync::Arc::new(tokio::sync::Mutex::new(client)), args).await
+        }
+        Some(Commands::Join { share_code, port }) => {
+            let client = connect_client("veloce-share", vec![Capability::ShareManage, Capability::RegistryRead]).await?;
+            share::handle_connect(std::sync::Arc::new(tokio::sync::Mutex::new(client)), share_code, port).await
         }
         Some(Commands::Version)               => { run_version(); Ok(()) }
         None => {

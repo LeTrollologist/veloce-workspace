@@ -143,6 +143,24 @@ pub enum MessageType {
     /// Core → Client: bridge disconnected ack.
     BridgeDisconnectAck  = 0x82,
 
+    // ── Zero-Trust Team Share (v4.1) ───────────────────────────
+    /// Client → Core: create/publish a new ephemeral team share.
+    ShareCreate          = 0x83,
+    /// Core → Client: share created response.
+    ShareCreateAck       = 0x84,
+    /// Client → Core: connect to a remote share code.
+    ShareConnect         = 0x85,
+    /// Core → Client: share connected ack.
+    ShareConnectAck      = 0x86,
+    /// Client → Core: list active local and remote shares.
+    ShareList            = 0x87,
+    /// Core → Client: share list response.
+    ShareListResp        = 0x88,
+    /// Client → Core: revoke an active share.
+    ShareRevoke          = 0x89,
+    /// Core → Client: share revoked ack.
+    ShareRevokeAck       = 0x8A,
+
     // ── Traffic stats ──────────────────────────────────────────
     /// Client → Core: request cumulative byte counters for all tunnels and .vln hosts.
     TrafficQuery      = 0x80,
@@ -302,6 +320,10 @@ impl TryFrom<u8> for MessageType {
             0x7B => BridgeIntercept, 0x7C => BridgeInterceptAck,
             0x7D => BridgeList,      0x7E => BridgeListResp,
             0x7F => BridgeDisconnect,0x82 => BridgeDisconnectAck,
+            0x83 => ShareCreate,     0x84 => ShareCreateAck,
+            0x85 => ShareConnect,    0x86 => ShareConnectAck,
+            0x87 => ShareList,       0x88 => ShareListResp,
+            0x89 => ShareRevoke,     0x8A => ShareRevokeAck,
             0x80 => TrafficQuery,    0x81 => TrafficStatsResult,
             0x90 => NetAddPortForward,    0x91 => NetPortForwardAdded,
             0x92 => NetRemovePortForward, 0x93 => NetListPortForwards,
@@ -549,6 +571,16 @@ pub enum Body {
     BridgeListResp(Vec<BridgeSessionInfoMsg>),
     BridgeDisconnect { session_id: String },
     BridgeDisconnectAck { session_id: String },
+
+    // ── Zero-Trust Team Share (v4.1) ───────────────────────────
+    ShareCreate(ShareCreateMsg),
+    ShareCreateAck(ShareInfoMsg),
+    ShareConnect(ShareConnectMsg),
+    ShareConnectAck(ShareConnectedMsg),
+    ShareList,
+    ShareListResp(Vec<ShareInfoMsg>),
+    ShareRevoke { share_id: String },
+    ShareRevokeAck { share_id: String },
 }
 
 impl Body {
@@ -673,6 +705,15 @@ impl Body {
             BridgeListResp(_)          => MessageType::BridgeListResp,
             BridgeDisconnect{..}       => MessageType::BridgeDisconnect,
             BridgeDisconnectAck{..}    => MessageType::BridgeDisconnectAck,
+            // Zero-Trust Team Share (v4.1)
+            ShareCreate(_)             => MessageType::ShareCreate,
+            ShareCreateAck(_)          => MessageType::ShareCreateAck,
+            ShareConnect(_)            => MessageType::ShareConnect,
+            ShareConnectAck(_)         => MessageType::ShareConnectAck,
+            ShareList                  => MessageType::ShareList,
+            ShareListResp(_)           => MessageType::ShareListResp,
+            ShareRevoke{..}            => MessageType::ShareRevoke,
+            ShareRevokeAck{..}         => MessageType::ShareRevokeAck,
         }
     }
 }
@@ -729,6 +770,8 @@ pub enum Capability {
     MeshKvManage,
     /// Manage remote Kubernetes bridge tunnels & traffic intercepts (v4.0).
     BridgeManage,
+    /// Create, manage, and consume ephemeral Zero-Trust team shares (v4.1).
+    ShareManage,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1412,6 +1455,52 @@ pub struct BridgeSessionInfoMsg {
     pub dns_suffixes: Vec<String>,
     pub active_intercepts: Vec<BridgeInterceptRuleMsg>,
     pub connected_at: u64,
+}
+
+// ── Zero-Trust Team Share (v4.1) ─────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ShareCreateMsg {
+    /// Target port (e.g. "3000") or .vln hostname (e.g. "api.vln")
+    pub target: String,
+    /// Friendly name for the share (e.g. "dev-api")
+    pub name: Option<String>,
+    /// Lifetime in seconds (0 = default 2 hours)
+    pub ttl_secs: u64,
+    /// One-time consumption flag
+    pub one_time: bool,
+    /// Optional passphrase protection
+    pub passphrase_hash: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ShareInfoMsg {
+    pub share_id: String,
+    pub name: String,
+    pub target: String,
+    pub vshare_uri: String,
+    pub expires_at: u64,
+    pub one_time: bool,
+    pub access_count: u32,
+    pub is_active: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ShareConnectMsg {
+    /// The vshare:// URI or VM3 share code
+    pub share_code: String,
+    /// Optional local port override (default: ephemeral or same as remote target)
+    pub local_port: Option<u16>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ShareConnectedMsg {
+    pub share_id: String,
+    pub name: String,
+    pub remote_peer: String,
+    pub local_endpoint: String,
+    pub domain_name: String, // e.g. "dev-api.shared.vln"
+    pub local_port: u16,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
