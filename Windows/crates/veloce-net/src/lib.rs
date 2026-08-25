@@ -16,6 +16,7 @@ Sideloaded apps configure `VELOCE_DNS=127.0.0.1:5354`
 and `VELOCE_SOCKS=127.0.0.1:1055` — no drivers, no kernel modules.
 */
 
+pub mod accel;
 pub mod dns;
 pub mod socks5;
 pub mod registry;
@@ -24,6 +25,7 @@ pub mod port_forward;
 pub mod ingress;
 pub mod tls;
 
+pub use accel::{AccelMode, AccelStatus, KernelAccelEngine};
 pub use registry::NetRegistry;
 pub use error::NetError;
 pub use port_forward::PortForwardTable;

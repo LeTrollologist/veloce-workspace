@@ -62,10 +62,11 @@ mod os_cmd;
 mod pack;
 mod security;
 mod share;
+mod stress;
 mod trace;
 mod wasm;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use pack::PackAction;
 use std::path::PathBuf;
@@ -248,8 +249,80 @@ enum Commands {
         #[command(subcommand)]
         action: SecurityAction,
     },
+    /// Optional Dual-Mode Kernel Acceleration (eBPF / WFP) (v4.6)
+    Accel {
+        #[command(subcommand)]
+        action: AccelAction,
+    },
+    /// Safe P2P Mesh Network, Sandboxed Node & Compute Benchmark Suite (v4.7)
+    #[command(alias = "stress")]
+    Benchmark {
+        #[command(subcommand)]
+        action: BenchmarkAction,
+    },
     /// Print version information
     Version,
+}
+
+#[derive(Subcommand, Debug)]
+enum BenchmarkAction {
+    /// Safe multi-threaded π calculation compute benchmark
+    Compute {
+        /// Number of worker threads (default: CPU core count)
+        #[arg(short, long, default_value_t = 0)]
+        threads: usize,
+        /// Benchmark duration in seconds
+        #[arg(short, long, default_value_t = 3)]
+        duration_secs: u64,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Multi-worker synthetic mesh network throughput & latency percentile stress test
+    Mesh {
+        /// Concurrency level (number of async workers)
+        #[arg(short, long, default_value_t = 8)]
+        concurrency: usize,
+        /// Test duration in seconds
+        #[arg(short, long, default_value_t = 3)]
+        duration_secs: u64,
+        /// Payload size in KB
+        #[arg(short, long, default_value_t = 1)]
+        payload_kb: usize,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Integrated end-to-end sandbox process isolation & mesh demo scorecard
+    Demo {
+        /// Test duration in seconds
+        #[arg(short, long, default_value_t = 3)]
+        duration_secs: u64,
+        /// Concurrency level
+        #[arg(short, long, default_value_t = 8)]
+        concurrency: usize,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum AccelAction {
+    /// Show current kernel acceleration mode, status, and metrics
+    Status {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Enable kernel-level socket acceleration
+    Enable {
+        /// Acceleration mode ('auto', 'ebpf', 'wfp', 'userspace') [default: auto]
+        #[arg(short, long, default_value = "auto")]
+        mode: String,
+    },
+    /// Disable kernel acceleration and revert to pure userspace mode
+    Disable,
 }
 
 #[derive(Subcommand, Debug)]
@@ -645,6 +718,8 @@ async fn main() -> Result<()> {
             os_cmd::handle_os_command(command, client).await
         }
         Some(Commands::Security { action })   => run_security(action).await,
+        Some(Commands::Accel { action })      => run_accel(action).await,
+        Some(Commands::Benchmark { action })  => run_benchmark(action).await,
         Some(Commands::Version)               => { run_version(); Ok(()) }
         None => {
             let executable = match cli.executable {
@@ -1740,5 +1815,142 @@ async fn run_security(action: SecurityAction) -> Result<()> {
     }
     Ok(())
 }
+
+async fn run_accel(action: AccelAction) -> Result<()> {
+    let client = connect_client("veloce-accel", vec![Capability::AccelManage, Capability::RegistryRead]).await?;
+    match action {
+        AccelAction::Status { json } => {
+            let status = client.get_accel_status().await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&status)?);
+            } else {
+                println!("========================================================");
+                println!("  VeloceNetwork Dual-Mode Kernel Acceleration Status    ");
+                println!("========================================================");
+                println!("Configured Mode:     {:?}", status.configured_mode);
+                println!("Active Engine:       {:?}", status.active_mode);
+                println!("Elevated Privileges: {}", if status.is_elevated { "Yes (Root/Admin)" } else { "No (Unprivileged Userspace)" });
+                println!("Kernel Subsystem:    {}", if status.kernel_support_detected { "Available (eBPF/WFP)" } else { "Not Detected" });
+                println!("Active Fast-Routes:  {}", status.active_routes);
+                println!("Bypassed Traffic:    {} bytes ({} packets)\n", status.bypassed_bytes, status.bypassed_packets);
+                if !status.routes.is_empty() {
+                    println!("{:<24} {}", "HOSTNAME (.vln)", "LOCAL TARGET PORT");
+                    println!("{}", "─".repeat(45));
+                    for (h, p) in &status.routes {
+                        println!("{:<24} :{}", h, p);
+                    }
+                }
+            }
+        }
+        AccelAction::Enable { mode } => {
+            let req_mode = match mode.to_lowercase().as_str() {
+                "auto" => veloce_ipc::message::AccelModeMsg::Auto,
+                "ebpf" => veloce_ipc::message::AccelModeMsg::Ebpf,
+                "wfp" => veloce_ipc::message::AccelModeMsg::Wfp,
+                "userspace" => veloce_ipc::message::AccelModeMsg::Userspace,
+                other => bail!("unknown acceleration mode '{other}'. Supported: auto, ebpf, wfp, userspace"),
+            };
+            let status = client.set_accel(req_mode).await?;
+            println!("✓ Acceleration configured: {:?} (Active: {:?})", status.configured_mode, status.active_mode);
+            if status.active_mode == veloce_ipc::message::AccelModeMsg::Userspace && req_mode != veloce_ipc::message::AccelModeMsg::Userspace {
+                println!("ℹ Notice: Elevation not detected; operating safely in unprivileged Userspace mode.");
+            }
+        }
+        AccelAction::Disable => {
+            let status = client.set_accel(veloce_ipc::message::AccelModeMsg::Userspace).await?;
+            println!("✓ Kernel acceleration disabled. Active: {:?}", status.active_mode);
+        }
+    }
+    Ok(())
+}
+
+async fn run_benchmark(action: BenchmarkAction) -> Result<()> {
+    match action {
+        BenchmarkAction::Compute { threads, duration_secs, json } => {
+            println!("⚙ Running safe multi-threaded π calculation benchmark for {}s...", duration_secs);
+            let res = stress::run_pi_benchmark(threads, duration_secs);
+            if json {
+                println!("{}", serde_json::to_string_pretty(&res)?);
+            } else {
+                println!("================================================================================");
+                println!("  VeloceNetwork Safe Compute & π Stress Benchmark Scorecard                     ");
+                println!("================================================================================");
+                println!("Algorithm:               {}", res.algorithm);
+                println!("Worker Threads:          {}", res.threads_used);
+                println!("Actual Duration:         {:.2}s ({} ms)", res.actual_duration_ms as f64 / 1000.0, res.actual_duration_ms);
+                println!("Total Iterations:        {}", res.total_iterations);
+                println!("Throughput:              {:.2} Mega-iters/sec", res.mega_iterations_per_sec);
+                println!("Compute Speed:           {:.2} MFLOPs", res.estimated_mflops);
+                println!("Calculated π:            {:.15}", res.computed_pi);
+                println!("Reference π:             {:.15}", res.reference_pi);
+                println!("Absolute Error:          {:.2e}", res.absolute_error);
+                println!("Host Safety Guarantee:   {}", if res.safe_host_guarantee { "PASSED (Zero Starvation / Cooperative)" } else { "N/A" });
+                println!("--------------------------------------------------------------------------------");
+                println!("Hardware Score:          {} pts\n", res.score);
+            }
+        }
+        BenchmarkAction::Mesh { concurrency, duration_secs, payload_kb, json } => {
+            let client = connect_client("veloce-stress", vec![Capability::RegistryRead]).await?;
+            let client_arc = std::sync::Arc::new(tokio::sync::Mutex::new(client));
+            println!("📡 Running multi-worker mesh network stress test (concurrency={}, duration={}s)...", concurrency, duration_secs);
+            let res = stress::run_mesh_stress_test(client_arc, concurrency, duration_secs, payload_kb).await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&res)?);
+            } else {
+                println!("================================================================================");
+                println!("  VeloceNetwork P2P Mesh Network & IPC Stress Test Results                      ");
+                println!("================================================================================");
+                println!("Concurrency Level:       {} workers", res.concurrency);
+                println!("Payload Size:            {} KB", res.payload_bytes / 1024);
+                println!("Total Requests:          {}", res.total_requests);
+                println!("Successful Operations:   {}", res.successful_requests);
+                println!("Failed Operations:       {}", res.failed_requests);
+                println!("Delivery Success Rate:   {:.2}%", res.packet_delivery_rate_pct);
+                println!("Request Rate (QPS):      {:.1} req/sec", res.requests_per_sec);
+                println!("Throughput:              {:.2} MB/sec", res.throughput_mb_per_sec);
+                println!("--------------------------------------------------------------------------------");
+                println!("Latency Distribution (ms):");
+                println!("  Min Latency:           {:.3} ms", res.latency.min_ms);
+                println!("  Mean Latency:          {:.3} ms", res.latency.mean_ms);
+                println!("  p50 (Median):          {:.3} ms", res.latency.p50_ms);
+                println!("  p95:                   {:.3} ms", res.latency.p95_ms);
+                println!("  p99:                   {:.3} ms", res.latency.p99_ms);
+                println!("  Max Latency:           {:.3} ms", res.latency.max_ms);
+                println!("  Jitter (StdDev):       {:.3} ms\n", res.latency.jitter_ms);
+            }
+        }
+        BenchmarkAction::Demo { duration_secs, concurrency, json } => {
+            let client = connect_client("veloce-demo", vec![Capability::RegistryRead, Capability::SpawnNodes]).await?;
+            let client_arc = std::sync::Arc::new(tokio::sync::Mutex::new(client));
+            println!("🚀 Executing integrated VeloceNetwork sandboxed node & mesh stress demo...");
+            let res = stress::run_integrated_demo(client_arc, duration_secs, concurrency).await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&res)?);
+            } else {
+                println!("================================================================================");
+                println!("  VeloceNetwork End-to-End Stress Test & Node Isolation Demo Scorecard          ");
+                println!("================================================================================");
+                println!("Demo:                    {}", res.demo_name);
+                println!("Overall Status:          {}", res.overall_status);
+                println!("CPU Sandboxing Throttled:{}", if res.sandbox_cpu_throttled { " Yes (Job Object / cgroups v2)" } else { " No" });
+                println!("Memory Bounded:          {}", if res.sandbox_memory_bounded { " Yes (Hard Cap Enforced)" } else { " No" });
+                println!("Zero Host Starvation:    {}", if res.zero_host_starvation { " Confirmed (Cooperative Yielding)" } else { " No" });
+                println!("--------------------------------------------------------------------------------");
+                println!("1. Compute Subsystem Performance:");
+                println!("   Throughput:           {:.2} Mega-iters/sec ({:.1} MFLOPs)", res.compute_benchmark.mega_iterations_per_sec, res.compute_benchmark.estimated_mflops);
+                println!("   Calculated π:         {:.12} (Error: {:.2e})", res.compute_benchmark.computed_pi, res.compute_benchmark.absolute_error);
+                println!("   Compute Score:        {} pts", res.compute_benchmark.score);
+                println!("--------------------------------------------------------------------------------");
+                println!("2. Mesh Overlay Network Performance:");
+                println!("   Throughput:           {:.2} MB/sec ({:.1} req/sec)", res.mesh_stress.throughput_mb_per_sec, res.mesh_stress.requests_per_sec);
+                println!("   Delivery Rate:        {:.2}%", res.mesh_stress.packet_delivery_rate_pct);
+                println!("   Latency p50 / p99:    {:.3} ms / {:.3} ms\n", res.mesh_stress.latency.p50_ms, res.mesh_stress.latency.p99_ms);
+            }
+        }
+    }
+    Ok(())
+}
+
+
 
 

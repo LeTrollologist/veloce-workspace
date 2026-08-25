@@ -1167,6 +1167,17 @@ where
                 }
             }
 
+            // ── Kernel Acceleration (v4.6) ──────────────────────────────
+            Body::GetAccelStatus => {
+                let status = self.state.accel.status();
+                self.send_reply(cid, Body::GetAccelStatusResult(to_accel_status_msg(status))).await?;
+            }
+
+            Body::SetAccel(req) => {
+                let status = self.state.accel.set_mode(from_accel_mode_msg(req.mode));
+                self.send_reply(cid, Body::SetAccelResult(to_accel_status_msg(status))).await?;
+            }
+
             other => {
                 tracing::warn!("unhandled message type: {:?}", other.msg_type());
                 self.send_error(Some(cid), ErrorCode::InvalidMessage,
@@ -1270,3 +1281,35 @@ pub(crate) fn spawn_log_forwarder(
         }
     });
 }
+
+fn to_accel_mode_msg(mode: veloce_net::AccelMode) -> veloce_ipc::message::AccelModeMsg {
+    match mode {
+        veloce_net::AccelMode::Userspace => veloce_ipc::message::AccelModeMsg::Userspace,
+        veloce_net::AccelMode::Ebpf => veloce_ipc::message::AccelModeMsg::Ebpf,
+        veloce_net::AccelMode::Wfp => veloce_ipc::message::AccelModeMsg::Wfp,
+        veloce_net::AccelMode::Auto => veloce_ipc::message::AccelModeMsg::Auto,
+    }
+}
+
+fn from_accel_mode_msg(mode: veloce_ipc::message::AccelModeMsg) -> veloce_net::AccelMode {
+    match mode {
+        veloce_ipc::message::AccelModeMsg::Userspace => veloce_net::AccelMode::Userspace,
+        veloce_ipc::message::AccelModeMsg::Ebpf => veloce_net::AccelMode::Ebpf,
+        veloce_ipc::message::AccelModeMsg::Wfp => veloce_net::AccelMode::Wfp,
+        veloce_ipc::message::AccelModeMsg::Auto => veloce_net::AccelMode::Auto,
+    }
+}
+
+fn to_accel_status_msg(status: veloce_net::AccelStatus) -> veloce_ipc::message::AccelStatusMsg {
+    veloce_ipc::message::AccelStatusMsg {
+        configured_mode: to_accel_mode_msg(status.configured_mode),
+        active_mode: to_accel_mode_msg(status.active_mode),
+        is_elevated: status.is_elevated,
+        kernel_support_detected: status.kernel_support_detected,
+        active_routes: status.active_routes,
+        bypassed_bytes: status.bypassed_bytes,
+        bypassed_packets: status.bypassed_packets,
+        routes: status.routes,
+    }
+}
+

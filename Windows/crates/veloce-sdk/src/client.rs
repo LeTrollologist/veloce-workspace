@@ -28,6 +28,7 @@ use veloce_ipc::{
         NodeEventMsg, PeerInfoMsg, PolicyRulesMsg, PortForwardEntry, SpawnNodeMsg,
         TrafficStatsMsg, VolumeEntry, VolumeRegisteredMsg,
         OsStatusMsg, VfsListResultMsg, VfsReadResultMsg, VfsStatResultMsg,
+        AccelModeMsg, AccelStatusMsg, SetAccelMsg,
     },
 };
 
@@ -1041,6 +1042,26 @@ impl VeloceClient {
             Body::TrafficStatsResult(s) => Ok(s),
             Body::Error(e) => bail!("query_traffic error: {}", e.message),
             other => bail!("query_traffic: unexpected {:?}", other.msg_type()),
+        }
+    }
+
+    // ── Kernel Acceleration (v4.6) ───────────────────────────────────────────
+
+    /// Query current kernel acceleration mode, status, and bypassed metrics.
+    pub async fn get_accel_status(&self) -> Result<AccelStatusMsg> {
+        match self.request(Body::GetAccelStatus).await? {
+            Body::GetAccelStatusResult(s) => Ok(s),
+            Body::Error(e) => bail!("get_accel_status: {}", e.message),
+            other => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// Configure kernel acceleration mode (Userspace, Ebpf, Wfp, Auto).
+    pub async fn set_accel(&self, mode: AccelModeMsg) -> Result<AccelStatusMsg> {
+        match self.request(Body::SetAccel(SetAccelMsg { mode })).await? {
+            Body::SetAccelResult(s) => Ok(s),
+            Body::Error(e) => bail!("set_accel: {}", e.message),
+            other => bail!("unexpected: {:?}", other.msg_type()),
         }
     }
 

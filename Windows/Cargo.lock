@@ -4795,6 +4795,7 @@ dependencies = [
  "rcgen",
  "rustls-pemfile",
  "rustls-pki-types",
+ "serde",
  "thiserror 1.0.69",
  "tokio",
  "tokio-rustls",

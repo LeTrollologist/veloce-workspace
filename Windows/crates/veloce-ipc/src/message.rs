@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use chrono::{DateTime, Utc};
@@ -341,6 +342,15 @@ pub enum MessageType {
     /// Core → Client: lock release result.
     MeshKvUnlockResult   = 0x67,
 
+    // ── Kernel Acceleration (v4.6) ──────────────────────────────
+    GetAccelStatus       = 0x68,
+    /// Core → Client: kernel acceleration status response.
+    GetAccelStatusResult = 0x69,
+    /// Client → Core: configure kernel acceleration mode.
+    SetAccel             = 0xAA,
+    /// Core → Client: set acceleration result.
+    SetAccelResult       = 0xAB,
+
     // ── Error ─────────────────────────────────────────────────
     Error           = 0xFF,
 }
@@ -369,6 +379,8 @@ impl TryFrom<u8> for MessageType {
             0x62 => MeshKvCas,       0x63 => MeshKvCasResult,
             0x64 => MeshKvLock,      0x65 => MeshKvLockResult,
             0x66 => MeshKvUnlock,    0x67 => MeshKvUnlockResult,
+            0x68 => GetAccelStatus,   0x69 => GetAccelStatusResult,
+            0xAA => SetAccel,         0xAB => SetAccelResult,
             0x40 => NetRegisterHost, 0x41 => NetHostRegistered,
             0x42 => NetUnregisterHost,0x43 => NetResolve,
             0x44 => NetResolveResult, 0x45 => NetHostList,
@@ -640,6 +652,12 @@ pub enum Body {
     MeshKvUnlock(MeshKvUnlockMsg),
     MeshKvUnlockResult(MeshKvUnlockResultMsg),
 
+    // ── Kernel Acceleration (v4.6) ──────────────────────────────
+    GetAccelStatus,
+    GetAccelStatusResult(AccelStatusMsg),
+    SetAccel(SetAccelMsg),
+    SetAccelResult(AccelStatusMsg),
+
     // ── OIDC & Corporate Identity (v3.8) ──────────────────────
     OidcAuthSet(OidcSessionMsg),
     OidcAuthAck,
@@ -809,6 +827,11 @@ impl Body {
             MeshKvLockResult(_)        => MessageType::MeshKvLockResult,
             MeshKvUnlock(_)            => MessageType::MeshKvUnlock,
             MeshKvUnlockResult(_)      => MessageType::MeshKvUnlockResult,
+            // Kernel Acceleration (v4.6)
+            GetAccelStatus             => MessageType::GetAccelStatus,
+            GetAccelStatusResult(_)    => MessageType::GetAccelStatusResult,
+            SetAccel(_)                => MessageType::SetAccel,
+            SetAccelResult(_)          => MessageType::SetAccelResult,
             // OIDC & Corporate Identity (v3.8)
             OidcAuthSet(_)             => MessageType::OidcAuthSet,
             OidcAuthAck                => MessageType::OidcAuthAck,
@@ -926,6 +949,8 @@ pub enum Capability {
     OsAdmin,
     /// Read, write, import, and export files in VeloceVFS (v4.3).
     VfsManage,
+    /// Configure and manage kernel acceleration (eBPF / WFP) (v4.6).
+    AccelManage,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1605,6 +1630,32 @@ pub struct MeshKvUnlockMsg {
 pub struct MeshKvUnlockResultMsg {
     pub key: String,
     pub released: bool,
+}
+
+/// Kernel acceleration mode IPC enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AccelModeMsg {
+    Userspace,
+    Ebpf,
+    Wfp,
+    Auto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AccelStatusMsg {
+    pub configured_mode: AccelModeMsg,
+    pub active_mode: AccelModeMsg,
+    pub is_elevated: bool,
+    pub kernel_support_detected: bool,
+    pub active_routes: usize,
+    pub bypassed_bytes: u64,
+    pub bypassed_packets: u64,
+    pub routes: HashMap<String, u16>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SetAccelMsg {
+    pub mode: AccelModeMsg,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

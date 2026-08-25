@@ -554,6 +554,25 @@ async fn handle_portal_client(mut client: TcpStream, state: Arc<CoreState>) -> R
             let resp = "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: 17\r\nConnection: close\r\n\r\nApp Not in Hub";
             client.write_all(resp.as_bytes()).await?;
         }
+    } else if path.starts_with("/api/net/accel") {
+        if path.contains("?mode=") {
+            let mode_str = extract_query_param(path, "mode").unwrap_or_default();
+            let mode = match mode_str.to_lowercase().as_str() {
+                "ebpf" => veloce_net::AccelMode::Ebpf,
+                "wfp" => veloce_net::AccelMode::Wfp,
+                "userspace" => veloce_net::AccelMode::Userspace,
+                _ => veloce_net::AccelMode::Auto,
+            };
+            let status = state.accel.set_mode(mode);
+            let body = serde_json::to_string_pretty(&status).unwrap_or_default();
+            let resp = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body);
+            client.write_all(resp.as_bytes()).await?;
+        } else {
+            let status = state.accel.status();
+            let body = serde_json::to_string_pretty(&status).unwrap_or_default();
+            let resp = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body);
+            client.write_all(resp.as_bytes()).await?;
+        }
     } else {
         let resp = "HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\nConnection: close\r\n\r\nNot Found";
         client.write_all(resp.as_bytes()).await?;

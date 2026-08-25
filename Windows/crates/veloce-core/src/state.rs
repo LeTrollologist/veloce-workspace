@@ -84,6 +84,9 @@ pub struct CoreState {
     // ── v4.3 (Micro-Mini OS & Custom VFS) ─────────────────────
     pub vfs: Arc<crate::vfs::VfsEngine>,
     pub micro_os: Arc<crate::micro_os::MicroOsRuntime>,
+
+    // ── v4.6 (Kernel Acceleration) ────────────────────────────
+    pub accel: Arc<veloce_net::KernelAccelEngine>,
 }
 
 impl CoreState {
@@ -156,6 +159,7 @@ impl CoreState {
         let otel       = Arc::new(crate::otel::OtelEngine::new());
         let vfs        = Arc::new(crate::vfs::VfsEngine::new());
         let micro_os   = crate::micro_os::MicroOsRuntime::new(Arc::clone(&vfs));
+        let accel      = veloce_net::KernelAccelEngine::new();
 
         Ok(Self {
             registry,
@@ -180,6 +184,7 @@ impl CoreState {
             otel,
             vfs,
             micro_os,
+            accel,
         })
     }
 
