@@ -17,7 +17,7 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc,
 };
-use tokio::io::{self, AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 use crate::registry::NetRegistry;
@@ -123,17 +123,15 @@ async fn handle_client(mut stream: TcpStream, registry: Arc<NetRegistry>) -> Res
             };
             send_reply(&mut stream, REP_SUCCESS, bind_ip, bind_port).await?;
 
-            // Bidirectional copy — count bytes for .vln routes.
-            let (mut cr, mut cw) = stream.split();
-            let (mut tr, mut tw) = target.split();
-            tokio::select! {
-                res = io::copy(&mut cr, &mut tw) => {
-                    let n = res?;
-                    if let Some(ref c) = bytes_counter { c.fetch_add(n, Ordering::Relaxed); }
+            // Full-duplex zero-allocation bidirectional streaming
+            match tokio::io::copy_bidirectional(&mut stream, &mut target).await {
+                Ok((c2s, s2c)) => {
+                    if let Some(ref c) = bytes_counter {
+                        c.fetch_add(c2s + s2c, Ordering::Relaxed);
+                    }
                 }
-                res = io::copy(&mut tr, &mut cw) => {
-                    let n = res?;
-                    if let Some(ref c) = bytes_counter { c.fetch_add(n, Ordering::Relaxed); }
+                Err(e) => {
+                    tracing::debug!("SOCKS5 stream terminated: {e}");
                 }
             }
         }
