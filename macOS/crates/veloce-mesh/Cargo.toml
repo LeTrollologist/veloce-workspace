@@ -1,0 +1,37 @@
+[package]
+name    = "veloce-mesh"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+veloce-ipc = { path = "../veloce-ipc" }
+veloce-net = { path = "../veloce-net" }
+tokio      = { workspace = true, features = ["net", "io-util", "sync", "time", "rt-multi-thread"] }
+serde      = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+anyhow     = { workspace = true }
+tracing    = { workspace = true }
+rand         = "0.8"
+parking_lot  = { workspace = true }
+uuid       = { workspace = true, features = ["v4", "v5"] }
+
+# Noise_IK — same cryptographic pattern as WireGuard
+snow       = "0.9"
+
+# Ed25519 / x25519 identity
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+
+# Join-code encoding
+base64 = "0.22"
+
+# x25519 Diffie-Hellman (used by Noise_IK)
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+
+# System hostname for friendly peer names
+hostname = "0.4"
+
+# Module-level static forwarder table
+once_cell = "1"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.54", features = ["Win32_Storage_FileSystem", "Win32_Foundation"] }

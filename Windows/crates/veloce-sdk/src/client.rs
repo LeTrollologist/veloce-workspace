@@ -26,6 +26,7 @@ use veloce_ipc::{
         NetPortForwardMsg, NodeLogChunkMsg, NodeSpawnedMsg, NodeStatusMsg,
         NodeEventMsg, PeerInfoMsg, PolicyRulesMsg, PortForwardEntry, SpawnNodeMsg,
         TrafficStatsMsg, VolumeEntry, VolumeRegisteredMsg,
+        OsStatusMsg, VfsListResultMsg, VfsReadResultMsg, VfsStatResultMsg,
     },
 };
 
@@ -901,6 +902,86 @@ impl VeloceClient {
             Body::TraceClearAck => Ok(()),
             Body::Error(e)      => bail!("trace_clear: {}", e.message),
             other               => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    // ── Micro-Mini OS & Custom VFS (v4.3) ──────────────────────
+
+    /// Query the Micro-OS kernel status.
+    pub async fn os_status(&mut self) -> Result<OsStatusMsg> {
+        match self.request(Body::OsStatus).await? {
+            Body::OsStatusResult(s) => Ok(s),
+            Body::Error(e)          => bail!("os_status: {}", e.message),
+            other                   => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// List directory contents in VeloceVFS.
+    pub async fn vfs_list(&mut self, path: &str) -> Result<VfsListResultMsg> {
+        match self.request(Body::VfsList { path: path.to_string() }).await? {
+            Body::VfsListResult(list) => Ok(list),
+            Body::Error(e)            => bail!("vfs_list: {}", e.message),
+            other                     => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// Read raw file contents from VeloceVFS.
+    pub async fn vfs_read(&mut self, path: &str) -> Result<VfsReadResultMsg> {
+        match self.request(Body::VfsRead { path: path.to_string() }).await? {
+            Body::VfsReadResult(res) => Ok(res),
+            Body::Error(e)           => bail!("vfs_read: {}", e.message),
+            other                    => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// Write raw file contents to VeloceVFS.
+    pub async fn vfs_write(&mut self, path: &str, data: Vec<u8>) -> Result<u64> {
+        match self.request(Body::VfsWrite { path: path.to_string(), data }).await? {
+            Body::VfsWriteResult { bytes_written, .. } => Ok(bytes_written),
+            Body::Error(e)                             => bail!("vfs_write: {}", e.message),
+            other                                      => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// Stat metadata of a file or directory in VeloceVFS.
+    pub async fn vfs_stat(&mut self, path: &str) -> Result<VfsStatResultMsg> {
+        match self.request(Body::VfsStat { path: path.to_string() }).await? {
+            Body::VfsStatResult(stat) => Ok(stat),
+            Body::Error(e)            => bail!("vfs_stat: {}", e.message),
+            other                     => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// Import a file from host filesystem into VeloceVFS.
+    pub async fn vfs_import(&mut self, host_path: &str, vfs_path: &str) -> Result<u64> {
+        match self.request(Body::VfsImport {
+            host_path: host_path.to_string(),
+            vfs_path: vfs_path.to_string(),
+        }).await? {
+            Body::VfsImportResult { bytes_imported, .. } => Ok(bytes_imported),
+            Body::Error(e)                               => bail!("vfs_import: {}", e.message),
+            other                                        => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// Export a file from VeloceVFS to the host filesystem.
+    pub async fn vfs_export(&mut self, vfs_path: &str, host_path: &str) -> Result<u64> {
+        match self.request(Body::VfsExport {
+            vfs_path: vfs_path.to_string(),
+            host_path: host_path.to_string(),
+        }).await? {
+            Body::VfsExportResult { bytes_exported, .. } => Ok(bytes_exported),
+            Body::Error(e)                               => bail!("vfs_export: {}", e.message),
+            other                                        => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// Format or reinitialize VeloceVFS.
+    pub async fn vfs_format(&mut self, name: Option<String>) -> Result<String> {
+        match self.request(Body::VfsFormat { name }).await? {
+            Body::VfsFormatResult { message } => Ok(message),
+            Body::Error(e)                    => bail!("vfs_format: {}", e.message),
+            other                             => bail!("unexpected: {:?}", other.msg_type()),
         }
     }
 

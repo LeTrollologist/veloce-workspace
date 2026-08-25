@@ -1,0 +1,19 @@
+[package]
+name        = "veloce-ipc"
+version.workspace   = true
+edition.workspace   = true
+authors.workspace   = true
+license.workspace   = true
+description = "VeloceNetwork wire protocol — binary frame format, message types, encode/decode codec"
+
+[dependencies]
+serde    = { workspace = true }
+bincode  = { workspace = true }
+bytes    = { workspace = true }
+uuid     = { workspace = true }
+chrono   = { workspace = true }
+thiserror = { workspace = true }
+bitflags  = { version = "2", features = ["serde"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }

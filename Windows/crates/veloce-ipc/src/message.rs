@@ -179,6 +179,40 @@ pub enum MessageType {
     /// Core → Client: trace buffer cleared ack.
     TraceClearAck        = 0x97,
 
+    // ── Micro-Mini OS & Custom VFS (v4.3) ──────────────────────
+    /// Client → Core: query Micro-OS status.
+    OsStatus             = 0x98,
+    /// Core → Client: Micro-OS status response.
+    OsStatusResult       = 0x99,
+    /// Client → Core: list directory in VeloceVFS.
+    VfsList              = 0x9A,
+    /// Core → Client: VeloceVFS list response.
+    VfsListResult        = 0x9B,
+    /// Client → Core: read file from VeloceVFS.
+    VfsRead              = 0x9C,
+    /// Core → Client: VeloceVFS read file response.
+    VfsReadResult        = 0x9D,
+    /// Client → Core: write file to VeloceVFS.
+    VfsWrite             = 0x9E,
+    /// Core → Client: VeloceVFS write file response.
+    VfsWriteResult       = 0x9F,
+    /// Client → Core: stat a path in VeloceVFS.
+    VfsStat              = 0xA2,
+    /// Core → Client: VeloceVFS stat response.
+    VfsStatResult        = 0xA3,
+    /// Client → Core: import file from host to VFS.
+    VfsImport            = 0xA4,
+    /// Core → Client: VFS import response.
+    VfsImportResult      = 0xA5,
+    /// Client → Core: export file from VFS to host.
+    VfsExport            = 0xA6,
+    /// Core → Client: VFS export response.
+    VfsExportResult      = 0xA7,
+    /// Client → Core: format or reinitialize VFS.
+    VfsFormat            = 0xA8,
+    /// Core → Client: VFS format response.
+    VfsFormatResult      = 0xA9,
+
     // ── Traffic stats ──────────────────────────────────────────
     /// Client → Core: request cumulative byte counters for all tunnels and .vln hosts.
     TrafficQuery      = 0x80,
@@ -346,6 +380,14 @@ impl TryFrom<u8> for MessageType {
             0x8D => TraceGet,         0x8E => TraceGetResult,
             0x8F => TraceOtlpConfigSet, 0x95 => TraceOtlpConfigAck,
             0x96 => TraceClear,       0x97 => TraceClearAck,
+            0x98 => OsStatus,         0x99 => OsStatusResult,
+            0x9A => VfsList,          0x9B => VfsListResult,
+            0x9C => VfsRead,          0x9D => VfsReadResult,
+            0x9E => VfsWrite,         0x9F => VfsWriteResult,
+            0xA2 => VfsStat,          0xA3 => VfsStatResult,
+            0xA4 => VfsImport,        0xA5 => VfsImportResult,
+            0xA6 => VfsExport,        0xA7 => VfsExportResult,
+            0xA8 => VfsFormat,        0xA9 => VfsFormatResult,
             0x80 => TrafficQuery,    0x81 => TrafficStatsResult,
             0x90 => NetAddPortForward,    0x91 => NetPortForwardAdded,
             0x92 => NetRemovePortForward, 0x93 => NetListPortForwards,
@@ -613,6 +655,24 @@ pub enum Body {
     TraceOtlpConfigAck,
     TraceClear,
     TraceClearAck,
+
+    // ── Micro-Mini OS & Custom VFS (v4.3) ──────────────────────
+    OsStatus,
+    OsStatusResult(OsStatusMsg),
+    VfsList { path: String },
+    VfsListResult(VfsListResultMsg),
+    VfsRead { path: String },
+    VfsReadResult(VfsReadResultMsg),
+    VfsWrite { path: String, data: Vec<u8> },
+    VfsWriteResult { path: String, bytes_written: u64 },
+    VfsStat { path: String },
+    VfsStatResult(VfsStatResultMsg),
+    VfsImport { host_path: String, vfs_path: String },
+    VfsImportResult { vfs_path: String, bytes_imported: u64 },
+    VfsExport { vfs_path: String, host_path: String },
+    VfsExportResult { host_path: String, bytes_exported: u64 },
+    VfsFormat { name: Option<String> },
+    VfsFormatResult { message: String },
 }
 
 impl Body {
@@ -755,6 +815,23 @@ impl Body {
             TraceOtlpConfigAck         => MessageType::TraceOtlpConfigAck,
             TraceClear                 => MessageType::TraceClear,
             TraceClearAck              => MessageType::TraceClearAck,
+            // Micro-Mini OS & Custom VFS (v4.3)
+            OsStatus                   => MessageType::OsStatus,
+            OsStatusResult(_)          => MessageType::OsStatusResult,
+            VfsList{..}                => MessageType::VfsList,
+            VfsListResult(_)           => MessageType::VfsListResult,
+            VfsRead{..}                => MessageType::VfsRead,
+            VfsReadResult(_)           => MessageType::VfsReadResult,
+            VfsWrite{..}               => MessageType::VfsWrite,
+            VfsWriteResult{..}         => MessageType::VfsWriteResult,
+            VfsStat{..}                => MessageType::VfsStat,
+            VfsStatResult(_)           => MessageType::VfsStatResult,
+            VfsImport{..}              => MessageType::VfsImport,
+            VfsImportResult{..}        => MessageType::VfsImportResult,
+            VfsExport{..}              => MessageType::VfsExport,
+            VfsExportResult{..}        => MessageType::VfsExportResult,
+            VfsFormat{..}              => MessageType::VfsFormat,
+            VfsFormatResult{..}        => MessageType::VfsFormatResult,
         }
     }
 }
@@ -817,6 +894,10 @@ pub enum Capability {
     TraceRead,
     /// Configure OpenTelemetry OTLP exporters and clear buffers (v4.2).
     TraceAdmin,
+    /// Manage userspace Micro-OS system settings and processes (v4.3).
+    OsAdmin,
+    /// Read, write, import, and export files in VeloceVFS (v4.3).
+    VfsManage,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1589,6 +1670,60 @@ pub struct OtlpConfigMsg {
     pub enabled: bool,
     /// Batch timeout in seconds
     pub batch_timeout_secs: u64,
+}
+
+// ── Micro-Mini OS & Custom VFS Structs (v4.3) ─────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct OsStatusMsg {
+    pub os_name: String,
+    pub kernel_version: String,
+    pub uptime_secs: u64,
+    pub total_inodes: usize,
+    pub used_vfs_bytes: u64,
+    pub active_micro_procs: usize,
+    pub virtual_mounts: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum VfsEntryType {
+    Directory,
+    File,
+    Symlink,
+    Device,
+    Proc,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VfsEntryMsg {
+    pub name: String,
+    pub path: String,
+    pub entry_type: VfsEntryType,
+    pub size_bytes: u64,
+    pub modified_at_secs: u64,
+    pub permissions: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VfsListResultMsg {
+    pub path: String,
+    pub entries: Vec<VfsEntryMsg>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VfsReadResultMsg {
+    pub path: String,
+    pub data: Vec<u8>,
+    pub size_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VfsStatResultMsg {
+    pub path: String,
+    pub entry_type: VfsEntryType,
+    pub size_bytes: u64,
+    pub permissions: u32,
+    pub modified_at_secs: u64,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

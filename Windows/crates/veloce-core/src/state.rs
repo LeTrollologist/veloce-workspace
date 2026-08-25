@@ -80,6 +80,10 @@ pub struct CoreState {
 
     // ── v4.2 (OpenTelemetry Distributed Tracing) ──────────────
     pub otel: Arc<crate::otel::OtelEngine>,
+
+    // ── v4.3 (Micro-Mini OS & Custom VFS) ─────────────────────
+    pub vfs: Arc<crate::vfs::VfsEngine>,
+    pub micro_os: Arc<crate::micro_os::MicroOsRuntime>,
 }
 
 impl CoreState {
@@ -150,6 +154,8 @@ impl CoreState {
         let bridge     = Arc::new(crate::bridge::BridgeEngine::new());
         let share      = Arc::new(crate::share::ShareEngine::new());
         let otel       = Arc::new(crate::otel::OtelEngine::new());
+        let vfs        = Arc::new(crate::vfs::VfsEngine::new());
+        let micro_os   = crate::micro_os::MicroOsRuntime::new(Arc::clone(&vfs));
 
         Ok(Self {
             registry,
@@ -172,6 +178,8 @@ impl CoreState {
             bridge,
             share,
             otel,
+            vfs,
+            micro_os,
         })
     }
 

@@ -1,4 +1,4 @@
-﻿# 🚀 VeloceNetwork — Getting Started & Installation Guide
+# 🚀 VeloceNetwork — Getting Started & Installation Guide
 
 Welcome to **VeloceNetwork** — a lightweight, zero-kernel, zero-root userspace service mesh and execution runtime.
 
@@ -10,13 +10,15 @@ This guide walks you through installing, building, running, and testing live dem
 
 1. [Windows Installation & Quickstart](#-windows-installation--quickstart)
 2. [Linux Installation & Quickstart](#-linux-installation--quickstart)
-3. [Android: Compile Your Own Build (DIY)](#-android-compile-your-own-build-diy)
-4. [5 Live Demos & Tutorials](#-5-live-demos--tutorials)
+3. [macOS Installation & Quickstart](#-macos-installation--quickstart)
+4. [Android: Compile Your Own Build (DIY)](#-android-compile-your-own-build-diy)
+5. [6 Live Demos & Tutorials](#-6-live-demos--tutorials)
    - [Demo 1: Multi-Service Mesh & Userspace DNS](#demo-1-multi-service-mesh--userspace-dns)
    - [Demo 2: Zero-Trust Team Share (VM3 Codes)](#demo-2-zero-trust-team-share-vm3-codes)
    - [Demo 3: Live OpenTelemetry Waterfall Tracing](#demo-3-live-opentelemetry-waterfall-tracing)
    - [Demo 4: Kubernetes Telepresence & Interception](#demo-4-kubernetes-telepresence--interception)
    - [Demo 5: Sandboxed WebAssembly (Wasm/WASI)](#demo-5-sandboxed-webassembly-wasmwasi)
+   - [Demo 6: Userspace Micro-Mini OS & VeloceVFS](#demo-6-userspace-micro-mini-os--velocevfs)
 
 ---
 
@@ -72,19 +74,59 @@ cargo build --release -j 2
 #   - veloce-run            (CLI)
 ```
 
-### Running as a systemd User Service
+### Option B: Running with systemd User Unit
 ```bash
-# Copy binary to local bin
-mkdir -p ~/.local/bin
-cp target/release/veloce-core target/release/veloce-run ~/.local/bin/
-
-# Start VeloceCore daemon directly
-~/.local/bin/veloce-core --console
+# Copy and enable the user-level systemd unit (no sudo required)
+mkdir -p ~/.config/systemd/user
+cp packaging/veloce-core.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now veloce-core
 ```
 
 ---
 
-## 📱 Android: Compile Your Own Build (DIY)
+## 🍏 macOS Installation & Quickstart
+
+### Prerequisites
+- macOS 12 Monterey or newer (Apple Silicon M1/M2/M3/M4 or Intel x86_64)
+- Rust stable (`aarch64-apple-darwin` or `x86_64-apple-darwin`)
+
+### Building from Source
+```bash
+# Clone the repository
+git clone https://github.com/LeTrollologist/veloce-workspace.git
+cd veloce-workspace/macOS
+
+# Build all workspace binaries
+cargo build --release -j 2
+
+# Binaries are in macOS/target/release/
+#   - veloce-core   (Background Daemon & Service Mesh Engine)
+#   - veloce-run    (CLI Tool & Orchestrator)
+```
+
+### Native `launchd` and `/etc/resolver/vln` Configuration
+```bash
+# 1. Start VeloceCore in console mode
+./target/release/veloce-core --console
+
+# 2. Configure native macOS *.vln resolver (directs all .vln queries to local port 5354)
+sudo mkdir -p /etc/resolver
+sudo tee /etc/resolver/vln > /dev/null <<EOF
+nameserver 127.0.0.1
+port 5354
+search_order 1
+EOF
+
+# 3. Optional: Install as a launchd User Agent
+mkdir -p ~/Library/LaunchAgents
+cp packaging/com.velocenetwork.core.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.velocenetwork.core.plist
+```
+
+---
+
+## 🤖 Android: Compile Your Own Build (DIY)
 
 VeloceNetwork provides a native Rust JNI mobile core (`veloce-mobile`) that embeds the entire P2P WireGuard-grade Noise_IK mesh, userspace DNS, SOCKS5 proxy, and replicated KV store into a single unprivileged shared library (`libveloce_mobile.so`). 
 
@@ -242,5 +284,31 @@ veloce-run wasm run ./service.wasm --env LOG_LEVEL=debug
 
 ---
 
+### Demo 6: Userspace Micro-Mini OS & VeloceVFS
+Manage the in-memory userspace operating system (`VeloceOS`) and virtual file system (`VeloceVFS`):
+
+```bash
+# 1. Inspect VeloceOS status, virtual inodes, and dynamic mounts
+veloce-run os status
+
+# 2. List the root directory of the virtual file system
+veloce-run os vfs ls /
+
+# 3. Read dynamic /proc system information
+veloce-run os vfs cat /proc/status
+veloce-run os vfs cat /proc/nodes
+
+# 4. Write and read custom application files in VFS
+veloce-run os vfs write /vln/config.json '{"environment":"production","workers":4}'
+veloce-run os vfs cat /vln/config.json
+
+# 5. Import and export files between host and VFS
+veloce-run os vfs import ./local_config.env /vln/local_config.env
+veloce-run os vfs export /vln/local_config.env ./exported_config.env
+```
+
+---
+
 ## 📖 Complete CLI Reference
 For full documentation of all CLI subcommands and flags, refer to [`COMMANDS.md`](COMMANDS.md).
+

@@ -1026,6 +1026,100 @@ where
                 self.send_reply(cid, Body::TraceClearAck).await?;
             }
 
+            // ── Micro-Mini OS & Custom VFS (v4.3) ──────────────────────
+            Body::OsStatus => {
+                let status = self.state.micro_os.status();
+                self.send_reply(cid, Body::OsStatusResult(status)).await?;
+            }
+
+            Body::VfsList { path } => {
+                self.require_cap(Capability::VfsManage)?;
+                match self.state.vfs.list_dir(&path) {
+                    Ok(list) => {
+                        self.send_reply(cid, Body::VfsListResult(list)).await?;
+                    }
+                    Err(e) => {
+                        self.send_error(Some(cid), ErrorCode::NotFound, e.to_string()).await?;
+                    }
+                }
+            }
+
+            Body::VfsRead { path } => {
+                self.require_cap(Capability::VfsManage)?;
+                match self.state.vfs.read_file(&path) {
+                    Ok(read_res) => {
+                        self.send_reply(cid, Body::VfsReadResult(read_res)).await?;
+                    }
+                    Err(e) => {
+                        self.send_error(Some(cid), ErrorCode::NotFound, e.to_string()).await?;
+                    }
+                }
+            }
+
+            Body::VfsWrite { path, data } => {
+                self.require_cap(Capability::VfsManage)?;
+                let len = data.len() as u64;
+                match self.state.vfs.write_file(&path, &data) {
+                    Ok(_) => {
+                        self.send_reply(cid, Body::VfsWriteResult { path, bytes_written: len }).await?;
+                    }
+                    Err(e) => {
+                        self.send_error(Some(cid), ErrorCode::InternalError, e.to_string()).await?;
+                    }
+                }
+            }
+
+            Body::VfsStat { path } => {
+                self.require_cap(Capability::VfsManage)?;
+                match self.state.vfs.stat(&path) {
+                    Ok(stat_res) => {
+                        self.send_reply(cid, Body::VfsStatResult(stat_res)).await?;
+                    }
+                    Err(e) => {
+                        self.send_error(Some(cid), ErrorCode::NotFound, e.to_string()).await?;
+                    }
+                }
+            }
+
+            Body::VfsImport { host_path, vfs_path } => {
+                self.require_cap(Capability::VfsManage)?;
+                match self.state.vfs.import_file(std::path::Path::new(&host_path), &vfs_path) {
+                    Ok(bytes_imported) => {
+                        self.send_reply(cid, Body::VfsImportResult { vfs_path, bytes_imported }).await?;
+                    }
+                    Err(e) => {
+                        self.send_error(Some(cid), ErrorCode::InternalError, e.to_string()).await?;
+                    }
+                }
+            }
+
+            Body::VfsExport { vfs_path, host_path } => {
+                self.require_cap(Capability::VfsManage)?;
+                match self.state.vfs.export_file(&vfs_path, std::path::Path::new(&host_path)) {
+                    Ok(bytes_exported) => {
+                        self.send_reply(cid, Body::VfsExportResult { host_path, bytes_exported }).await?;
+                    }
+                    Err(e) => {
+                        self.send_error(Some(cid), ErrorCode::InternalError, e.to_string()).await?;
+                    }
+                }
+            }
+
+            Body::VfsFormat { name } => {
+                self.require_cap(Capability::OsAdmin)?;
+                match self.state.vfs.format_standard_layout() {
+                    Ok(_) => {
+                        let label = name.unwrap_or_else(|| "VeloceVFS".to_string());
+                        self.send_reply(cid, Body::VfsFormatResult {
+                            message: format!("virtual filesystem '{label}' formatted successfully with standard layout"),
+                        }).await?;
+                    }
+                    Err(e) => {
+                        self.send_error(Some(cid), ErrorCode::InternalError, e.to_string()).await?;
+                    }
+                }
+            }
+
             other => {
                 tracing::warn!("unhandled message type: {:?}", other.msg_type());
                 self.send_error(Some(cid), ErrorCode::InvalidMessage,

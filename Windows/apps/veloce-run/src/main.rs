@@ -58,6 +58,7 @@ Examples:
 mod auth;
 mod bridge;
 mod compose;
+mod os_cmd;
 mod pack;
 mod share;
 mod trace;
@@ -228,6 +229,11 @@ enum Commands {
     },
     /// OpenTelemetry (OTel) Native Distributed Tracing & Observability (v4.2)
     Trace(trace::TraceArgs),
+    /// Manage userspace Micro-Mini OS and VeloceVFS virtual filesystem (v4.3)
+    Os {
+        #[command(subcommand)]
+        command: os_cmd::OsCommands,
+    },
     /// Print version information
     Version,
 }
@@ -564,6 +570,10 @@ async fn main() -> Result<()> {
         Some(Commands::Trace(args))           => {
             let client = connect_client("veloce-trace", vec![Capability::TraceRead, Capability::TraceAdmin, Capability::RegistryRead]).await?;
             trace::run_trace(std::sync::Arc::new(tokio::sync::Mutex::new(client)), args).await
+        }
+        Some(Commands::Os { command })        => {
+            let client = connect_client("veloce-os", vec![Capability::OsAdmin, Capability::VfsManage, Capability::RegistryRead]).await?;
+            os_cmd::handle_os_command(command, client).await
         }
         Some(Commands::Version)               => { run_version(); Ok(()) }
         None => {

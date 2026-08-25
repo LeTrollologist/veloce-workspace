@@ -5,7 +5,7 @@
 [![Release](https://img.shields.io/github/v/release/LeTrollologist/veloce-workspace?label=release)](https://github.com/LeTrollologist/veloce-workspace/releases)
 [![License](https://img.shields.io/badge/license-proprietary-blue.svg)](LICENSE)
 
-Monorepo containing the unified cross-platform codebase for **VeloceNetwork** — a lightweight, zero-kernel, zero-root userspace service mesh and runtime for launching, managing, privately networking, and observing isolated application workloads across Windows, Linux, and Android.
+Monorepo containing the unified cross-platform codebase for **VeloceNetwork** — a lightweight, zero-kernel, zero-root userspace service mesh and runtime for launching, managing, privately networking, and observing isolated application workloads across Windows, Linux, macOS, and Android.
 
 ---
 
@@ -21,6 +21,10 @@ veloce-workspace/
 │   ├── apps/            ← veloce-run, veloce-launcher, veloce-shell, dashboard, installer
 │   ├── crates/          ← veloce-core, veloce-ipc, veloce-mesh, veloce-net, veloce-sdk, veloce-mobile
 │   └── Cargo.toml       ← Linux workspace manifest (x86_64-unknown-linux-gnu)
+├── macOS/               ← macOS-native workspace (/etc/resolver/vln, launchd, Darwin sockets)
+│   ├── apps/            ← veloce-run, veloce-launcher, veloce-shell, dashboard, installer
+│   ├── crates/          ← veloce-core, veloce-ipc, veloce-mesh, veloce-net, veloce-sdk, veloce-mobile
+│   └── Cargo.toml       ← macOS workspace manifest (Apple Silicon / Intel)
 ├── .github/workflows/   ← Automated CI & Release build distribution workflows
 └── Makefile             ← Subtree synchronization and release management
 ```
@@ -33,6 +37,7 @@ veloce-workspace/
 |---|---|---|---|
 | [**VeloceNetwork-Windows**](https://github.com/LeTrollologist/VeloceNetwork-Windows) | Windows (x86_64) | `Windows/` subtree | Production mirror for Windows releases & installers |
 | [**VeloceNetwork-Linux**](https://github.com/LeTrollologist/VeloceNetwork-Linux) | Linux (x86_64) | `Linux/` subtree | Production mirror for Linux releases & systemd units |
+| [**VeloceNetwork-macOS**](https://github.com/LeTrollologist/VeloceNetwork-macOS) | macOS (ARM64/x64) | `macOS/` subtree | Production mirror for macOS releases & launchd plists |
 
 ---
 
@@ -62,6 +67,7 @@ veloce-workspace/
 | **v4.0.0** | "Bridge to Cloud" Unprivileged Kubernetes Remote Telepresence & Traffic Interceptor: In-cluster DNS (*.svc.cluster.local), header-based live traffic shadowing (`veloce-run bridge`) | ✅ Complete |
 | **v4.1.0** | Zero-Trust Team Share ("Unprivileged Secure Tunnels"): Ephemeral VM3 share tokens (`vshare://...`), 1-command peer port sharing (`veloce-run share`, `veloce-run join`) | ✅ Complete |
 | **v4.2.0** | OpenTelemetry (OTel) Native Distributed Tracing & Observability: W3C trace context, zero-config OTLP JSON export (`:4318`), live trace waterfall UI (`veloce-run trace`) | ✅ Complete |
+| **v4.3.0** | macOS (Darwin) Support, Personal Micro-Mini OS & VeloceVFS Engine: Inode virtual file system, dynamic `/proc`, `launchd` and `/etc/resolver/vln` (`veloce-run os`) | ✅ Complete |
 
 ---
 

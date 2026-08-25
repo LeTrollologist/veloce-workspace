@@ -1,4 +1,4 @@
-﻿# 💻 VeloceNetwork — CLI Commands Reference (`COMMANDS.md`)
+# 💻 VeloceNetwork — CLI Commands Reference (`COMMANDS.md`)
 
 The primary command-line tool for VeloceNetwork is `veloce-run`. This reference provides an exhaustive guide to every subcommand, flag, and usage pattern.
 
@@ -216,3 +216,20 @@ Manage encrypted secrets injected securely into child nodes at spawn:
 - `veloce-run cron create <NAME> -s "<CRON_EXPR>" -- <CMD>`: Schedule recurring tasks.
 - `veloce-run cron list`: List scheduled cron jobs.
 - `veloce-run cron rm <NAME>`: Remove a scheduled cron job.
+
+---
+
+## 12. Micro-Mini OS & VFS Engine (`veloce-run os`)
+
+Interact with the in-process userspace micro-operating system (`VeloceOS`) and virtual file system (`VeloceVFS`):
+
+### Subcommands:
+- `veloce-run os status`: Display micro-kernel status, uptime, virtual inodes, used VFS storage, and active virtual mounts.
+- `veloce-run os vfs ls [PATH]`: List directory contents with file types (DIR, FILE, LINK, DEV, PROC), octal permissions, and sizes.
+- `veloce-run os vfs cat <PATH>`: Read and print contents of regular files or dynamic `/proc` endpoints (e.g. `/proc/status`, `/proc/nodes`).
+- `veloce-run os vfs write <PATH> <CONTENT>`: Write raw text or configuration directly to a VFS file.
+- `veloce-run os vfs stat <PATH>`: Inspect inode metadata and permissions.
+- `veloce-run os vfs import <HOST_PATH> <VFS_PATH>`: Copy a file from the host filesystem into VeloceVFS.
+- `veloce-run os vfs export <VFS_PATH> <HOST_PATH>`: Export a file from VeloceVFS to the host machine.
+- `veloce-run os vfs format [--name <NAME>]`: Format and reinitialize VeloceVFS with the clean standard POSIX micro-OS layout.
+

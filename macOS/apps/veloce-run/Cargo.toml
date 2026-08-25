@@ -1,0 +1,34 @@
+[package]
+name        = "veloce-run"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Launch any executable into the VeloceNetwork mesh from the command line"
+
+[[bin]]
+name = "veloce-run"
+path = "src/main.rs"
+
+[dependencies]
+veloce-sdk  = { path = "../../crates/veloce-sdk" }
+veloce-ipc  = { path = "../../crates/veloce-ipc" }
+tokio       = { workspace = true }
+anyhow      = { workspace = true }
+clap        = { workspace = true }
+ctrlc       = { workspace = true }
+uuid        = { workspace = true }
+serde       = { workspace = true }
+serde_yaml  = { workspace = true }
+serde_json  = { workspace = true }
+toml        = "0.8"
+bincode     = { workspace = true }
+rand        = "0.8"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+urlencoding = "2.1"
+sha2        = "0.10"
+base64      = "0.22"
+wasmi       = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+winreg = { workspace = true }

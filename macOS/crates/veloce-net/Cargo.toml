@@ -1,0 +1,24 @@
+[package]
+name        = "veloce-net"
+version.workspace   = true
+edition.workspace   = true
+authors.workspace   = true
+license.workspace   = true
+description = "VeloceNet userspace layer — DNS resolver and SOCKS5 proxy for *.vln private namespace"
+
+[dependencies]
+tokio       = { workspace = true }
+anyhow      = { workspace = true }
+tracing     = { workspace = true }
+parking_lot = { workspace = true }
+uuid        = { workspace = true }
+chrono      = { workspace = true }
+thiserror        = { workspace = true }
+veloce-ipc       = { path = "../veloce-ipc" }
+tokio-rustls     = { workspace = true }
+rustls-pki-types = { workspace = true }
+rcgen            = { workspace = true }
+rustls-pemfile   = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true }

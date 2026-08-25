@@ -1,10 +1,10 @@
-﻿# VeloceNetwork — Comprehensive Project Scope
+# VeloceNetwork — Comprehensive Project Scope
 
 ## 1. Project Overview
 
 * **Project Name:** VeloceNetwork
 * **Type:** Cross-Platform Userspace Service Mesh, Orchestration Engine & Edge Runtime
-* **Target Platforms:** Windows (10/11/Server), Linux (x86_64, aarch64), Android (ARM64, x86_64 via JNI)
+* **Target Platforms:** Windows (10/11/Server), Linux (x86_64, aarch64), macOS (Apple Silicon & Intel), Android (ARM64, x86_64 via JNI)
 * **Core Value Proposition:** A lightweight, zero-kernel, zero-root runtime for launching, managing, privately networking, securing, and observing isolated application workloads across multi-cloud, edge, desktop, and mobile environments without kernel drivers, VPNs, or elevated privileges.
 * **Target Users:** Software Engineers, DevOps/SREs, Platform Engineers, Commercial ISVs, Enterprise IT & Security Teams.
 
@@ -97,6 +97,12 @@
   - [x] In-memory ring buffer (last 2,000 spans) for instant query and waterfall aggregation.
   - [x] Pure-Rust zero-dependency OTLP/HTTP JSON exporter streaming directly to Jaeger / Grafana Tempo (`:4318`).
   - [x] CLI live waterfall inspector (`veloce-run trace inspect <ID>`) and Web Status Portal REST API (`/api/traces`).
+- [x] **v4.3.0 — macOS (Darwin) Support, Personal Micro-Mini OS & VeloceVFS Engine**:
+  - [x] Native macOS (Darwin) subsystem with `/etc/resolver/vln` zero-root DNS integration and `launchd` User Agent support.
+  - [x] Pure userspace Inode-based Virtual File System (`VeloceVFS`) with standard POSIX directory hierarchy (`/bin`, `/etc`, `/dev`, `/proc`, `/var`, `/tmp`, `/vln`).
+  - [x] In-process Micro-Mini Operating System (`VeloceOS`) with dynamic `/proc` file provider (`/proc/status`, `/proc/nodes`, `/proc/mesh`, `/proc/mounts`).
+  - [x] Virtual process table and Copy-on-Write (COW) execution layers for sandboxed tasks.
+  - [x] Full CLI management suite: `veloce-run os status`, `vfs ls`, `vfs cat`, `vfs write`, `vfs stat`, `vfs import`, `vfs export`, `vfs format`.
 
 ---
 
@@ -106,3 +112,4 @@
 - **Wasm Component Model (WASI Preview 2)**: Support for Wasm components, WASI 0.2 sockets, and HTTP client/server interfaces.
 - **Multi-Cloud Staging Fleet Coordinator**: Central management portal for enterprise-wide Kubernetes telepresence bridges.
 - **eBPF Acceleration (Optional Linux Backend)**: Kernel-bypass packet steering for high-throughput edge nodes.
+
