@@ -15,6 +15,7 @@ mod cron;
 mod hub;
 pub mod oidc;
 pub mod pack;
+pub mod wasm;
 mod metrics;
 mod portal;
 mod registry;

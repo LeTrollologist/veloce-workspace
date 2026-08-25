@@ -58,6 +58,7 @@ Examples:
 mod auth;
 mod compose;
 mod pack;
+mod wasm;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -208,6 +209,8 @@ enum Commands {
     Auth(auth::AuthArgs),
     /// Shortcut to authenticate with corporate SSO (v3.8)
     Login(auth::LoginArgs),
+    /// Execute or inspect WebAssembly (Wasm/WASI) modules (v3.9)
+    Wasm(wasm::WasmArgs),
     /// Print version information
     Version,
 }
@@ -528,6 +531,7 @@ async fn main() -> Result<()> {
             let client = connect_client("veloce-auth", vec![Capability::RegistryRead, Capability::RegistryWrite]).await?;
             auth::handle_login(std::sync::Arc::new(tokio::sync::Mutex::new(client)), args).await
         }
+        Some(Commands::Wasm(args))            => wasm::run_wasm(args.action),
         Some(Commands::Version)               => { run_version(); Ok(()) }
         None => {
             let executable = match cli.executable {
@@ -544,6 +548,7 @@ async fn main() -> Result<()> {
                     println!("  veloce-run ps                 List active sandboxed processes");
                     println!("  veloce-run hub list           Explore available Hub apps");
                     println!("  veloce-run pack run <file>    Launch a .vpack package");
+                    println!("  veloce-run wasm run <file>    Execute a Wasm/WASI module");
                     println!("  veloce-run mesh join <code>   Join a peer-to-peer mesh");
                     println!("  veloce-run --help             View all commands and options");
                     println!("========================================================");
@@ -553,6 +558,13 @@ async fn main() -> Result<()> {
                     return Ok(());
                 }
             };
+            if executable.ends_with(".wasm") {
+                return wasm::handle_wasm_run(wasm::WasmRunArgs {
+                    file: std::path::PathBuf::from(executable),
+                    args: cli.args,
+                    extra_env: cli.extra_env,
+                });
+            }
             run_spawn(
                 executable, cli.args, cli.extra_env, cli.name, cli.hostname,
                 cli.port, cli.cpu, cli.mem, cli.restarts, cli.detach,

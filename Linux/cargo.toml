@@ -43,6 +43,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 clap        = { version = "4", features = ["derive"] }
 ctrlc       = "3"
 
+# WebAssembly runtime (Wasm/WASI v3.9)
+wasmi       = "0.31"
+
 # Utils
 uuid        = { version = "1", features = ["v4", "serde"] }
 chrono      = { version = "0.4", features = ["serde"] }

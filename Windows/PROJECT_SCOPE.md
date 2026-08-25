@@ -446,5 +446,11 @@ This phase dedicated three sequential releases to security, correctness, and sta
 - [x] `veloce-run auth` CLI subcommands (`login`, `status`, `whoami`, `logout`)
 - [x] Web Status Portal (:9090) live corporate identity badge and API endpoints (`/api/auth/status`, `/api/auth/logout`)
 
+**v3.9.0 — First-Class WebAssembly (Wasm/WASI) Orchestration** ✅
+- [x] Embedded zero-dependency pure-Rust WebAssembly runtime (`wasmi`) in `VeloceCore` and `veloce-run`
+- [x] Full WASI Snapshot Preview 1 execution (stdio redirection, env vars, clocks, exit codes)
+- [x] Native Veloce host functions exported to Wasm guest: `veloce_kv_get`, `veloce_kv_set`
+- [x] `veloce-run wasm run <file.wasm>` and `veloce-run wasm inspect <file.wasm>` CLI subcommands with auto-routing
+
 **Future Roadmap** 📋
 - **Standalone Distribution**: Portable self-contained binaries (`.exe` / `.tar.gz`) with manual and offline release artifacts, bypassing third-party cloud billing dependencies.

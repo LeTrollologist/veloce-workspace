@@ -28,6 +28,7 @@ ed25519-dalek = { version = "2", features = ["rand_core"] }
 urlencoding = "2.1"
 sha2        = "0.10"
 base64      = "0.22"
+wasmi       = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 winreg = { workspace = true }

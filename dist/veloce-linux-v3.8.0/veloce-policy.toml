@@ -1,0 +1,17 @@
+﻿# VeloceNetwork Policy & Enterprise OIDC RBAC Configuration
+default_effect = "allow"
+
+[oidc]
+# issuer_url = "https://login.microsoftonline.com/{tenant-id}/v2.0"
+# client_id  = "veloce-enterprise-app"
+required_groups = ["Developers", "Engineering", "DevOps"]
+
+[[oidc.role_bindings]]
+group = "DevOps"
+allowed_hostnames = ["*.prod.vln", "*.staging.vln"]
+capabilities = ["SpawnNodes", "KillNodes", "ReadSecrets", "WriteSecrets"]
+
+[[oidc.role_bindings]]
+group = "Engineering"
+allowed_hostnames = ["*.dev.vln", "*.staging.vln"]
+capabilities = ["SpawnNodes", "ListNodes"]
