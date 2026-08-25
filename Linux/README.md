@@ -1,272 +1,217 @@
-# VeloceNetwork (Linux) — Userspace Orchestration & Service Mesh
+﻿# veloce-workspace
 
-> **VeloceNetwork for Linux** is a lightweight, zero-kernel runtime for launching, managing, and privately networking isolated application nodes — built natively for Linux with `cgroups v2`, Unix domain sockets, and `systemd` integration.
-
+[![Windows CI](https://github.com/LeTrollologist/veloce-workspace/actions/workflows/windows.yml/badge.svg)](https://github.com/LeTrollologist/veloce-workspace/actions/workflows/windows.yml)
 [![Linux CI](https://github.com/LeTrollologist/veloce-workspace/actions/workflows/linux.yml/badge.svg)](https://github.com/LeTrollologist/veloce-workspace/actions/workflows/linux.yml)
-[![Release](https://img.shields.io/github/v/release/LeTrollologist/veloce-workspace?label=version)](https://github.com/LeTrollologist/veloce-workspace/releases/tag/v3.0.0-linux)
+[![Release](https://img.shields.io/github/v/release/LeTrollologist/veloce-workspace?label=release)](https://github.com/LeTrollologist/veloce-workspace/releases)
 [![License](https://img.shields.io/badge/license-proprietary-blue.svg)](LICENSE)
 
----
-
-## What Is VeloceNetwork?
-
-VeloceNetwork is a lightweight userspace orchestration layer designed for developer environments, local clusters, and desktop/server nodes. It acts as an unprivileged local control plane: your applications connect to it via a high-performance Unix domain socket SDK, request compute nodes with strict resource limits, and communicate over an isolated private `.vln` virtual namespace.
-
-- **No Root Required:** Runs completely in userspace as a regular user service (`systemd --user`).
-- **No Virtual Interfaces:** Built-in userspace DNS (`127.0.0.1:5354`) and SOCKS5 proxy (`127.0.0.1:1055`) — no TUN/TAP devices, no `iptables` modifications, and no root elevation.
-- **WireGuard-Grade P2P Mesh:** Multi-machine mesh using pure Rust **Noise_IK_25519_ChaChaPoly_BLAKE2s** encryption with automated STUN NAT traversal.
-- **Layer-7 HTTP Ingress:** Built-in reverse proxy (`127.0.0.1:8080`) routing HTTP requests by `Host:` header (`api.vln`) and path prefix (`/api`).
-- **Distributed Control Plane:** Multi-node cluster coordination with term tracking and automatic replica scheduling.
+Monorepo containing the unified cross-platform codebase for **VeloceNetwork** — a lightweight, zero-kernel, zero-root userspace service mesh and runtime for launching, managing, privately networking, and observing isolated application workloads across Windows, Linux, and Android.
 
 ---
 
-## Architecture (Linux Native)
+## 📁 Repository Layout
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                      Your Application                   │
-│   veloce-sdk (Rust) ──or── libveloce_sdk.so (C FFI)     │
-│   veloce-run (CLI)                                      │
-└────────────────────┬────────────────────────────────────┘
-                     │  Unix domain socket  $XDG_RUNTIME_DIR/veloce/core.sock
-                     ▼
-┌─────────────────────────────────────────────────────────┐
-│                      VeloceCore                         │
-│  • Session authentication (UID check + OsRng PSK)       │
-│  • Node lifecycle (spawn / kill / signal / monitor)     │
-│  • cgroups v2 resource limits (cpu.max / memory.max)   │
-│  • Process groups for clean tree termination (SIGKILL) │
-│  • Policy Engine (RBAC + mesh ACLs, TOML hot-reload)    │
-│  • Shared mmap registry (fast key-value store)          │
-│  • VeloceNet DNS / SOCKS5 / Ingress + Noise_IK Mesh    │
-│  • systemd watchdog & sd_notify ready signalling        │
-└──────────┬──────────────────────┬───────────────────────┘
-           │                      │
-           ▼                      ▼
-  ┌─────────────────┐   ┌──────────────────────────────┐
-  │  Node Processes │   │     VeloceNet                │
-  │  (cgroups v2 /  │   │  DNS     :5354  (*.vln)      │
-  │  Process Groups)│   │  SOCKS5  :1055               │
-  │                 │   │  Ingress :8080  (HTTP L7)    │
-  └─────────────────┘   │  Mesh TCP :7474 ◄────────────┼── Remote machines
-                        └──────────────────────────────┘
-```
-
-| Component | Role |
-|---|---|
-| `veloce-core` | Background Linux daemon / systemd user service — single source of truth |
-| `veloce-ipc` | Zero-copy binary wire protocol with fixed `VELC` framing shared across platforms |
-| `veloce-net` | Userspace DNS resolver, SOCKS5 proxy, and Layer-7 HTTP Ingress reverse proxy |
-| `veloce-mesh` | Noise_IK P2P mesh — encrypted tunnels, `.vln` gossip CRDT, STUN WAN discovery |
-| `veloce-sdk` | Async Rust client + C shared library (`libveloce_sdk.so`) for any language with C ABI |
-| `veloce-run` | CLI launcher, Compose engine, secrets vault, and mesh management tool |
-
----
-
-## Core Features on Linux
-
-### 1. Node Isolation via `cgroups v2` & Process Groups
-- **Hard CPU limits:** Enforces `cpu.max` quotas dynamically without kernel modules.
-- **Memory Ceilings:** Applies strict `memory.max` caps; kernel OOM signals are captured and reported cleanly.
-- **Tree Kill Guarantees:** Nodes execute in dedicated process groups; stopping a node delivers `SIGTERM`/`SIGKILL` to the entire process tree, leaving zero orphaned processes.
-
-### 2. VeloceNet Private `.vln` Namespace
-- Register any hostname (e.g. `backend.vln`, `redis.vln`) mapped to a node's local TCP port.
-- Built-in **DNS server** (UDP `127.0.0.1:5354`) resolving `.vln` queries and passing through system DNS queries.
-- Built-in **SOCKS5 proxy** (TCP `127.0.0.1:1055`) routing `.vln` traffic locally.
-- Applications set `export VELOCE_DNS=127.0.0.1:5354` and `export VELOCE_SOCKS=127.0.0.1:1055` for transparent routing.
-
-### 3. Layer-7 HTTP Ingress Reverse Proxy (v2.1)
-- Built-in async HTTP reverse proxy running on `127.0.0.1:8080` (`VLN_INGRESS_PORT`).
-- Routes requests by `Host:` header (`api.vln`, `app.vln`) and path prefix (`/api`, `/v1`) to local backend ports.
-- Supports longest-prefix matching and path stripping (`--strip-prefix`).
-- Dynamically managed via `veloce-run ingress [add|rm|list]`.
-
-### 4. Noise_IK Multi-Machine Mesh & STUN Discovery
-- P2P encrypted tunnels using **Noise_IK_25519_ChaChaPoly_BLAKE2s**.
-- Automated WAN IP discovery via STUN; dual-address VM2 join codes race LAN and WAN paths.
-- **VM3 Join Codes:** Signed time-limited join codes with single-use anti-replay nonce tracking.
-- Gossip ownership tracking prevents malicious peers from claiming hostnames they do not own.
-
-### 5. Multi-Node Control Plane (v3.0)
-- Distributed `ClusterCoordinator` managing cluster term numbers and leader election states (`Follower`, `Candidate`, `Leader`).
-- Monotonic term validation over Noise_IK mesh connections preventing split-brain conditions.
-- Deterministic multi-node replica allocation (`assign_replicas()`) distributing service instances across mesh peers.
-
-### 6. Veloce Compose, Volumes, & Secrets
-- Declarative `veloce-compose.yml` multi-service orchestration (`veloce-run up`, `down`, `ps`).
-- Named persistent directories and host bind mounts stored across node restarts.
-- Encrypted runtime secrets vault (`veloce-run secret set/rm/list`) injected at spawn.
-
----
-
-## Quickstart & CLI Usage
-
-### 1. Start VeloceCore
-
-Run directly in a terminal:
-```bash
-veloce-core
-```
-
-Or as a `systemd` user service:
-```bash
-# Enable and start user service
-systemctl --user enable --now veloce-core.service
-
-# View live daemon logs
-journalctl --user -u veloce-core -f
-```
-
-### 2. Launching Nodes with `veloce-run`
-
-```bash
-# Launch a background service with a .vln hostname and resource limits
-veloce-run \
-  --name web-app \
-  --hostname web.vln \
-  --port 3000 \
-  --cpu 50 \
-  --mem 256 \
-  --restarts 3 \
-  --detach \
-  -- ./my-web-server
-
-# Stream live stdout/stderr logs from a node
-veloce-run --name worker --watch -- ./worker-binary
-```
-
-### 3. Layer-7 HTTP Ingress Routing
-
-```bash
-# Route http://api.vln/v1 → 127.0.0.1:4000 (stripping the /v1 prefix)
-veloce-run ingress add -H api.vln -p /v1 -t 4000 --strip-prefix
-
-# Route default app traffic http://app.vln → 127.0.0.1:3000
-veloce-run ingress add -H app.vln -t 3000
-
-# List active ingress rules
-veloce-run ingress list
-
-# Test via curl hitting the Ingress proxy (port 8080)
-curl -H "Host: api.vln" http://127.0.0.1:8080/v1/healthz
-
-# Remove an ingress rule
-veloce-run ingress rm api.vln
-```
-
-### 4. P2P Mesh Connectivity
-
-```bash
-# On Machine A: generate a 15-minute single-use VM3 join code
-veloce-run mesh identity --ttl 15 --one-time
-# Output: VM3:AAA...===
-
-# On Machine B: connect to Machine A
-veloce-run mesh join "VM3:AAA...==="
-
-# Check connected peers and latency
-veloce-run mesh peers
-veloce-run mesh status
-veloce-run mesh ping <peer-uuid>
-
-# Machine B can immediately access Machine A's services:
-curl --proxy socks5://127.0.0.1:1055 http://web.vln/
-```
-
-### 5. Multi-Service Stacks with Veloce Compose
-
-Create a `veloce-compose.yml`:
-```yaml
-version: "1.0"
-services:
-  database:
-    executable: /usr/bin/redis-server
-    args: ["--port", "6379"]
-    hostname: redis.vln
-    port: 6379
-    healthcheck:
-      tcp: 6379
-      interval_secs: 5
-
-  api:
-    executable: ./api-server
-    hostname: api.vln
-    port: 8080
-    ports:
-      - "8080:8080"
-    depends_on:
-      database:
-        condition: service_healthy
-```
-
-Start the stack:
-```bash
-veloce-run up -d
-veloce-run ps
-veloce-run down
+```text
+veloce-workspace/
+├── Windows/             ← Windows-native workspace (Job Objects, Named Pipes, DPAPI, NRPT, AppContainer)
+│   ├── apps/            ← veloce-run, veloce-launcher, veloce-shell, dashboard, installer
+│   ├── crates/          ← veloce-core, veloce-ipc, veloce-mesh, veloce-net, veloce-sdk, veloce-mobile
+│   └── Cargo.toml       ← Windows workspace manifest (MSVC / GNU targets)
+├── Linux/               ← Linux-native workspace (cgroups v2, Unix Domain Sockets, systemd)
+│   ├── apps/            ← veloce-run, veloce-launcher, veloce-shell, dashboard, installer
+│   ├── crates/          ← veloce-core, veloce-ipc, veloce-mesh, veloce-net, veloce-sdk, veloce-mobile
+│   └── Cargo.toml       ← Linux workspace manifest (x86_64-unknown-linux-gnu)
+├── .github/workflows/   ← Automated CI & Release build distribution workflows
+└── Makefile             ← Subtree synchronization and release management
 ```
 
 ---
 
-## SDK Integration (Rust & C ABI)
+## 🌐 Production Mirrors
 
-### Async Rust (`veloce-sdk`)
-
-```rust
-use veloce_sdk::VeloceClient;
-use veloce_ipc::message::Capability;
-
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    let mut client = VeloceClient::connect(
-        "my-service",
-        env!("CARGO_PKG_VERSION"),
-        vec![Capability::SpawnNodes, Capability::NetRegister],
-    ).await?;
-
-    let node = client.spawn_node("worker", "./worker", &["--threads", "4"]).await?;
-    println!("Spawned worker PID {} (node_id: {})", node.pid, node.node_id);
-
-    client.register_host("service.vln", 8080, 0).await?;
-    println!("Registered service.vln -> port 8080");
-
-    Ok(())
-}
-```
-
-### C / Python / Go FFI (`libveloce_sdk.so`)
-
-Drop `libveloce_sdk.so` and `veloce_sdk.h` into your project for zero-dependency integration from Python (`ctypes`), C/C++, Go (`cgo`), or Node.js.
+| Repository | Target Platform | Monorepo Subtree | Description |
+|---|---|---|---|
+| [**VeloceNetwork-Windows**](https://github.com/LeTrollologist/VeloceNetwork-Windows) | Windows (x86_64) | `Windows/` subtree | Production mirror for Windows releases & installers |
+| [**VeloceNetwork-Linux**](https://github.com/LeTrollologist/VeloceNetwork-Linux) | Linux (x86_64) | `Linux/` subtree | Production mirror for Linux releases & systemd units |
 
 ---
 
-## Building from Source
+## 🚀 Feature Status & Roadmap
 
-### Prerequisites
-- Linux kernel ≥ 5.4 with `cgroups v2` enabled (default on Ubuntu 20.04+, Debian 11+, Fedora, Arch, RHEL 9+)
-- Rust stable (`cargo`, `rustc`)
-- `pkg-config`, `libssl-dev`
+| Milestone | Key Capabilities & Architecture Additions | Status |
+|---|---|:---:|
+| **v1.0.0** | Core Engine, Named Pipe / Unix Socket IPC, Job Objects / cgroups, Userspace DNS (:5354) & SOCKS5 (:1055), Noise_IK Mesh, NRPT Windows Routing | ✅ Complete |
+| **v1.1.0** | Veloce Compose (`veloce-compose.yml`), TCP Port Forwarding, Health Probes (HTTP/TCP/Exec), `depends_on` startup ordering | ✅ Complete |
+| **v1.2.0** | Stateful Workloads: Named Volumes (`VolumeRegistry`), Host Bind Mounts, DPAPI Encrypted Secrets Vault (`veloce-run secret`) | ✅ Complete |
+| **v1.3.0** | Rolling Deployments & Desired-State Reconciler Loop (`veloce-run ps`, `veloce-run status`) | ✅ Complete |
+| **v1.3.1** | Server-Signed VM3 Join Codes (`MeshGetJoinCodeV3` / `MeshJoinCodeV3Result` IPC) with TTL & single-use anti-replay protection | ✅ Complete |
+| **v2.0.0** | Linux Engine Parity: Unix Domain Sockets, `cgroups v2` controllers (`cpu.max`, `memory.max`), `systemd` user service integration | ✅ Complete |
+| **v2.1.0** | Layer-7 HTTP Ingress Reverse Proxy (`veloce-net/src/ingress.rs`, `veloce-run ingress` on `:8080`) | ✅ Complete |
+| **v3.0.0** | Distributed Control Plane & Consensus (`ClusterCoordinator`, Term Tracking, Multi-Node Replica Scheduling) | ✅ Complete |
+| **v3.1.0** | Dynamic Horizontal Process Autoscaler (HPA) & CronJob Scheduler with concurrency policies (`Allow`, `Forbid`, `Replace`) | ✅ Complete |
+| **v3.2.0** | TLS Termination & Automatic HTTPS Ingress (`:8443`) with ephemeral self-signed SAN certificates & custom PEM loading | ✅ Complete |
+| **v3.3.0** | Prometheus Metrics Exposition (`:9090/metrics`) & Embedded Zero-Dependency Web Status Portal (`:9090/`) | ✅ Complete |
+| **v3.4.0** | Veloce Hub Application Registry & 1-Click Web Portal Deploy (`veloce-run hub search/publish/deploy`) | ✅ Complete |
+| **v3.5.0** | Real-Time WebSocket Telemetry (`:9090/ws`), Web Terminal Console & P2P Replicated Mesh Key-Value Store (`veloce-run mesh kv`) | ✅ Complete |
+| **v3.5.1** | CLI argument validation hardening, `--help` / `--version` service dispatcher bypass, cross-platform release synchronization | ✅ Complete |
+| **v3.6.0** | Userspace `.vpack` Application Packager: Single-file archives, Ed25519 cryptographic signing/verification, sandboxed zero-root runtime (`veloce-run pack`) | ✅ Complete |
+| **v3.6.1** | Non-Admin Desktop Compatibility: Automatic `%LOCALAPPDATA%` unprivileged storage fallback, interactive console mode, double-click pause protection | ✅ Complete |
+| **v3.7.0** | Android Mobile Integration: Native Rust JNI runtime (`veloce-mobile`), zero-root `VpnService` for `*.vln` routing, Jetpack Compose companion app | ✅ Complete |
+| **v3.8.0** | Enterprise OIDC SSO & ZTNA: PKCE browser auth (`veloce login`), group-based RBAC, Mesh ACL role bindings, Web Portal SSO | ✅ Complete |
+| **v3.9.0** | First-Class WebAssembly (Wasm/WASI) Orchestration: Zero-root userspace runtime, WASI preview 1 IO, mesh host bindings (`veloce-run wasm`) | ✅ Complete |
+| **v4.0.0** | "Bridge to Cloud" Unprivileged Kubernetes Remote Telepresence & Traffic Interceptor: In-cluster DNS (*.svc.cluster.local), header-based live traffic shadowing (`veloce-run bridge`) | ✅ Complete |
+| **v4.1.0** | Zero-Trust Team Share ("Unprivileged Secure Tunnels"): Ephemeral VM3 share tokens (`vshare://...`), 1-command peer port sharing (`veloce-run share`, `veloce-run join`) | ✅ Complete |
+| **v4.2.0** | OpenTelemetry (OTel) Native Distributed Tracing & Observability: W3C trace context, zero-config OTLP JSON export (`:4318`), live trace waterfall UI (`veloce-run trace`) | ✅ Complete |
 
-### Build
+---
+
+## 🏗️ System Architecture
+
+```text
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              Your Applications                              │
+│   • veloce-sdk (Rust async client)      • veloce_sdk.dll / libveloce_sdk.so │
+│   • veloce-run (CLI orchestration)      • Web Status Portal (127.0.0.1:9090)│
+│   • Wasm / WASI Sandboxed Modules       • Mobile Clients (Android VpnService│
+└──────────────────────────────────────┬──────────────────────────────────────┘
+                                       │ Named Pipe (Windows) / Unix Domain Socket (Linux)
+                                       ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                                 VeloceCore                                  │
+│  • Session Authentication (SID ACL / UID check + OsRng PSK)                 │
+│  • Enterprise OIDC Identity & RBAC (Microsoft Entra ID, Okta, GitHub SSO)   │
+│  • Node Lifecycle & Supervision (Process Trees / Health Probes / Restarts)  │
+│  • Process Sandboxing (Windows Job Objects & AppContainer / Linux cgroups v2│
+│  • Embedded Pure-Rust WebAssembly Engine (Wasm / WASI Preview 1)            │
+│  • OpenTelemetry (OTel) Engine: W3C Context, Ring Buffer, OTLP Exporter     │
+│  • Zero-Trust Team Share Engine: Ephemeral VM3 Tokens (vshare://...)        │
+│  • Kubernetes Telepresence Bridge: In-cluster DNS & Live Traffic Intercept  │
+│  • Policy Engine (RBAC, Mesh ACLs, Hot-reloaded TOML rules)                 │
+│  • Desired-State Reconciler & HPA Autoscaler Loop                           │
+│  • CronJob Scheduled Task Executor (cron syntax + @every interval)         │
+│  • Embedded Web Status Portal & Real-Time WebSocket Telemetry (:9090)       │
+│  • Veloce Hub Application Catalog Engine                                    │
+│  • Shared Memory (mmap) Registry & DPAPI/ChaCha Encrypted Secrets Vault     │
+└──────────────────────────┬──────────────────────────┬───────────────────────┘
+                           │                          │
+                           ▼                          ▼
+   ┌────────────────────────────────┐   ┌───────────────────────────────────┐
+   │         Node Workloads         │   │             VeloceNet             │
+   │  • Microservices / Web Backends│   │  • Userspace DNS    :5354 (*.vln) │
+   │  • Databases & Caches          │   │  • SOCKS5 Proxy     :1055         │
+   │  • Wasm Edge Modules (.wasm)   │   │  • HTTP L7 Ingress  :8080         │
+   │  • .vpack Standalone Archives  │   │  • HTTPS L7 Ingress :8443 (TLS)   │
+   │  • Named Volumes & Bind Mounts │   │  • P2P Mesh (Noise) :7474 ◄───────┼── Remote Peers
+   └────────────────────────────────┘   └───────────────────────────────────┘
+```
+
+---
+
+## ⚡ Quick Start & CLI Reference
+
+### 1. Launch Processes & Wasm Modules into Private Mesh
 
 ```bash
-cd Linux/
+# Launch a background service with resource limits and a .vln hostname
+veloce-run --name api --hostname api.vln --port 3000 --cpu 50 --mem 512 -- node server.js
 
-# Build all workspace crates and CLI binaries
-cargo build --release
+# Execute a WebAssembly module with sandboxed WASI runtime
+veloce-run wasm run ./service.wasm --env LOG_LEVEL=debug
 
-# Run the full unit and integration test suite
-cargo test --workspace
+# Inspect exports and imports of a WebAssembly module
+veloce-run wasm inspect ./service.wasm
 ```
 
-Binaries will be generated at `Linux/target/release/`:
-- `veloce-core` — daemon service
-- `veloce-run` — CLI tool
-- `libveloce_sdk.so` — C shared library
+### 2. Multi-Machine Mesh Networking & Zero-Trust Share
+
+```bash
+# Share a local port with a teammate or client via ephemeral VM3 share token
+veloce-run share 3000 --name dev-api --ttl 2h
+
+# Teammate connects to the shared service instantly
+veloce-run join vshare://vm3-eyJhbGciOi...
+
+# List and manage active share links
+veloce-run share list
+veloce-run share revoke sh-9f82ab12
+```
+
+### 3. OpenTelemetry (OTel) Distributed Tracing
+
+```bash
+# List recent distributed traces across local and remote mesh services
+veloce-run trace list
+
+# Inspect an end-to-end trace waterfall and latency breakdown in terminal ASCII
+veloce-run trace inspect 4bf92f3577b34da6a3ce929d0e0e4736
+
+# Export traces directly to Jaeger, Grafana Tempo, or OTel Collector
+veloce-run trace export --endpoint http://localhost:4318/v1/traces --enable
+```
+
+### 4. "Bridge to Cloud" (Kubernetes Telepresence & Interceptor)
+
+```bash
+# Connect local environment to remote staging Kubernetes cluster
+veloce-run bridge connect --peer 10.96.0.10:7474 --namespace staging
+
+# Shadow live cluster traffic carrying debug header to local IDE debugger
+veloce-run bridge intercept --service payment-service --header "X-Debug: true" --target 9000
+
+# Inspect active cloud bridges
+veloce-run bridge list
+```
+
+### 5. Enterprise OIDC Single Sign-On (SSO) & ZTNA
+
+```bash
+# Authenticate with corporate identity provider (Entra ID, Okta, GitHub)
+veloce-run login --provider https://login.microsoftonline.com/tenant-id/v2.0 --client-id <ID>
+
+# Inspect active OIDC session and Mesh RBAC groups
+veloce-run auth status
+
+# Logout and revoke token
+veloce-run auth logout
+```
+
+### 6. Userspace `.vpack` Application Packager
+
+```bash
+# Generate an Ed25519 publisher keypair
+veloce-run pack keygen --out publisher
+
+# Build and sign a standalone .vpack archive
+veloce-run pack build ./my-app --out my-app-1.0.0.vpack --sign publisher.priv
+
+# Verify signature and launch directly into the mesh
+veloce-run pack verify my-app-1.0.0.vpack --pubkey publisher.pub
+veloce-run pack run my-app-1.0.0.vpack --name my-app --port 8080
+```
 
 ---
 
-## License
+## 🛠️ Development & Build Workflow
+
+### Building and Testing (Windows)
+
+```powershell
+cd Windows
+$env:PATH = "C:\Users\Owner\.gemini\tools\mingw64\bin;C:\Users\Owner\.rustup\toolchains\stable-x86_64-pc-windows-gnu\lib\rustlib\x86_64-pc-windows-gnu\bin\self-contained;$env:PATH"
+cargo test --workspace -j 2
+cargo build --workspace --release -j 2
+```
+
+### Building and Testing (Linux)
+
+```bash
+cd Linux
+cargo test --workspace -j 2
+cargo build --workspace --release -j 2
+```
+
+---
+
+## 📄 License
 
 Proprietary — © VeloceSolutions. All rights reserved.

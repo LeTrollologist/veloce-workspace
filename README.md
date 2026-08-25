@@ -1,11 +1,11 @@
-# veloce-workspace
+﻿# veloce-workspace
 
 [![Windows CI](https://github.com/LeTrollologist/veloce-workspace/actions/workflows/windows.yml/badge.svg)](https://github.com/LeTrollologist/veloce-workspace/actions/workflows/windows.yml)
 [![Linux CI](https://github.com/LeTrollologist/veloce-workspace/actions/workflows/linux.yml/badge.svg)](https://github.com/LeTrollologist/veloce-workspace/actions/workflows/linux.yml)
 [![Release](https://img.shields.io/github/v/release/LeTrollologist/veloce-workspace?label=release)](https://github.com/LeTrollologist/veloce-workspace/releases)
 [![License](https://img.shields.io/badge/license-proprietary-blue.svg)](LICENSE)
 
-Monorepo containing the unified cross-platform codebase for **VeloceNetwork** — a lightweight, zero-kernel runtime for launching, managing, and privately networking isolated application workloads across Windows and Linux.
+Monorepo containing the unified cross-platform codebase for **VeloceNetwork** — a lightweight, zero-kernel, zero-root userspace service mesh and runtime for launching, managing, privately networking, and observing isolated application workloads across Windows, Linux, and Android.
 
 ---
 
@@ -15,11 +15,11 @@ Monorepo containing the unified cross-platform codebase for **VeloceNetwork** �
 veloce-workspace/
 ├── Windows/             ← Windows-native workspace (Job Objects, Named Pipes, DPAPI, NRPT, AppContainer)
 │   ├── apps/            ← veloce-run, veloce-launcher, veloce-shell, dashboard, installer
-│   ├── crates/          ← veloce-core, veloce-ipc, veloce-mesh, veloce-net, veloce-sdk
+│   ├── crates/          ← veloce-core, veloce-ipc, veloce-mesh, veloce-net, veloce-sdk, veloce-mobile
 │   └── Cargo.toml       ← Windows workspace manifest (MSVC / GNU targets)
 ├── Linux/               ← Linux-native workspace (cgroups v2, Unix Domain Sockets, systemd)
 │   ├── apps/            ← veloce-run, veloce-launcher, veloce-shell, dashboard, installer
-│   ├── crates/          ← veloce-core, veloce-ipc, veloce-mesh, veloce-net, veloce-sdk
+│   ├── crates/          ← veloce-core, veloce-ipc, veloce-mesh, veloce-net, veloce-sdk, veloce-mobile
 │   └── Cargo.toml       ← Linux workspace manifest (x86_64-unknown-linux-gnu)
 ├── .github/workflows/   ← Automated CI & Release build distribution workflows
 └── Makefile             ← Subtree synchronization and release management
@@ -72,14 +72,20 @@ veloce-workspace/
 │                              Your Applications                              │
 │   • veloce-sdk (Rust async client)      • veloce_sdk.dll / libveloce_sdk.so │
 │   • veloce-run (CLI orchestration)      • Web Status Portal (127.0.0.1:9090)│
+│   • Wasm / WASI Sandboxed Modules       • Mobile Clients (Android VpnService│
 └──────────────────────────────────────┬──────────────────────────────────────┘
                                        │ Named Pipe (Windows) / Unix Domain Socket (Linux)
                                        ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                                 VeloceCore                                  │
 │  • Session Authentication (SID ACL / UID check + OsRng PSK)                 │
+│  • Enterprise OIDC Identity & RBAC (Microsoft Entra ID, Okta, GitHub SSO)   │
 │  • Node Lifecycle & Supervision (Process Trees / Health Probes / Restarts)  │
 │  • Process Sandboxing (Windows Job Objects & AppContainer / Linux cgroups v2│
+│  • Embedded Pure-Rust WebAssembly Engine (Wasm / WASI Preview 1)            │
+│  • OpenTelemetry (OTel) Engine: W3C Context, Ring Buffer, OTLP Exporter     │
+│  • Zero-Trust Team Share Engine: Ephemeral VM3 Tokens (vshare://...)        │
+│  • Kubernetes Telepresence Bridge: In-cluster DNS & Live Traffic Intercept  │
 │  • Policy Engine (RBAC, Mesh ACLs, Hot-reloaded TOML rules)                 │
 │  • Desired-State Reconciler & HPA Autoscaler Loop                           │
 │  • CronJob Scheduled Task Executor (cron syntax + @every interval)         │
@@ -93,9 +99,9 @@ veloce-workspace/
    │         Node Workloads         │   │             VeloceNet             │
    │  • Microservices / Web Backends│   │  • Userspace DNS    :5354 (*.vln) │
    │  • Databases & Caches          │   │  • SOCKS5 Proxy     :1055         │
-   │  • Batch / Scheduled Tasks     │   │  • HTTP L7 Ingress  :8080         │
-   │  • Named Volumes & Bind Mounts │   │  • HTTPS L7 Ingress :8443 (TLS)   │
-   │                                │   │  • P2P Mesh (Noise) :7474 ◄───────┼── Remote Peers
+   │  • Wasm Edge Modules (.wasm)   │   │  • HTTP L7 Ingress  :8080         │
+   │  • .vpack Standalone Archives  │   │  • HTTPS L7 Ingress :8443 (TLS)   │
+   │  • Named Volumes & Bind Mounts │   │  • P2P Mesh (Noise) :7474 ◄───────┼── Remote Peers
    └────────────────────────────────┘   └───────────────────────────────────┘
 ```
 
@@ -103,109 +109,83 @@ veloce-workspace/
 
 ## ⚡ Quick Start & CLI Reference
 
-### 1. Launch Processes into Private Mesh
+### 1. Launch Processes & Wasm Modules into Private Mesh
 
 ```bash
 # Launch a background service with resource limits and a .vln hostname
 veloce-run --name api --hostname api.vln --port 3000 --cpu 50 --mem 512 -- node server.js
 
-# Stream stdout/stderr in watch mode
-veloce-run --name worker --watch -- python worker.py
+# Execute a WebAssembly module with sandboxed WASI runtime
+veloce-run wasm run ./service.wasm --env LOG_LEVEL=debug
+
+# Inspect exports and imports of a WebAssembly module
+veloce-run wasm inspect ./service.wasm
 ```
 
-### 2. Multi-Machine Mesh Networking
+### 2. Multi-Machine Mesh Networking & Zero-Trust Share
 
 ```bash
-# Machine A: Generate a secure, time-limited join code
-veloce-run mesh identity --ttl 30
+# Share a local port with a teammate or client via ephemeral VM3 share token
+veloce-run share 3000 --name dev-api --ttl 2h
 
-# Machine B: Connect to Machine A using the code
-veloce-run mesh join "VM3:ey..."
+# Teammate connects to the shared service instantly
+veloce-run join vshare://vm3-eyJhbGciOi...
 
-# Inspect mesh status and peer latency
-veloce-run mesh peers
-veloce-run mesh status
-veloce-run mesh ping <PEER_ID>
+# List and manage active share links
+veloce-run share list
+veloce-run share revoke sh-9f82ab12
 ```
 
-### 3. P2P Replicated Mesh Key-Value Store (v3.5)
+### 3. OpenTelemetry (OTel) Distributed Tracing
 
 ```bash
-# Set a shared key replicated across all connected mesh peers
-veloce-run mesh kv set config/database_url "postgres://db.vln:5432/prod"
+# List recent distributed traces across local and remote mesh services
+veloce-run trace list
 
-# Read key
-veloce-run mesh kv get config/database_url
+# Inspect an end-to-end trace waterfall and latency breakdown in terminal ASCII
+veloce-run trace inspect 4bf92f3577b34da6a3ce929d0e0e4736
 
-# List all stored keys in the cluster
-veloce-run mesh kv list
+# Export traces directly to Jaeger, Grafana Tempo, or OTel Collector
+veloce-run trace export --endpoint http://localhost:4318/v1/traces --enable
 ```
 
-### 4. Multi-Service Orchestration (`veloce-compose.yml`)
+### 4. "Bridge to Cloud" (Kubernetes Telepresence & Interceptor)
 
 ```bash
-# Deploy all services declared in veloce-compose.yml
-veloce-run up -d
+# Connect local environment to remote staging Kubernetes cluster
+veloce-run bridge connect --peer 10.96.0.10:7474 --namespace staging
 
-# Inspect live cluster status and desired vs actual replicas
-veloce-run ps
+# Shadow live cluster traffic carrying debug header to local IDE debugger
+veloce-run bridge intercept --service payment-service --header "X-Debug: true" --target 9000
 
-# Tear down compose services
-veloce-run down
+# Inspect active cloud bridges
+veloce-run bridge list
 ```
 
-### 5. Layer-7 HTTP & HTTPS Ingress Reverse Proxy
+### 5. Enterprise OIDC Single Sign-On (SSO) & ZTNA
 
 ```bash
-# Route http://api.vln/v1/* to localhost port 4000 (strip /v1 prefix)
-veloce-run ingress add -H api.vln -p /v1 -t 4000 --strip-prefix
+# Authenticate with corporate identity provider (Entra ID, Okta, GitHub)
+veloce-run login --provider https://login.microsoftonline.com/tenant-id/v2.0 --client-id <ID>
 
-# Route HTTPS with automatic TLS certificate generation
-veloce-run ingress add -H secure.vln -t 3000 --tls
+# Inspect active OIDC session and Mesh RBAC groups
+veloce-run auth status
 
-# List all active routes
-veloce-run ingress list
+# Logout and revoke token
+veloce-run auth logout
 ```
 
-### 6. Autoscaling (HPA) & CronJobs
-
-```bash
-# Configure autoscaling between 2 and 10 replicas targeting 75% CPU
-veloce-run autoscale set api --min 2 --max 10 --cpu 75
-
-# Schedule a cron job executing every 15 minutes
-veloce-run cron create db-backup -s "*/15 * * * *" -- python backup.py
-```
-
-### 7. Veloce Hub & Web Status Portal
-
-```bash
-# Search and deploy applications from Veloce Hub
-veloce-run hub search web
-veloce-run hub deploy redis
-
-# Open the embedded browser Status Portal & Real-Time Console
-veloce-run portal
-```
-
-### 8. Userspace `.vpack` Application Packager (v3.6)
+### 6. Userspace `.vpack` Application Packager
 
 ```bash
 # Generate an Ed25519 publisher keypair
 veloce-run pack keygen --out publisher
 
-# Initialize and build a signed .vpack package
-veloce-run pack init ./my-app --name my-app
+# Build and sign a standalone .vpack archive
 veloce-run pack build ./my-app --out my-app-1.0.0.vpack --sign publisher.priv
 
-# Inspect metadata and verify cryptographic signature
-veloce-run pack inspect my-app-1.0.0.vpack
+# Verify signature and launch directly into the mesh
 veloce-run pack verify my-app-1.0.0.vpack --pubkey publisher.pub
-
-# Extract package contents into a directory
-veloce-run pack extract my-app-1.0.0.vpack --dir ./extracted-app
-
-# Launch directly from the .vpack file into the mesh
 veloce-run pack run my-app-1.0.0.vpack --name my-app --port 8080
 ```
 
@@ -217,32 +197,17 @@ veloce-run pack run my-app-1.0.0.vpack --name my-app --port 8080
 
 ```powershell
 cd Windows
-cargo test --workspace
-cargo build --workspace --release
+$env:PATH = "C:\Users\Owner\.gemini\tools\mingw64\bin;C:\Users\Owner\.rustup\toolchains\stable-x86_64-pc-windows-gnu\lib\rustlib\x86_64-pc-windows-gnu\bin\self-contained;$env:PATH"
+cargo test --workspace -j 2
+cargo build --workspace --release -j 2
 ```
 
 ### Building and Testing (Linux)
 
 ```bash
 cd Linux
-cargo test --workspace
-cargo build --workspace --release
-```
-
-### Monorepo Sync & Releases
-
-```bash
-# Push commits to monorepo
-git push origin main
-
-# Synchronize subtrees to downstream production mirrors
-make sync-windows
-make sync-linux
-make sync-prod
-
-# Tag and push production releases
-make release-windows TAG=v3.5.1
-make release-linux   TAG=v3.5.1
+cargo test --workspace -j 2
+cargo build --workspace --release -j 2
 ```
 
 ---
