@@ -71,6 +71,9 @@ pub struct CoreState {
 
     // ── v3.8 (Enterprise OIDC SSO) ────────────────────────────
     pub oidc: Arc<crate::oidc::OidcEngine>,
+
+    // ── v4.0 (Bridge to Cloud) ────────────────────────────────
+    pub bridge: Arc<crate::bridge::BridgeEngine>,
 }
 
 impl CoreState {
@@ -138,6 +141,7 @@ impl CoreState {
         let tls_manager = Arc::new(veloce_net::TlsManager::new_self_signed()?);
         let hub        = crate::hub::HubCatalogEngine::new(&dir);
         let oidc       = Arc::new(crate::oidc::OidcEngine::new(&dir));
+        let bridge     = Arc::new(crate::bridge::BridgeEngine::new());
 
         Ok(Self {
             registry,
@@ -157,6 +161,7 @@ impl CoreState {
             tls_manager,
             hub,
             oidc,
+            bridge,
         })
     }
 

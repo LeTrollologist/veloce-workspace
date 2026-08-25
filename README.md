@@ -59,6 +59,7 @@ veloce-workspace/
 | **v3.7.0** | Android Mobile Integration: Native Rust JNI runtime (`veloce-mobile`), zero-root `VpnService` for `*.vln` routing, Jetpack Compose companion app | ✅ Complete |
 | **v3.8.0** | Enterprise OIDC SSO & ZTNA: PKCE browser auth (`veloce login`), group-based RBAC, Mesh ACL role bindings, Web Portal SSO | ✅ Complete |
 | **v3.9.0** | First-Class WebAssembly (Wasm/WASI) Orchestration: Zero-root userspace runtime, WASI preview 1 IO, mesh host bindings (`veloce-run wasm`) | ✅ Complete |
+| **v4.0.0** | "Bridge to Cloud" Unprivileged Kubernetes Remote Telepresence & Traffic Interceptor: In-cluster DNS (*.svc.cluster.local), header-based live traffic shadowing (`veloce-run bridge`) | ✅ Complete |
 
 ---
 

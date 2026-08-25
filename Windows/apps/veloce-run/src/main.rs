@@ -56,6 +56,7 @@ Examples:
 */
 
 mod auth;
+mod bridge;
 mod compose;
 mod pack;
 mod wasm;
@@ -211,6 +212,8 @@ enum Commands {
     Login(auth::LoginArgs),
     /// Execute or inspect WebAssembly (Wasm/WASI) modules (v3.9)
     Wasm(wasm::WasmArgs),
+    /// "Bridge to Cloud" unprivileged Kubernetes telepresence & traffic interceptor (v4.0)
+    Bridge(bridge::BridgeArgs),
     /// Print version information
     Version,
 }
@@ -532,6 +535,10 @@ async fn main() -> Result<()> {
             auth::handle_login(std::sync::Arc::new(tokio::sync::Mutex::new(client)), args).await
         }
         Some(Commands::Wasm(args))            => wasm::run_wasm(args.action),
+        Some(Commands::Bridge(args))          => {
+            let client = connect_client("veloce-bridge", vec![Capability::BridgeManage, Capability::RegistryRead]).await?;
+            bridge::run_bridge(std::sync::Arc::new(tokio::sync::Mutex::new(client)), args.action).await
+        }
         Some(Commands::Version)               => { run_version(); Ok(()) }
         None => {
             let executable = match cli.executable {

@@ -13,6 +13,7 @@ Run modes:
 mod autoscale;
 mod cron;
 mod hub;
+pub mod bridge;
 pub mod oidc;
 pub mod pack;
 pub mod wasm;

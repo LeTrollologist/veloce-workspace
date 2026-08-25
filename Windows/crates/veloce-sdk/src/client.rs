@@ -780,6 +780,44 @@ impl VeloceClient {
         }
     }
 
+    // ── Bridge to Cloud (v4.0) ────────────────────────────────────────────────
+
+    /// Connect to a remote Kubernetes bridge peer.
+    pub async fn bridge_connect(&mut self, config: veloce_ipc::message::BridgeConfigMsg) -> Result<veloce_ipc::message::BridgeSessionInfoMsg> {
+        match self.request(Body::BridgeConnect(config)).await? {
+            Body::BridgeConnectAck(info) => Ok(info),
+            Body::Error(e)               => bail!("bridge_connect: {}", e.message),
+            other                        => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// Add a traffic interception rule for a remote service.
+    pub async fn bridge_intercept(&mut self, rule: veloce_ipc::message::BridgeInterceptRuleMsg) -> Result<(String, String)> {
+        match self.request(Body::BridgeIntercept(rule)).await? {
+            Body::BridgeInterceptAck { session_id, rule_id } => Ok((session_id, rule_id)),
+            Body::Error(e)                                   => bail!("bridge_intercept: {}", e.message),
+            other                                            => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// List active bridge sessions and intercept rules.
+    pub async fn bridge_list(&mut self) -> Result<Vec<veloce_ipc::message::BridgeSessionInfoMsg>> {
+        match self.request(Body::BridgeList).await? {
+            Body::BridgeListResp(list) => Ok(list),
+            Body::Error(e)             => bail!("bridge_list: {}", e.message),
+            other                      => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
+    /// Disconnect an active bridge session.
+    pub async fn bridge_disconnect(&mut self, session_id: &str) -> Result<()> {
+        match self.request(Body::BridgeDisconnect { session_id: session_id.into() }).await? {
+            Body::BridgeDisconnectAck { .. } => Ok(()),
+            Body::Error(e)                   => bail!("bridge_disconnect: {}", e.message),
+            other                            => bail!("unexpected: {:?}", other.msg_type()),
+        }
+    }
+
     // ── Traffic stats ─────────────────────────────────────────────────────────
 
     /// Query per-tunnel (Noise) and per-.vln host byte counters from Core.

@@ -125,6 +125,24 @@ pub enum MessageType {
     /// Core → Client: logout acknowledged.
     OidcAuthClearAck     = 0x78,
 
+    // ── Bridge to Cloud (v4.0) ──────────────────────────────────
+    /// Client → Core: connect to a remote Kubernetes bridge peer.
+    BridgeConnect        = 0x79,
+    /// Core → Client: bridge connected ack.
+    BridgeConnectAck     = 0x7A,
+    /// Client → Core: add a traffic interception rule.
+    BridgeIntercept      = 0x7B,
+    /// Core → Client: intercept rule added ack.
+    BridgeInterceptAck   = 0x7C,
+    /// Client → Core: list active bridge sessions.
+    BridgeList           = 0x7D,
+    /// Core → Client: bridge list response.
+    BridgeListResp       = 0x7E,
+    /// Client → Core: disconnect a bridge session.
+    BridgeDisconnect     = 0x7F,
+    /// Core → Client: bridge disconnected ack.
+    BridgeDisconnectAck  = 0x82,
+
     // ── Traffic stats ──────────────────────────────────────────
     /// Client → Core: request cumulative byte counters for all tunnels and .vln hosts.
     TrafficQuery      = 0x80,
@@ -280,6 +298,10 @@ impl TryFrom<u8> for MessageType {
             0x73 => OidcAuthSet,     0x74 => OidcAuthAck,
             0x75 => OidcAuthGet,     0x76 => OidcAuthInfo,
             0x77 => OidcAuthClear,   0x78 => OidcAuthClearAck,
+            0x79 => BridgeConnect,   0x7A => BridgeConnectAck,
+            0x7B => BridgeIntercept, 0x7C => BridgeInterceptAck,
+            0x7D => BridgeList,      0x7E => BridgeListResp,
+            0x7F => BridgeDisconnect,0x82 => BridgeDisconnectAck,
             0x80 => TrafficQuery,    0x81 => TrafficStatsResult,
             0x90 => NetAddPortForward,    0x91 => NetPortForwardAdded,
             0x92 => NetRemovePortForward, 0x93 => NetListPortForwards,
@@ -517,6 +539,16 @@ pub enum Body {
     OidcAuthInfo(OidcAuthInfoMsg),
     OidcAuthClear,
     OidcAuthClearAck,
+
+    // ── Bridge to Cloud (v4.0) ──────────────────────────────────
+    BridgeConnect(BridgeConfigMsg),
+    BridgeConnectAck(BridgeSessionInfoMsg),
+    BridgeIntercept(BridgeInterceptRuleMsg),
+    BridgeInterceptAck { session_id: String, rule_id: String },
+    BridgeList,
+    BridgeListResp(Vec<BridgeSessionInfoMsg>),
+    BridgeDisconnect { session_id: String },
+    BridgeDisconnectAck { session_id: String },
 }
 
 impl Body {
@@ -632,6 +664,15 @@ impl Body {
             OidcAuthInfo(_)            => MessageType::OidcAuthInfo,
             OidcAuthClear              => MessageType::OidcAuthClear,
             OidcAuthClearAck           => MessageType::OidcAuthClearAck,
+            // Bridge to Cloud (v4.0)
+            BridgeConnect(_)           => MessageType::BridgeConnect,
+            BridgeConnectAck(_)        => MessageType::BridgeConnectAck,
+            BridgeIntercept(_)         => MessageType::BridgeIntercept,
+            BridgeInterceptAck{..}     => MessageType::BridgeInterceptAck,
+            BridgeList                 => MessageType::BridgeList,
+            BridgeListResp(_)          => MessageType::BridgeListResp,
+            BridgeDisconnect{..}       => MessageType::BridgeDisconnect,
+            BridgeDisconnectAck{..}    => MessageType::BridgeDisconnectAck,
         }
     }
 }
@@ -686,6 +727,8 @@ pub enum Capability {
     HubManage,
     /// Read, write, and manage the P2P replicated mesh key-value store (v3.5).
     MeshKvManage,
+    /// Manage remote Kubernetes bridge tunnels & traffic intercepts (v4.0).
+    BridgeManage,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1328,6 +1371,47 @@ pub struct OidcAuthInfoMsg {
     pub name: Option<String>,
     pub groups: Vec<String>,
     pub expires_at: Option<u64>,
+}
+
+// ── Bridge to Cloud (v4.0) ───────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BridgeConfigMsg {
+    /// Remote Kubernetes peer endpoint / join code / hostname
+    pub peer: String,
+    /// In-cluster namespace (default: "default")
+    pub namespace: String,
+    /// Target pod or service name
+    pub target: Option<String>,
+    /// DNS search suffixes to route over bridge (e.g. ["svc.cluster.local", "cluster.local"])
+    pub dns_suffixes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BridgeInterceptRuleMsg {
+    /// Associated bridge session ID
+    pub session_id: String,
+    /// Unique rule ID
+    pub rule_id: String,
+    /// Target service or pod name
+    pub service_name: String,
+    /// Port on the remote cluster to intercept
+    pub remote_port: u16,
+    /// Local port to receive the intercepted traffic
+    pub local_port: u16,
+    /// Optional HTTP header filter (e.g. "X-Veloce-Intercept" or "X-Debug: true")
+    pub header_filter: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BridgeSessionInfoMsg {
+    pub session_id: String,
+    pub peer: String,
+    pub namespace: String,
+    pub target: Option<String>,
+    pub dns_suffixes: Vec<String>,
+    pub active_intercepts: Vec<BridgeInterceptRuleMsg>,
+    pub connected_at: u64,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

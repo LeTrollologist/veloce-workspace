@@ -926,6 +926,41 @@ where
                 self.send_reply(cid, Body::OidcAuthClearAck).await?;
             }
 
+            // ── Bridge to Cloud (v4.0) ────────────────────────────────
+            Body::BridgeConnect(config) => {
+                self.require_cap(Capability::BridgeManage)?;
+                let info = self.state.bridge.connect_bridge(config);
+                self.send_reply(cid, Body::BridgeConnectAck(info)).await?;
+            }
+
+            Body::BridgeIntercept(rule) => {
+                self.require_cap(Capability::BridgeManage)?;
+                match self.state.bridge.add_intercept_rule(rule) {
+                    Ok((session_id, rule_id)) => {
+                        self.send_reply(cid, Body::BridgeInterceptAck { session_id, rule_id }).await?;
+                    }
+                    Err(e) => {
+                        self.send_error(Some(cid), ErrorCode::NotFound, e.to_string()).await?;
+                    }
+                }
+            }
+
+            Body::BridgeList => {
+                self.require_cap(Capability::BridgeManage)?;
+                let list = self.state.bridge.list_bridges();
+                self.send_reply(cid, Body::BridgeListResp(list)).await?;
+            }
+
+            Body::BridgeDisconnect { session_id } => {
+                self.require_cap(Capability::BridgeManage)?;
+                let disconnected = self.state.bridge.disconnect_bridge(&session_id);
+                if disconnected {
+                    self.send_reply(cid, Body::BridgeDisconnectAck { session_id }).await?;
+                } else {
+                    self.send_error(Some(cid), ErrorCode::NotFound, format!("bridge session '{session_id}' not found")).await?;
+                }
+            }
+
             other => {
                 tracing::warn!("unhandled message type: {:?}", other.msg_type());
                 self.send_error(Some(cid), ErrorCode::InvalidMessage,

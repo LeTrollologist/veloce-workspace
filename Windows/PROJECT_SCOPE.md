@@ -452,5 +452,12 @@ This phase dedicated three sequential releases to security, correctness, and sta
 - [x] Native Veloce host functions exported to Wasm guest: `veloce_kv_get`, `veloce_kv_set`
 - [x] `veloce-run wasm run <file.wasm>` and `veloce-run wasm inspect <file.wasm>` CLI subcommands with auto-routing
 
+**v4.0.0 — "Bridge to Cloud" (Unprivileged Kubernetes Remote Telepresence & Traffic Interceptor)** ✅
+- [x] In-cluster Kubernetes DNS synthesizer for `*.svc.cluster.local`, `*.cluster.local`, `*.k8s.vln`
+- [x] Pure userspace TCP egress tunneling to remote databases and microservices without VPN or root
+- [x] Header-based live traffic interceptor & shadowing (`X-Veloce-Intercept`, `X-Debug`) routing directly to local IDE debuggers
+- [x] In-cluster unprivileged bridge sidecar agent (`veloce-run bridge agent`)
+- [x] Full CLI suite (`veloce-run bridge connect`, `intercept`, `list`, `disconnect`)
+
 **Future Roadmap** 📋
 - **Standalone Distribution**: Portable self-contained binaries (`.exe` / `.tar.gz`) with manual and offline release artifacts, bypassing third-party cloud billing dependencies.
