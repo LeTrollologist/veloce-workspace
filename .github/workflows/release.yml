@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag (e.g. v3.5.0)'
+        description: 'Release tag (e.g. v4.3.0)'
         required: true
-        default: 'v3.5.0'
+        default: 'v4.3.0'
 
 permissions:
   contents: write
@@ -39,7 +39,7 @@ jobs:
         shell: pwsh
         run: |
           $Tag = if ("${{ github.ref_name }}".StartsWith("v")) { "${{ github.ref_name }}" } else { "${{ github.event.inputs.tag }}" }
-          if (-not $Tag) { $Tag = "v3.5.0" }
+          if (-not $Tag) { $Tag = "v4.3.0" }
           $DistDir = "Windows/target/dist"
           New-Item -ItemType Directory -Force -Path $DistDir
           Copy-Item Windows/target/release/veloce-core.exe $DistDir/ -Force
@@ -102,7 +102,7 @@ jobs:
             TAG="${{ github.event.inputs.tag }}"
           fi
           if [ -z "$TAG" ]; then
-            TAG="v3.5.0"
+            TAG="v4.3.0"
           fi
           mkdir -p Linux/target/dist
           cp Linux/target/release/veloce-core Linux/target/dist/
@@ -141,5 +141,65 @@ jobs:
             veloce-linux-x86_64-*.zip
             veloce-core-linux-x86_64
             veloce-run-linux-x86_64
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-macos:
+    name: Build macOS Release Binaries (tar.gz / zip / Mach-O)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@7b7c407752d8230469b848039911fc72c2b6499f # stable
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin
+
+      - name: Cache cargo registry
+        uses: Swatinem/rust-cache@23bce251a8cd2ffc3c1075edd2367cf4999c6d8e # v2.7.3
+        with:
+          workspaces: macOS
+
+      - name: Build macOS Binaries
+        run: |
+          cargo build --release --workspace
+        working-directory: macOS
+
+      - name: Package macOS Artifacts
+        run: |
+          TAG="${{ github.ref_name }}"
+          if [ -z "$TAG" ] || [ "$TAG" = "main" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          fi
+          if [ -z "$TAG" ]; then
+            TAG="v4.3.0"
+          fi
+          mkdir -p macOS/target/dist
+          cp macOS/target/release/veloce-core macOS/target/dist/
+          cp macOS/target/release/veloce-run macOS/target/dist/
+          if [ -f macOS/README.md ]; then
+            cp macOS/README.md macOS/target/dist/
+          fi
+          if [ -f macOS/SECURITY.md ]; then
+            cp macOS/SECURITY.md macOS/target/dist/
+          fi
+          
+          tar -czvf "veloce-macos-aarch64-${TAG}.tar.gz" -C macOS/target/dist .
+          (cd macOS/target/dist && zip -r "../../../veloce-macos-aarch64-${TAG}.zip" .)
+          cp macOS/target/release/veloce-core "veloce-core-macos-aarch64"
+          cp macOS/target/release/veloce-run "veloce-run-macos-aarch64"
+
+      - name: Upload macOS Assets to GitHub Release
+        uses: softprops/action-gh-release@c062e4eec0c4b38d2049339664f33303ec5082b7 # v2.0.4
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        with:
+          tag_name: ${{ github.ref_name || github.event.inputs.tag }}
+          files: |
+            veloce-macos-aarch64-*.tar.gz
+            veloce-macos-aarch64-*.zip
+            veloce-core-macos-aarch64
+            veloce-run-macos-aarch64
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
