@@ -1,30 +1,34 @@
-PREFIX  ?= /usr/local
-BINDIR   = $(PREFIX)/bin
-SYSTEMD_DIR = /etc/systemd/system
+WINDOWS_DIR ?= ./Windows
+LINUX_DIR   ?= ./Linux
 
-.PHONY: build install uninstall deb rpm
+.PHONY: sync-prod sync-windows sync-linux pull-prod release-windows release-linux
 
-build:
-	cargo build --release
+sync-prod: sync-windows sync-linux pull-prod
 
-install: build
-	install -Dm755 target/release/veloce-core    $(BINDIR)/veloce-core
-	install -Dm755 target/release/veloce-run     $(BINDIR)/veloce-run
-	install -Dm755 target/release/veloce-shell   $(BINDIR)/veloce-shell
-	install -Dm755 target/release/veloce-launcher $(BINDIR)/veloce-launcher
-	$(BINDIR)/veloce-core install
-	@echo "VeloceCore installed. Run: systemctl enable --now veloce-core"
+sync-windows:
+	git push origin main
+	git subtree push --prefix=Windows windows main
 
-uninstall:
-	-$(BINDIR)/veloce-core uninstall
-	rm -f $(BINDIR)/veloce-core $(BINDIR)/veloce-run
-	rm -f $(BINDIR)/veloce-shell $(BINDIR)/veloce-launcher
+sync-linux:
+	git push origin main
+	git subtree push --prefix=Linux linux main
 
-deb: build
-	cargo deb -p veloce-core
+pull-prod:
+	git -C $(WINDOWS_DIR) pull origin main
+	git -C $(LINUX_DIR)   pull origin main
 
-rpm: build
-	cargo generate-rpm -p crates/veloce-core
+release-windows:
+	@test -n "$(TAG)" || (echo "Usage: make release-windows TAG=vX.Y.Z" && exit 1)
+	git subtree push --prefix=Windows windows main
+	git -C $(WINDOWS_DIR) pull origin main
+	git -C $(WINDOWS_DIR) fetch --tags
+	git tag -a $(TAG) -m "Release $(TAG)" -f
+	git push origin $(TAG) -f
 
-clean:
-	cargo clean
+release-linux:
+	@test -n "$(TAG)" || (echo "Usage: make release-linux TAG=vX.Y.Z" && exit 1)
+	git subtree push --prefix=Linux linux main
+	git -C $(LINUX_DIR) pull origin main
+	git -C $(LINUX_DIR) fetch --tags
+	git tag -a $(TAG) -m "Release $(TAG)" -f
+	git push origin $(TAG) -f

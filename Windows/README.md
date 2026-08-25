@@ -1,4 +1,4 @@
-﻿# veloce-workspace
+# veloce-workspace
 
 [![Windows CI](https://github.com/LeTrollologist/veloce-workspace/actions/workflows/windows.yml/badge.svg)](https://github.com/LeTrollologist/veloce-workspace/actions/workflows/windows.yml)
 [![Linux CI](https://github.com/LeTrollologist/veloce-workspace/actions/workflows/linux.yml/badge.svg)](https://github.com/LeTrollologist/veloce-workspace/actions/workflows/linux.yml)
@@ -197,9 +197,8 @@ veloce-run pack run my-app-1.0.0.vpack --name my-app --port 8080
 
 ```powershell
 cd Windows
-$env:PATH = "C:\Users\Owner\.gemini\tools\mingw64\bin;C:\Users\Owner\.rustup\toolchains\stable-x86_64-pc-windows-gnu\lib\rustlib\x86_64-pc-windows-gnu\bin\self-contained;$env:PATH"
-cargo test --workspace -j 2
-cargo build --workspace --release -j 2
+cargo test --workspace
+cargo build --workspace --release
 ```
 
 ### Building and Testing (Linux)
@@ -215,3 +214,4 @@ cargo build --workspace --release -j 2
 ## 📄 License
 
 Proprietary — © VeloceSolutions. All rights reserved.
+
