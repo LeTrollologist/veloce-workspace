@@ -1,4 +1,4 @@
-﻿/*!
+/*!
 CLI subcommands for "Bridge to Cloud" (Unprivileged Kubernetes Remote Telepresence & Traffic Interceptor) (v4.0).
 */
 
@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
-use veloce_ipc::message::{BridgeConfigMsg, BridgeInterceptRuleMsg, Capability};
+use veloce_ipc::message::{BridgeConfigMsg, BridgeInterceptRuleMsg};
 use veloce_sdk::VeloceClient;
 
 #[derive(Args, Debug)]
@@ -170,7 +170,7 @@ pub async fn run_bridge(client: Arc<Mutex<VeloceClient>>, action: BridgeAction) 
                 .with_context(|| format!("bind bridge agent on 0.0.0.0:{}", listen))?;
 
             loop {
-                let (socket, addr) = match listener.accept().await {
+                let (socket, _addr) = match listener.accept().await {
                     Ok(res) => res,
                     Err(e) => {
                         eprintln!("accept error: {e}");
@@ -180,7 +180,7 @@ pub async fn run_bridge(client: Arc<Mutex<VeloceClient>>, action: BridgeAction) 
 
                 let target_port = target;
                 tokio::spawn(async move {
-                    if let Ok(mut target_stream) = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", target_port)).await {
+                    if let Ok(target_stream) = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", target_port)).await {
                         let (mut client_read, mut client_write) = tokio::io::split(socket);
                         let (mut target_read, mut target_write) = tokio::io::split(target_stream);
 

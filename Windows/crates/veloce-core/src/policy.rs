@@ -104,6 +104,7 @@ pub struct PolicyConfig {
 
 /// OIDC and Corporate SSO Configuration in veloce-policy.toml
 #[derive(Deserialize, Clone, Debug, Default)]
+#[allow(dead_code)]
 pub struct OidcConfig {
     #[serde(default)]
     pub issuer_url: Option<String>,
@@ -117,6 +118,7 @@ pub struct OidcConfig {
 
 /// Role binding connecting corporate groups to allowed hostnames and capabilities.
 #[derive(Deserialize, Clone, Debug, Default)]
+#[allow(dead_code)]
 pub struct RoleBinding {
     pub group: String,
     #[serde(default)]
@@ -298,6 +300,7 @@ impl PolicyEngine {
     }
 
     /// Check whether an authenticated user with `user_groups` is allowed to access `hostname`.
+    #[allow(dead_code)]
     pub fn check_oidc_mesh_acl(&self, user_groups: &[String], hostname: &str) -> bool {
         let cfg = self.config.read();
         let oidc = match &cfg.oidc {
@@ -333,6 +336,7 @@ impl PolicyEngine {
     }
 
     /// Check whether an authenticated user with `user_groups` is allowed a specific capability.
+    #[allow(dead_code)]
     pub fn check_oidc_capability(&self, user_groups: &[String], cap_name: &str) -> bool {
         let cfg = self.config.read();
         let oidc = match &cfg.oidc {

@@ -1,4 +1,4 @@
-﻿/*!
+/*!
 WebAssembly (Wasm/WASI) CLI runtime & inspection (v3.9).
 */
 
@@ -42,6 +42,7 @@ pub struct WasmRunArgs {
     pub extra_env: Vec<String>,
 }
 
+#[allow(dead_code)]
 struct WasmHostState {
     args: Vec<String>,
     env: HashMap<String, String>,

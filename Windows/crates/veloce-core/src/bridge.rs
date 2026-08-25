@@ -1,4 +1,4 @@
-﻿/*!
+/*!
 Cloud Bridge & Kubernetes Telepresence Engine (v4.0).
 
 Allows unprivileged local developers to resolve in-cluster Kubernetes DNS (*.svc.cluster.local),
@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use parking_lot::RwLock;
 use veloce_ipc::message::{BridgeConfigMsg, BridgeInterceptRuleMsg, BridgeSessionInfoMsg};
 
