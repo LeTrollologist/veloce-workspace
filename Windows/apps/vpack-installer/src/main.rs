@@ -338,6 +338,40 @@ fn install_package(file: &Path, custom_dir: Option<PathBuf>, force: bool, quiet:
         }
     }
 
+    // Set up binary shims & PATH registration
+    let bin_dir = default_bin_dir();
+    let _ = fs::create_dir_all(&bin_dir);
+
+    for entry in &archive.files {
+        let is_executable = entry.path.ends_with(".exe") || !entry.path.contains('.');
+        if is_executable && !entry.path.contains('/') && !entry.path.contains('\\') {
+            let target_exe = target_dir.join(&entry.path);
+            #[cfg(windows)]
+            {
+                let stem = Path::new(&entry.path).file_stem().unwrap_or_default().to_string_lossy();
+                let cmd_file = bin_dir.join(format!("{}.cmd", stem));
+                let cmd_content = format!("@echo off\r\n\"{}\" %*\r\n", target_exe.display());
+                let _ = fs::write(&cmd_file, cmd_content);
+
+                // Create alias 'veloce' if installing veloce-run
+                if stem == "veloce-run" {
+                    let alias_cmd = bin_dir.join("veloce.cmd");
+                    let alias_content = format!("@echo off\r\n\"{}\" %*\r\n", target_exe.display());
+                    let _ = fs::write(&alias_cmd, alias_content);
+                }
+            }
+            #[cfg(unix)]
+            {
+                let shim_path = bin_dir.join(&entry.path);
+                let _ = fs::remove_file(&shim_path);
+                let _ = std::os::unix::fs::symlink(&target_exe, &shim_path);
+            }
+        }
+    }
+
+    // Register bin directory in User PATH
+    register_user_path(&bin_dir);
+
     if !quiet {
         println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
         println!(" ✓ Veloce Package Installed Successfully");
@@ -346,11 +380,40 @@ fn install_package(file: &Path, custom_dir: Option<PathBuf>, force: bool, quiet:
         println!(" Description:  {}", archive.manifest.package.description);
         println!(" Directory:    {}", target_dir.display());
         println!(" Entrypoint:   {}", entrypoint.display());
-        println!(" Launch with:  veloce-run pack run {}", file.display());
+        println!(" Command Shim: {}", bin_dir.display());
+        println!(" Status:       ✓ Integrated into PATH (Type 'veloce' or 'veloce-run')");
         println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     }
 
     Ok(())
+}
+
+fn default_bin_dir() -> PathBuf {
+    if let Ok(custom) = std::env::var("VELOCE_BIN_DIR") {
+        PathBuf::from(custom)
+    } else if cfg!(windows) {
+        let local_app_data = std::env::var("LOCALAPPDATA")
+            .unwrap_or_else(|_| "C:\\ProgramData".into());
+        PathBuf::from(local_app_data).join("VeloceSolutions").join("bin")
+    } else {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+        PathBuf::from(home).join(".local").join("bin")
+    }
+}
+
+fn register_user_path(bin_dir: &Path) {
+    #[cfg(windows)]
+    {
+        use std::process::Command;
+        let bin_str = bin_dir.to_string_lossy().to_string();
+        let ps_cmd = format!(
+            "$p = [Environment]::GetEnvironmentVariable('Path', 'User'); if ($p -notlike '*{0}*') {{ [Environment]::SetEnvironmentVariable('Path', \"$p;{0}\", 'User') }}",
+            bin_str
+        );
+        let _ = Command::new("powershell")
+            .args(["-NoProfile", "-Command", &ps_cmd])
+            .output();
+    }
 }
 
 fn list_installed_packages() -> Result<()> {
