@@ -167,23 +167,16 @@ impl VfsEngine {
 
     /// Normalize a virtual path into components (e.g. "/a/b/../c" -> ["a", "c"]).
     pub fn normalize_path(path: &str) -> Vec<String> {
-        let p = Path::new(path);
         let mut comps = Vec::new();
-        for c in p.components() {
-            match c {
-                Component::RootDir => {}
-                Component::CurDir => {}
-                Component::ParentDir => {
+        for seg in path.replace('\\', "/").split('/') {
+            match seg {
+                "" | "." => {}
+                ".." => {
                     comps.pop();
                 }
-                Component::Normal(s) => {
-                    if let Some(st) = s.to_str() {
-                        if !st.is_empty() {
-                            comps.push(st.to_string());
-                        }
-                    }
+                normal => {
+                    comps.push(normal.to_string());
                 }
-                _ => {}
             }
         }
         comps

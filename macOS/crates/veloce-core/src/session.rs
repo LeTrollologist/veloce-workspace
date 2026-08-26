@@ -165,9 +165,10 @@ where
                                         env.body.msg_type()
                                     ));
                                 }
+                                let cid = env.correlation_id;
                                 if let Err(e) = self.handle(env).await {
                                     tracing::warn!("handler error: {e:#}");
-                                    self.send_error(None, ErrorCode::InternalError, e.to_string()).await?;
+                                    self.send_error(Some(cid), ErrorCode::InternalError, e.to_string()).await?;
                                 }
                             }
                             Ok(None)  => break,

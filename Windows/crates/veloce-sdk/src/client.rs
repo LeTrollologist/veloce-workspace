@@ -123,8 +123,14 @@ impl VeloceClient {
     ) -> Result<Self> {
         #[cfg(windows)]
         let (writer, reader): (BoxWriter, BoxReader) = {
-            // Retry loop — Core might not be up yet
-            let pipe = retry_connect(PIPE_NAME, Duration::from_secs(10)).await?;
+            let active_pipe = veloce_ipc::pipe_name();
+            let pipe = if let Ok(p) = retry_connect(&active_pipe, Duration::from_millis(500)).await {
+                p
+            } else if let Ok(p) = retry_connect(PIPE_NAME, Duration::from_millis(500)).await {
+                p
+            } else {
+                retry_connect(&active_pipe, Duration::from_secs(5)).await?
+            };
             let (r, w) = tokio::io::split(pipe);
             (Box::new(w), Box::new(r))
         };
@@ -1182,12 +1188,13 @@ async fn retry_connect(
                 // Pipe exists but no available instances; wait
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
-            Err(e) if e.raw_os_error() == Some(2 /* ERROR_FILE_NOT_FOUND */) => {
-                // Core not up yet
+            Err(e) if e.raw_os_error() == Some(2 /* ERROR_FILE_NOT_FOUND */)
+                   || e.raw_os_error() == Some(5 /* ERROR_ACCESS_DENIED */) => {
+                // Core not up yet or pipe being created
                 if tokio::time::Instant::now() >= deadline {
-                    bail!("VeloceCore pipe not found after {}s — is the service running?", timeout.as_secs());
+                    bail!("VeloceCore pipe not ready after {}s — is the service running?", timeout.as_secs());
                 }
-                tokio::time::sleep(Duration::from_millis(250)).await;
+                tokio::time::sleep(Duration::from_millis(150)).await;
             }
             Err(e) => return Err(e).context("open named pipe"),
         }

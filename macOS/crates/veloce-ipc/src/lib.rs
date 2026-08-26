@@ -50,6 +50,24 @@ pub const PIPE_NAME: &str = r"\\.\pipe\VeloceCore";
 /// Named pipe used for VeloceNet control messages (Windows).
 pub const PIPE_NET: &str = r"\\.\pipe\VeloceNet";
 
+/// Returns the active Named Pipe name for VeloceCore on Windows.
+/// Dynamically scopes to the current user (e.g. `\\.\pipe\VeloceCore-<USER>`) to avoid
+/// Session 0 / Windows service conflicts, with fallback to global `PIPE_NAME`.
+#[cfg(windows)]
+pub fn pipe_name() -> String {
+    if let Ok(p) = std::env::var("VELOCE_PIPE_NAME") {
+        if !p.is_empty() {
+            return p;
+        }
+    }
+    let username = std::env::var("USERNAME").unwrap_or_default();
+    if !username.is_empty() {
+        format!(r"\\.\pipe\VeloceCore-{}", username)
+    } else {
+        PIPE_NAME.to_string()
+    }
+}
+
 // ── SOCKET / ENDPOINT PATHS (Linux / Unix) ───────────────────────────────────
 
 /// Unix domain socket used by clients to reach VeloceCore (privileged daemon).

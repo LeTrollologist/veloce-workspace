@@ -123,7 +123,7 @@ fn main() -> anyhow::Result<()> {
         "run" => {
             println!("========================================================");
             println!(" VeloceCore v{} (Foreground Console Mode)", env!("CARGO_PKG_VERSION"));
-            println!(" IPC Pipe: \\\\.\\pipe\\VeloceCore");
+            println!(" IPC Pipe: {}", veloce_ipc::pipe_name());
             println!(" Portal:   http://localhost:9090");
             println!(" Metrics:  http://localhost:9090/metrics");
             println!(" SOCKS5:   127.0.0.1:1055");
@@ -186,7 +186,7 @@ fn main() -> anyhow::Result<()> {
                 tracing::info!("Not running under SCM ({e}); starting VeloceCore in foreground console mode...");
                 println!("========================================================");
                 println!(" VeloceCore v{} (Interactive Console Mode)", env!("CARGO_PKG_VERSION"));
-                println!(" IPC Pipe: \\\\.\\pipe\\VeloceCore");
+                println!(" IPC Pipe: {}", veloce_ipc::pipe_name());
                 println!(" Portal:   http://localhost:9090");
                 println!(" Metrics:  http://localhost:9090/metrics");
                 println!(" SOCKS5:   127.0.0.1:1055");

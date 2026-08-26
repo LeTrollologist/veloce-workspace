@@ -29,7 +29,8 @@ pub async fn run(state: Arc<CoreState>) -> Result<()> {
         .context("resolve server user SID")?;
     tracing::debug!("pipe ACL: accepting connections from SID {server_sid}");
 
-    tracing::info!("IPC server listening on {PIPE_NAME}");
+    let active_pipe = veloce_ipc::pipe_name();
+    tracing::info!("IPC server listening on {active_pipe}");
 
     loop {
         if state.is_shutting_down() { break; }
@@ -37,7 +38,7 @@ pub async fn run(state: Arc<CoreState>) -> Result<()> {
         // Create a new pipe instance waiting for the next client
         let pipe = ServerOptions::new()
             .first_pipe_instance(false)
-            .create(PIPE_NAME)
+            .create(&active_pipe)
             .context("create named pipe instance")?;
 
         // Wait for a client to connect
