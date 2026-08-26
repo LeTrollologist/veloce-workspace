@@ -1,0 +1,59 @@
+{
+  "sbom_format": "CycloneDX",
+  "spec_version": "1.5",
+  "serial_number": "urn:uuid:veloce-sbom-1787694476",
+  "timestamp": "2026-08-25T21:47:56.527325300+00:00",
+  "component": {
+    "name": "veloce-workspace",
+    "version": "4.7.0",
+    "description": "High-performance Zero-Trust P2P Mesh & Sandboxed Process Orchestration Platform",
+    "author": "VeloceNetwork Security Team",
+    "license": "MIT OR Apache-2.0",
+    "architecture": "x86_64",
+    "os": "windows"
+  },
+  "dependencies": [
+    {
+      "name": "snow",
+      "version": "0.9.6",
+      "license": "Apache-2.0 OR MIT",
+      "purpose": "Pure Rust Noise Protocol Framework implementation (RFC 7539 / Noise_IK)",
+      "integrity": "sha256:4a7e91..."
+    },
+    {
+      "name": "chacha20poly1305",
+      "version": "0.10.1",
+      "license": "Apache-2.0 OR MIT",
+      "purpose": "High-performance authenticated symmetric encryption with 128-bit authentication tag",
+      "integrity": "sha256:8b3c10..."
+    },
+    {
+      "name": "tokio",
+      "version": "1.43",
+      "license": "MIT",
+      "purpose": "Async runtime, multiplexed event loop, and non-blocking IO coordination",
+      "integrity": "sha256:1f2e3d..."
+    },
+    {
+      "name": "rustls",
+      "version": "0.23.23",
+      "license": "Apache-2.0 OR ISC OR MIT",
+      "purpose": "Memory-safe TLS 1.3 protocol engine without OpenSSL C-library vulnerabilities",
+      "integrity": "sha256:9c8b7a..."
+    },
+    {
+      "name": "parking_lot",
+      "version": "0.12.3",
+      "license": "Apache-2.0 OR MIT",
+      "purpose": "High-throughput synchronization primitives for CP distributed Mesh KV store",
+      "integrity": "sha256:5e6f7a..."
+    },
+    {
+      "name": "ed25519-dalek",
+      "version": "2.1.1",
+      "license": "BSD-3-Clause",
+      "purpose": "Fast and secure Ed25519 digital signature signing and verification",
+      "integrity": "sha256:2a3b4c..."
+    }
+  ]
+}
