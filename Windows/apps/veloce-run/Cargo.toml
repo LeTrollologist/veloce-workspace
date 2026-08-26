@@ -25,6 +25,8 @@ serde_json  = { workspace = true }
 chrono      = { workspace = true }
 toml        = "0.8"
 bincode     = { workspace = true }
+flate2      = { workspace = true }
+crc32fast   = { workspace = true }
 rand        = "0.8"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 urlencoding = "2.1"

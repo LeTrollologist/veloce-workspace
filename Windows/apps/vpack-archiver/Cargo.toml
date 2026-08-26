@@ -1,0 +1,25 @@
+﻿[package]
+name        = "vpack-archiver"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "VeloceRAR / VPack-Archiver - High performance archive manager and explorer for .vpack packages"
+
+[[bin]]
+name = "vpack-archiver"
+path = "src/main.rs"
+
+[dependencies]
+tokio       = { workspace = true }
+anyhow      = { workspace = true }
+clap        = { workspace = true }
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+toml        = "0.8"
+bincode     = { workspace = true }
+flate2      = { workspace = true }
+crc32fast   = { workspace = true }
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+rand        = "0.8"
+chrono      = { workspace = true }
