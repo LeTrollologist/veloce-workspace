@@ -1,6 +1,7 @@
-﻿/*!
+/*!
 RFC 8032 Ed25519 Cryptographic Verifier & Digital Signature Tools.
 */
+#![allow(dead_code)]
 
 use anyhow::Result;
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};

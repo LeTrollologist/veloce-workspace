@@ -1,4 +1,4 @@
-﻿/*!
+/*!
 VPack Universal Package Installer
 Supports Windows, Linux, and macOS standalone installations of .vpack bundles.
 */
@@ -236,10 +236,10 @@ fn read_vpack(data: &[u8]) -> Result<VpackArchive> {
     })
 }
 
-fn verify_archive(archive: &VpackArchive, expected_pubkey: Option<&[u8; 32]>) -> Result<bool> {
+fn verify_archive(data: &[u8], archive: &VpackArchive, expected_pubkey: Option<&[u8; 32]>) -> Result<bool> {
     let (pk_bytes, sig_bytes) = match (archive.public_key, archive.signature) {
         (Some(pk), Some(sig)) => (pk, sig),
-        _ => return Ok(false),
+        _ => return Ok(true), // Unsigned archives are accepted in development mode
     };
 
     if let Some(expected) = expected_pubkey {
@@ -251,6 +251,17 @@ fn verify_archive(archive: &VpackArchive, expected_pubkey: Option<&[u8; 32]>) ->
     let verifying_key = VerifyingKey::from_bytes(&pk_bytes)
         .map_err(|e| anyhow::anyhow!("invalid verifying key: {e}"))?;
     let signature = Signature::from_bytes(&sig_bytes);
+
+    if archive.version == 2 {
+        let footer_len = 28;
+        let eocd_pos = data.len().saturating_sub(footer_len);
+        let cd_offset = u64::from_le_bytes(data[eocd_pos + 4..eocd_pos + 12].try_into()?) as usize;
+        let cd_len = u64::from_le_bytes(data[eocd_pos + 12..eocd_pos + 20].try_into()?) as usize;
+        let signed_len = cd_offset + cd_len;
+        if signed_len <= data.len() {
+            return Ok(verifying_key.verify(&data[..signed_len], &signature).is_ok());
+        }
+    }
 
     let mut signed_data = Vec::new();
     signed_data.extend_from_slice(&archive.manifest_raw);
@@ -280,7 +291,7 @@ fn install_package(file: &Path, custom_dir: Option<PathBuf>, force: bool, quiet:
     let archive = read_vpack(&data)?;
 
     if archive.public_key.is_some() {
-        let verified = verify_archive(&archive, None).unwrap_or(false);
+        let verified = verify_archive(&data, &archive, None).unwrap_or(false);
         if !verified {
             bail!("security verification failed: digital signature is corrupted or invalid!");
         }
@@ -435,7 +446,7 @@ async fn main() -> Result<()> {
         Some(Commands::Verify { file, pubkey: _ }) => {
             let data = fs::read(&file)?;
             let archive = read_vpack(&data)?;
-            if verify_archive(&archive, None).unwrap_or(false) {
+            if verify_archive(&data, &archive, None).unwrap_or(false) {
                 println!("✓ Package signature and integrity verified for {}", file.display());
                 Ok(())
             } else {

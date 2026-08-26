@@ -1,31 +1,51 @@
 ﻿/*!
-WinRAR-style Terminal User Interface and Explorer for .vpack archives.
+WinRAR & 7-Zip Style Visual Console Explorer for VPack Archives
 */
+#![allow(dead_code)]
 
-use crate::archive::{VpackArchive, METHOD_DEFLATE};
+use chrono::{Local, TimeZone};
+use crate::archive::{VpackArchive, FLAG_ENCRYPTED, FLAG_SIGNED};
 
-pub fn render_archive_ui(archive: &VpackArchive) {
-    println!("┌───────────────────────────────────────────────────────────────────────────────────┐");
-    println!("│ 🗁 VPack Archiver (WinRAR for .vpack) - v4.7.0                                    │");
-    println!("├───────────────────────────────────────────────────────────────────────────────────┤");
-    println!("│ [A]dd  [E]xtract  [T]est  [V]iew  [I]nfo  [B]enchmark  [S]ign  [Q]uit             │");
-    println!("├───────────────────────────────────────────────────────────────────────────────────┤");
-    println!("│ Name:        {:<68} │", archive.manifest.package.name);
-    println!("│ Version:     {:<68} │", archive.manifest.package.version);
-    println!("│ Description: {:<68} │", archive.manifest.package.description);
-    println!("│ Entrypoint:  {:<68} │", archive.manifest.runtime.entrypoint);
-    println!("├───────────────────────────────────────────────────────────────────────────────────┤");
-    println!("│ {:<4} {:<34} {:>10} {:>10} {:>6} {:>8} {:>8} │",
-        "Attr", "File Name", "Size", "Packed", "Ratio", "CRC-32", "Method");
-    println!("├───────────────────────────────────────────────────────────────────────────────────┤");
+pub fn render_archive_ui(archive: &VpackArchive, archive_path_display: &str) {
+    let term_width = 85;
+    let sep = "─".repeat(term_width);
+    let double_sep = "═".repeat(term_width);
+
+    println!("╔{}╗", double_sep);
+    println!("║ {:<85} ║", format!("🗁 VPack Archiver (WinRAR Edition) - {}", archive_path_display));
+    println!("╠{}╣", sep);
+    println!("║ [A]dd  [X]Extract  [E]xtract-Single  [T]est  [V]iew  [I]nfo  [B]enchmark  [Q]uit ║");
+    println!("╠{}╣", sep);
+
+    let mut total_orig = 0u64;
+    let mut total_packed = 0u64;
+    let mut dir_count = 0;
+    let mut file_count = 0;
+
+    println!("║ {:<4} {:<32} {:>10} {:>10} {:>6} {:>8} {:<10} ║",
+        "Attr", "Name", "Original", "Packed", "Ratio", "CRC-32", "Date Time");
+    println!("╠{}╣", sep);
 
     for entry in &archive.central_directory {
-        let icon = if entry.path.ends_with(".exe") || entry.path.ends_with(".dll") || entry.path.ends_with(".so") {
-            "🗎"
-        } else if entry.path.ends_with(".toml") || entry.path.ends_with(".json") || entry.path.ends_with(".txt") {
-            "🖹"
+        let is_dir = entry.is_dir;
+        let icon = if is_dir {
+            dir_count += 1;
+            "📁"
         } else {
-            "📄"
+            file_count += 1;
+            total_orig += entry.uncompressed_size;
+            total_packed += entry.compressed_size;
+            if entry.path.ends_with(".exe") || entry.path.ends_with(".dll") || entry.path.ends_with(".bin") {
+                "⚙ "
+            } else if entry.path.ends_with(".rs") || entry.path.ends_with(".py") || entry.path.ends_with(".c") || entry.path.ends_with(".js") {
+                "🖹 "
+            } else if entry.path.ends_with(".zip") || entry.path.ends_with(".tar") || entry.path.ends_with(".vpack") {
+                "🗀 "
+            } else if entry.path.ends_with(".png") || entry.path.ends_with(".jpg") || entry.path.ends_with(".svg") {
+                "🖼 "
+            } else {
+                "📄"
+            }
         };
 
         let ratio = if entry.uncompressed_size > 0 {
@@ -34,44 +54,55 @@ pub fn render_archive_ui(archive: &VpackArchive) {
             0.0
         };
 
-        let method_str = if entry.method == METHOD_DEFLATE { "Deflate" } else { "Store" };
+        let dt_str = if entry.modified_timestamp > 0 {
+            if let Some(dt) = Local.timestamp_opt(entry.modified_timestamp, 0).single() {
+                dt.format("%Y-%m-%d %H:%M").to_string()
+            } else {
+                "----/--/-- --:--".into()
+            }
+        } else {
+            "----/--/-- --:--".into()
+        };
 
-        let display_name = if entry.path.len() > 34 {
-            format!("{}...", &entry.path[..31])
+        let name_display = if entry.path.len() > 32 {
+            format!("{}...", &entry.path[..29])
         } else {
             entry.path.clone()
         };
 
-        println!("│ {:<4} {:<34} {:>10} {:>10} {:>5.0}% {:08X} {:>8} │",
-            icon,
-            display_name,
-            entry.uncompressed_size,
-            entry.compressed_size,
-            ratio.max(0.0),
-            entry.crc32,
-            method_str
-        );
+        if is_dir {
+            println!("║ {:<4} {:<32} {:>10} {:>10} {:>6} {:>8} {:<10} ║",
+                icon, name_display, "<DIR>", "-", "-", "-", dt_str);
+        } else {
+            println!("║ {:<4} {:<32} {:>10} {:>10} {:>5.0}% {:08X} {:<10} ║",
+                icon, name_display, entry.uncompressed_size, entry.compressed_size, ratio.max(0.0), entry.crc32, dt_str);
+        }
     }
 
-    println!("├───────────────────────────────────────────────────────────────────────────────────┤");
-    let total_ratio = if archive.uncompressed_size > 0 {
-        (1.0 - (archive.compressed_size as f64 / archive.uncompressed_size as f64)) * 100.0
+    println!("╠{}╣", sep);
+    let total_savings = if total_orig > 0 {
+        (1.0 - (total_packed as f64 / total_orig as f64)) * 100.0
     } else {
         0.0
     };
 
-    println!("│ Total: {:>2} files | Unpacked: {:>6.2} MB | Packed: {:>6.2} MB | Savings: {:>4.1}%       │",
-        archive.central_directory.len(),
-        archive.uncompressed_size as f64 / (1024.0 * 1024.0),
-        archive.compressed_size as f64 / (1024.0 * 1024.0),
-        total_ratio.max(0.0)
+    println!("║ Total: {} files, {} folders | Orig: {:>6.2} MB | Packed: {:>6.2} MB | Ratio: {:>4.1}% ║",
+        file_count,
+        dir_count,
+        total_orig as f64 / (1024.0 * 1024.0),
+        total_packed as f64 / (1024.0 * 1024.0),
+        total_savings.max(0.0)
     );
 
-    if let Some(pk) = archive.public_key {
-        let pk_hex = pk.iter().map(|b| format!("{:02x}", b)).collect::<String>();
-        println!("│ Status: ✓ Authenticated Publisher (Ed25519: {}...{})                │", &pk_hex[..8], &pk_hex[56..]);
+    let status_sec = if (archive.flags & FLAG_ENCRYPTED) != 0 {
+        "🔒 Encrypted (AES/Stream)"
+    } else if (archive.flags & FLAG_SIGNED) != 0 {
+        "✓ Digitally Signed (Ed25519)"
     } else {
-        println!("│ Status: ⚠ Development Build (Unsigned)                                            │");
-    }
-    println!("└───────────────────────────────────────────────────────────────────────────────────┘");
+        "Standard VPack Archive"
+    };
+
+    println!("║ Format: VPK2 (Central Directory at EOF) | Security: {:<40} ║", status_sec);
+    println!("╚{}╝", double_sep);
 }
+

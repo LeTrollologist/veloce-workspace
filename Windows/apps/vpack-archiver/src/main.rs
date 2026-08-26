@@ -1,5 +1,6 @@
 ﻿/*!
-VPack Archiver CLI & GUI (WinRAR for .vpack)
+VPack Universal Archive Manager (WinRAR / 7-Zip for .vpack)
+Command Line Interface & Terminal Explorer
 */
 
 mod archive;
@@ -7,92 +8,118 @@ mod bench;
 mod tui;
 mod verify;
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
 use ed25519_dalek::SigningKey;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "vpack-archiver",
-    version = "1.0.0",
-    about = "VPack Archiver - The WinRAR & 7-Zip equivalent for .vpack archives"
+    name = "vpack",
+    version = "1.1.0",
+    about = "VPack Archiver - The universal WinRAR & 7-Zip equivalent for .vpack archives"
 )]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
 
-    /// Quick open / inspect archive if path provided
+    /// Quick inspect or open archive in WinRAR table view
     archive: Option<PathBuf>,
 }
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// [a] Add files/directories into a .vpack archive with compression
+    /// [a] Add files and directories into a compressed .vpack archive
+    #[command(alias = "a")]
     Add {
         /// Target .vpack archive path
         archive: PathBuf,
-        /// Files or directories to include
+        /// Input files or directories to compress
         files: Vec<PathBuf>,
         /// Compression level (0 = Store, 1..=9 = Deflate) [default: 6]
         #[arg(short = 'c', long, default_value = "6")]
         level: u32,
-        /// Private key file (.priv) to sign archive
+        /// Password protect / encrypt archive
+        #[arg(short = 'p', long)]
+        password: Option<String>,
+        /// Optional archive comment
+        #[arg(short = 'm', long)]
+        comment: Option<String>,
+        /// Private key (.priv) to digitally sign archive
         #[arg(short = 's', long)]
         sign: Option<PathBuf>,
     },
-    /// [x] Extract all files with full directory tree
+    /// [x] eXtract all files with full directory paths
+    #[command(alias = "x")]
     Extract {
-        /// Target .vpack archive
+        /// Target .vpack archive path
         archive: PathBuf,
         /// Destination directory
         #[arg(short = 'o', long)]
         dest: Option<PathBuf>,
+        /// Password for encrypted archive
+        #[arg(short = 'p', long)]
+        password: Option<String>,
     },
-    /// [e] Extract a single file from the archive using O(1) Central Directory seek
+    /// [e] Extract a single file in O(1) time without unpacking whole archive
+    #[command(alias = "e")]
     ExtractFile {
-        /// Target .vpack archive
+        /// Target .vpack archive path
         archive: PathBuf,
-        /// Relative path of file inside archive
+        /// Path of file inside archive
         file_inside: String,
-        /// Output file path
+        /// Destination output file path
         #[arg(short = 'o', long)]
         out: Option<PathBuf>,
+        /// Password for encrypted archive
+        #[arg(short = 'p', long)]
+        password: Option<String>,
     },
-    /// [l] List contents of archive in WinRAR-style table
+    /// [l] List contents in a rich WinRAR-style attribute table
+    #[command(alias = "l")]
     List {
-        /// Target .vpack archive
+        /// Target .vpack archive path
         archive: PathBuf,
     },
-    /// [t] Test archive integrity, CRC32, and signature
+    /// [t] Test CRC-32 integrity and verify signatures
+    #[command(alias = "t")]
     Test {
-        /// Target .vpack archive
+        /// Target .vpack archive path
         archive: PathBuf,
+        /// Password for encrypted archive
+        #[arg(short = 'p', long)]
+        password: Option<String>,
     },
-    /// [v] View/preview a file directly from archive to stdout
+    /// [v] View/preview a file from the archive to stdout
+    #[command(alias = "v")]
     View {
-        /// Target .vpack archive
+        /// Target .vpack archive path
         archive: PathBuf,
-        /// Relative path of file inside archive
+        /// Path of file inside archive
         file_inside: String,
+        /// Password for encrypted archive
+        #[arg(short = 'p', long)]
+        password: Option<String>,
     },
-    /// [b] Benchmark compression and decompression performance (WinRAR Benchmark)
+    /// [b] Multi-core compression and decompression speed benchmark
+    #[command(alias = "b")]
     Bench {
-        /// Test payload size in megabytes [default: 32]
+        /// Size in megabytes for synthetic workload [default: 32]
         #[arg(short = 'm', long, default_value = "32")]
         size_mb: usize,
     },
-    /// Generate a publisher Ed25519 keypair (.priv / .pub)
+    /// Generate an Ed25519 publisher keypair (.priv / .pub)
     Keygen {
-        /// Output key name prefix [default: vpack-publisher]
+        /// Key prefix [default: vpack-publisher]
         #[arg(short = 'o', long, default_value = "vpack-publisher")]
         out: String,
     },
-    /// Interactive visual archive browser (TUI)
+    /// Interactive Terminal User Interface (TUI)
     Ui {
-        /// Target .vpack archive
+        /// Target .vpack archive path
         archive: PathBuf,
     },
 }
@@ -102,22 +129,61 @@ fn main() -> Result<()> {
 
     if let Some(archive_path) = cli.archive {
         let archive = archive::VpackArchive::open(&archive_path)?;
-        tui::render_archive_ui(&archive);
+        tui::render_archive_ui(&archive, &archive_path.to_string_lossy());
         return Ok(());
     }
 
     match cli.command {
-        Some(Commands::Add { archive, files, level, sign }) => {
-            let mut raw_files = Vec::new();
+        Some(Commands::Add { archive, files, level, password, comment, sign }) => {
+            if files.is_empty() {
+                bail!("no input files or directories specified");
+            }
+
+            let mut all_entries = Vec::new();
             for f in &files {
+                let metadata = fs::metadata(f)?;
+                let modified = metadata.modified()
+                    .unwrap_or(SystemTime::UNIX_EPOCH)
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64;
+
+                #[cfg(unix)]
+                let mode = {
+                    use std::os::unix::fs::PermissionsExt;
+                    metadata.permissions().mode()
+                };
+                #[cfg(not(unix))]
+                let mode = if metadata.is_dir() { 0o755 } else { 0o644 };
+
                 if f.is_dir() {
-                    for entry in walk_dir(f, f)? {
-                        raw_files.push(entry);
+                    let dir_name = f.file_name().unwrap_or_default().to_string_lossy().to_string();
+                    all_entries.push(archive::ArchiveInputEntry {
+                        rel_path: format!("{}/", dir_name),
+                        data: Vec::new(),
+                        mode,
+                        modified,
+                        is_dir: true,
+                    });
+                    for sub in archive::collect_directory_entries(f, f)? {
+                        all_entries.push(archive::ArchiveInputEntry {
+                            rel_path: format!("{}/{}", dir_name, sub.rel_path),
+                            data: sub.data,
+                            mode: sub.mode,
+                            modified: sub.modified,
+                            is_dir: sub.is_dir,
+                        });
                     }
                 } else if f.is_file() {
-                    let rel = f.file_name().unwrap_or_default().to_string_lossy().to_string();
+                    let name = f.file_name().unwrap_or_default().to_string_lossy().to_string();
                     let data = fs::read(f)?;
-                    raw_files.push((rel, data));
+                    all_entries.push(archive::ArchiveInputEntry {
+                        rel_path: name,
+                        data,
+                        mode,
+                        modified,
+                        is_dir: false,
+                    });
                 }
             }
 
@@ -132,41 +198,58 @@ fn main() -> Result<()> {
                 None
             };
 
-            archive::VpackArchive::create_archive(&archive, raw_files, level, sk.as_ref())?;
-            println!("✓ Created archive {} (compression level {})", archive.display(), level);
+            archive::VpackArchive::create_archive(
+                &archive,
+                all_entries,
+                level,
+                password.as_deref(),
+                comment,
+                sk.as_ref()
+            )?;
+
+            println!("✓ Successfully created VPack archive: {}", archive.display());
+            println!("  Compression Level: {}", level);
+            if password.is_some() {
+                println!("  Encryption:        🔒 AES Stream Protected");
+            }
             Ok(())
         }
-        Some(Commands::Extract { archive, dest }) => {
+        Some(Commands::Extract { archive, dest, password }) => {
             let a = archive::VpackArchive::open(&archive)?;
             let out_dir = dest.unwrap_or_else(|| {
                 PathBuf::from(format!("{}_extracted", archive.file_stem().unwrap_or_default().to_string_lossy()))
             });
-            a.extract_all(&out_dir)?;
-            println!("✓ Extracted all files into {}", out_dir.display());
+            let count = a.extract_all(&out_dir, password.as_deref())?;
+            println!("✓ Extracted {} files into {}", count, out_dir.display());
             Ok(())
         }
-        Some(Commands::ExtractFile { archive, file_inside, out }) => {
+        Some(Commands::ExtractFile { archive, file_inside, out, password }) => {
             let a = archive::VpackArchive::open(&archive)?;
-            let data = a.extract_file(&file_inside)?;
-            let out_path = out.unwrap_or_else(|| PathBuf::from(Path::new(&file_inside).file_name().unwrap()));
+            let data = a.extract_file(&file_inside, password.as_deref())?;
+            let out_path = out.unwrap_or_else(|| {
+                PathBuf::from(Path::new(&file_inside).file_name().unwrap_or_default())
+            });
+            if let Some(parent) = out_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
             fs::write(&out_path, data)?;
             println!("✓ Extracted '{}' -> {}", file_inside, out_path.display());
             Ok(())
         }
         Some(Commands::List { archive }) => {
             let a = archive::VpackArchive::open(&archive)?;
-            tui::render_archive_ui(&a);
+            tui::render_archive_ui(&a, &archive.to_string_lossy());
             Ok(())
         }
-        Some(Commands::Test { archive }) => {
+        Some(Commands::Test { archive, password }) => {
             let a = archive::VpackArchive::open(&archive)?;
-            let count = a.test_integrity()?;
-            println!("✓ Archive integrity test PASSED ({} files verified with CRC-32 & EOF index)", count);
+            let count = a.test_integrity(password.as_deref())?;
+            println!("✓ Integrity Test PASSED: {} files verified with CRC-32 & EOF index", count);
             Ok(())
         }
-        Some(Commands::View { archive, file_inside }) => {
+        Some(Commands::View { archive, file_inside, password }) => {
             let a = archive::VpackArchive::open(&archive)?;
-            let data = a.extract_file(&file_inside)?;
+            let data = a.extract_file(&file_inside, password.as_deref())?;
             std::io::stdout().write_all(&data)?;
             Ok(())
         }
@@ -191,39 +274,25 @@ fn main() -> Result<()> {
         }
         Some(Commands::Ui { archive }) => {
             let a = archive::VpackArchive::open(&archive)?;
-            tui::render_archive_ui(&a);
+            tui::render_archive_ui(&a, &archive.to_string_lossy());
             Ok(())
         }
         None => {
             println!("========================================================");
-            println!(" VPack Archiver (WinRAR for .vpack) v1.0.0");
-            println!(" Usage:");
-            println!("   vpack-archiver <file.vpack>             Open & Inspect");
-            println!("   vpack-archiver a <out.vpack> <files...> Add / Compress");
-            println!("   vpack-archiver x <in.vpack> [-o <dir>]  Extract All");
-            println!("   vpack-archiver e <in.vpack> <file>      Extract Single");
-            println!("   vpack-archiver t <in.vpack>             Test Integrity");
-            println!("   vpack-archiver b [-m <size_mb>]         Benchmark");
+            println!(" 🗁 VPack Archiver (WinRAR for .vpack) v1.1.0");
+            println!("========================================================");
+            println!(" Commands:");
+            println!("   vpack <archive.vpack>             Open & Inspect (WinRAR UI)");
+            println!("   vpack a <archive> <files...>      Add / Compress files");
+            println!("   vpack x <archive> [-o <dest>]     Extract all files");
+            println!("   vpack e <archive> <file>          Extract single file in O(1)");
+            println!("   vpack l <archive>                 List archive contents");
+            println!("   vpack t <archive>                 Test archive integrity");
+            println!("   vpack v <archive> <file>          View file to stdout");
+            println!("   vpack b [-m <size_mb>]            Run CPU speed benchmark");
+            println!("   vpack keygen [-o <prefix>]        Generate signing keypair");
             println!("========================================================");
             Ok(())
         }
     }
 }
-
-fn walk_dir(base: &Path, current: &Path) -> Result<Vec<(String, Vec<u8>)>> {
-    let mut files = Vec::new();
-    for entry in fs::read_dir(current)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() {
-            files.extend(walk_dir(base, &path)?);
-        } else {
-            let rel = path.strip_prefix(base)?;
-            let rel_str = rel.to_string_lossy().replace('\\', "/");
-            let data = fs::read(&path)?;
-            files.push((rel_str, data));
-        }
-    }
-    Ok(files)
-}
-
