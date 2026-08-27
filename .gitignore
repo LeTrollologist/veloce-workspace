@@ -21,3 +21,9 @@ target/
 veloce-*.zip
 veloce-*.tar.gz
 veloce-*.vpack
+
+# Pipeline: staged binaries per release (dist/v*/archives tracked; binaries are not)
+dist/v*/windows/
+dist/v*/linux/
+dist/v*/staging/
+dist/v*/release_body.md
