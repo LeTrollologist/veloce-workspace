@@ -316,44 +316,118 @@ def publish(tag: str, assets: list[Path], notes_path: Path, dry_run: bool):
 # ── release notes template ────────────────────────────────────────────────────
 
 def write_release_notes(tag: str, out_dir: Path) -> Path:
-    ver = tag.lstrip("v")
-    notes = f"""# VeloceNetwork {tag}
+    ver = tag.lstrip("v")  # noqa: F841  (kept for future use in highlights)
 
-> Review this draft and fill in the highlights before publishing.
+    # Note: this is a Python f-string; literal braces in bash snippets are doubled.
+    notes = (
+        f"# VeloceNetwork {tag}\n"
+        "\n"
+        "> Review this draft and fill in the highlights before publishing.\n"
+        "\n"
+        "---\n"
+        "\n"
+        "### Platform Release Packages\n"
+        "\n"
+        "| Platform | Archive | VPack |\n"
+        "| :--- | :--- | :--- |\n"
+        f"| **Windows** x86\_64 | `veloce-windows-{tag}-x86_64.zip` | `veloce-runtime-{tag}-windows-x86_64.vpack` |\n"
+        f"| **Linux** x86\_64   | `veloce-linux-{tag}-x86_64.tar.gz` | `veloce-runtime-{tag}-linux-x86_64.vpack` |\n"
+        f"| **macOS** universal | `veloce-macos-{tag}-universal.tar.gz` | `veloce-runtime-{tag}-macos-universal.vpack` |\n"
+        "\n"
+        "---\n"
+        "\n"
+        "### Installation\n"
+        "\n"
+        "#### Option A — VPack Archiver (recommended)\n"
+        "\n"
+        "The `.vpack` packages are installed using"
+        " [VPack Archiver](https://github.com/LeTrollologist/vpack-archiver)"
+        " — an ultra-fast O(1)-seek archive tool with built-in CRC-32 integrity"
+        " and Ed25519 signature verification.\n"
+        "\n"
+        "**1. Download VPack Archiver**\n"
+        "\n"
+        "| Platform | Download |\n"
+        "| :--- | :--- |\n"
+        "| Windows | [`vpack-archiver-v1.1.0-windows-x86_64.zip`](https://github.com/LeTrollologist/vpack-archiver/releases/download/v1.1.0/vpack-archiver-v1.1.0-windows-x86_64.zip) |\n"
+        "\n"
+        "Unzip and add `vpack-archiver.exe` (Windows) or `vpack-archiver` (Linux/macOS) to your `PATH`.\n"
+        "\n"
+        "**2. Verify the runtime package integrity**\n"
+        "\n"
+        "```bash\n"
+        f"# Checks CRC-32 of every entry and the Ed25519 publisher signature\n"
+        f"vpack t veloce-runtime-{tag}-windows-x86_64.vpack   # Windows\n"
+        f"vpack t veloce-runtime-{tag}-linux-x86_64.vpack     # Linux\n"
+        f"vpack t veloce-runtime-{tag}-macos-universal.vpack  # macOS\n"
+        "```\n"
+        "\n"
+        "> Tip: preview contents before extracting: `vpack l veloce-runtime-" + tag + "-windows-x86_64.vpack`\n"
+        "\n"
+        "**3. Extract the runtime**\n"
+        "\n"
+        "```powershell\n"
+        "# Windows (PowerShell)\n"
+        f"vpack x veloce-runtime-{tag}-windows-x86_64.vpack -o $env:LOCALAPPDATA\\Veloce\n"
+        "```\n"
+        "\n"
+        "```bash\n"
+        "# Linux\n"
+        f"vpack x veloce-runtime-{tag}-linux-x86_64.vpack -o ~/.local/veloce\n"
+        "\n"
+        "# macOS\n"
+        f"vpack x veloce-runtime-{tag}-macos-universal.vpack -o ~/.local/veloce\n"
+        "```\n"
+        "\n"
+        "**4. Add to PATH and verify**\n"
+        "\n"
+        "```powershell\n"
+        "# Windows — add to user PATH (one-time)\n"
+        "[Environment]::SetEnvironmentVariable(\"PATH\", \"$env:LOCALAPPDATA\\Veloce;\" + $env:PATH, \"User\")\n"
+        "```\n"
+        "\n"
+        "```bash\n"
+        "# Linux / macOS — add to shell profile\n"
+        "echo 'export PATH=\"$HOME/.local/veloce:$PATH\"' >> ~/.bashrc   # or ~/.zshrc\n"
+        "source ~/.bashrc\n"
+        "```\n"
+        "\n"
+        "```bash\n"
+        "# Verify the installation\n"
+        "veloce os status\n"
+        "```\n"
+        "\n"
+        "---\n"
+        "\n"
+        "#### Option B — Manual archive extraction\n"
+        "\n"
+        "```powershell\n"
+        "# Windows\n"
+        f"Expand-Archive veloce-windows-{tag}-x86_64.zip -DestinationPath .\\veloce\n"
+        "```\n"
+        "\n"
+        "```bash\n"
+        "# Linux\n"
+        f"mkdir -p ~/.local/veloce && tar -xzf veloce-linux-{tag}-x86_64.tar.gz -C ~/.local/veloce\n"
+        "\n"
+        "# macOS\n"
+        f"mkdir -p ~/.local/veloce && tar -xzf veloce-macos-{tag}-universal.tar.gz -C ~/.local/veloce\n"
+        "```\n"
+        "\n"
+        "---\n"
+        "\n"
+        "### Cryptographic Checksums (SHA-256)\n"
+        "\n"
+        "```bash\n"
+        "sha256sum -c SHA256SUMS.txt          # Linux / macOS\n"
+        "Get-FileHash * | Format-Table -Auto  # Windows PowerShell\n"
+        "```\n"
+        "\n"
+        "```\n"
+        "# See SHA256SUMS.txt attached to this release\n"
+        "```\n"
+    )
 
----
-
-### Platform Release Packages
-
-| Platform | Archive | VPack |
-| :--- | :--- | :--- |
-| **Windows** x86_64 | `veloce-windows-{tag}-x86_64.zip` | `veloce-runtime-{tag}-windows-x86_64.vpack` |
-| **Linux** x86_64 | `veloce-linux-{tag}-x86_64.tar.gz` | `veloce-runtime-{tag}-linux-x86_64.vpack` |
-| **macOS** universal | `veloce-macos-{tag}-universal.tar.gz` | `veloce-runtime-{tag}-macos-universal.vpack` |
-
----
-
-### Installation
-
-```bash
-# Windows
-Expand-Archive veloce-windows-{tag}-x86_64.zip
-
-# Linux
-tar -xzf veloce-linux-{tag}-x86_64.tar.gz
-
-# macOS
-tar -xzf veloce-macos-{tag}-universal.tar.gz
-```
-
----
-
-### Cryptographic Checksums (SHA-256)
-
-```
-# See SHA256SUMS.txt — verify with: sha256sum -c SHA256SUMS.txt
-```
-"""
     path = out_dir / "release_notes.md"
     path.write_text(notes, encoding="utf-8")
     return path
